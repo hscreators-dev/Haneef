@@ -16,7 +16,7 @@ function figmaAssetResolver() {
   }
 }
 
-const repoName = 'fabriclink-managed-procurement-redesign-fixed-v2';
+const repoName = 'Haneef';
 
 export default defineConfig(({ command }) => {
   const isBuild = command === 'build';
