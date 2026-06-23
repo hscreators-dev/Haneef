@@ -154,6 +154,7 @@ function HomeTab({ onNavigate, onBell, profile }: { onNavigate: (t: Tab, orderId
         ))}
       </div>
 
+      {(profile?.accountType === "organisation") && (
       <div className="mx-5 mb-5 bg-card border border-border rounded-2xl overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <div>
@@ -176,6 +177,7 @@ function HomeTab({ onNavigate, onBell, profile }: { onNavigate: (t: Tab, orderId
           ))}
         </div>
       </div>
+      )}
 
       {/* Wedding & Events feature banner — for personal/individual users */}
       {(!profile?.accountType || profile.accountType === "personal") && (
@@ -198,19 +200,6 @@ function HomeTab({ onNavigate, onBell, profile }: { onNavigate: (t: Tab, orderId
           </div>
         </button>
       )}
-
-      <div className="mx-5 mb-5 bg-card border border-border rounded-2xl p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background:"rgba(200,169,126,0.15)" }}>
-            <Box size={16} strokeWidth={1.5} style={{ color: ACCENT }}/>
-          </div>
-          <div>
-            <p className="text-foreground text-sm" style={{ fontWeight:500 }}>Free Fabric Swatch Box</p>
-            <p className="text-muted-foreground" style={{ fontSize:11 }}>Feel before you order · 4 fabric types · Free delivery</p>
-          </div>
-        </div>
-        <button onClick={() => setShowSwatch(true)} className="bg-foreground text-white rounded-lg px-3 py-1.5 text-xs flex-shrink-0" style={{ fontWeight:500 }}>Order</button>
-      </div>
 
       <div className="px-5 mb-3 flex items-center justify-between">
         <p className="text-muted-foreground" style={{ fontSize:11, letterSpacing:"0.08em", textTransform:"uppercase" }}>My requests</p>

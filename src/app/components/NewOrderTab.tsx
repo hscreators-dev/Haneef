@@ -1046,12 +1046,7 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
                 <span style={{ fontSize: 10, fontWeight: orgType===t.id ? 700 : 400, color: orgType===t.id ? DARK : "#374151", lineHeight: 1.3 }}>{t.label}</span>
               </button>
             ))}
-            <button onClick={onCustomOrder}
-              className="flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl text-center transition-all"
-              style={{ border:`1.5px dashed ${ACCENT}`, background: ACCENT_BG, cursor:"pointer" }}>
-              <span style={{ fontSize: 22 }}>✂️</span>
-              <span style={{ fontSize: 10, fontWeight: 700, color:"#7c5419", lineHeight: 1.3 }}>Custom order</span>
-            </button>
+
           </div>
           <div className="flex gap-2 px-2.5 py-2 rounded-xl bg-blue-50 border border-blue-100">
             <span style={{ fontSize: 14, flexShrink: 0 }}>{orgTypeDefs.find(t => t.id === orgType)?.emoji}</span>

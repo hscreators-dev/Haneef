@@ -5,7 +5,12 @@ import {
   Palette, Wallet, ReceiptText, ClipboardCheck,
 } from "lucide-react";
 
-const ACCENT = "#C8A97E";
+const ACCENT       = "#A8916A";   // warm antique gold
+const CREAM        = "#FAF8F4";   // linen off-white
+const ESPRESSO     = "#0D0D0D";
+const BORDER_WARM  = "#E8E2D6";   // parchment border
+const GOLD_LIGHT   = "#F5EFE6";   // soft gold tint
+const MUTED_TEXT   = "#7C6F5E";   // warm muted brown
 
 type StepStatus = "done" | "active" | "pending";
 interface TrackStep { label: string; sub: string; status: StepStatus; icon: React.ReactNode }
@@ -128,10 +133,10 @@ const procurementStages = [
 
 function MiniSection({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="bg-card border border-border rounded-2xl overflow-hidden">
-      <div className="px-4 py-3 border-b border-border bg-muted flex items-center gap-2">
-        <span className="text-muted-foreground">{icon}</span>
-        <p className="text-muted-foreground" style={{ fontSize:10, letterSpacing:"0.08em", textTransform:"uppercase", fontWeight:500 }}>{title}</p>
+    <div className="rounded-2xl overflow-hidden" style={{ background: CREAM, border: `1px solid ${BORDER_WARM}` }}>
+      <div className="px-4 py-3 flex items-center gap-2" style={{ background: GOLD_LIGHT, borderBottom: `1px solid ${BORDER_WARM}` }}>
+        <span style={{ color: ACCENT }}>{icon}</span>
+        <p style={{ fontSize:10, letterSpacing:"0.08em", textTransform:"uppercase", fontWeight:500, color: ACCENT }}>{title}</p>
       </div>
       <div className="px-4 py-3">{children}</div>
     </div>
@@ -141,15 +146,15 @@ function MiniSection({ title, icon, children }: { title: string; icon: React.Rea
 function CollapsibleMiniSection({ title, icon, children, defaultOpen = true }: { title: string; icon: React.ReactNode; children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+    <div className="rounded-2xl overflow-hidden" style={{ background: CREAM, border: `1px solid ${BORDER_WARM}` }}>
       <button
         onClick={() => setOpen(v => !v)}
         className="w-full px-4 py-3 flex items-center gap-2 text-left"
-        style={{ background:"var(--muted)", border:"none", borderBottom: open ? "1px solid var(--border)" : "none", cursor:"pointer" }}
+        style={{ background: GOLD_LIGHT, border:"none", borderBottom: open ? `1px solid ${BORDER_WARM}` : "none", cursor:"pointer" }}
       >
-        <span className="text-muted-foreground">{icon}</span>
-        <p className="text-muted-foreground" style={{ fontSize:10, letterSpacing:"0.08em", textTransform:"uppercase", fontWeight:500 }}>{title}</p>
-        <ChevronDown size={13} className="text-muted-foreground ml-auto" strokeWidth={1.5} style={{ transform: open ? "rotate(180deg)" : "none", transition:"transform 0.18s" }}/>
+        <span style={{ color: ACCENT }}>{icon}</span>
+        <p style={{ fontSize:10, letterSpacing:"0.08em", textTransform:"uppercase", fontWeight:500, color: ACCENT }}>{title}</p>
+        <ChevronDown size={13} style={{ color: ACCENT, marginLeft:"auto", transform: open ? "rotate(180deg)" : "none", transition:"transform 0.18s" }} strokeWidth={1.5}/>
       </button>
       {open && <div className="px-4 py-3">{children}</div>}
     </div>
@@ -158,12 +163,12 @@ function CollapsibleMiniSection({ title, icon, children, defaultOpen = true }: {
 
 function RequestPanel({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="bg-card rounded-2xl overflow-hidden" style={{ border:`1px solid ${ACCENT}` }}>
-      <div className="px-4 pt-4 pb-3 flex items-center justify-between gap-3">
-        <p className="text-foreground text-sm" style={{ fontWeight:700 }}>{title}</p>
+    <div className="rounded-2xl overflow-hidden" style={{ background: CREAM, border: `1px solid ${BORDER_WARM}` }}>
+      <div className="px-4 py-3 flex items-center justify-between gap-3" style={{ background: GOLD_LIGHT, borderBottom: `1px solid ${BORDER_WARM}` }}>
+        <p style={{ fontSize:10, letterSpacing:"0.08em", textTransform:"uppercase", fontWeight:500, color: ACCENT }}>{title}</p>
         {action}
       </div>
-      <div className="px-4 pb-4">{children}</div>
+      <div className="px-4 py-4">{children}</div>
     </div>
   );
 }
@@ -173,11 +178,12 @@ function PaymentMethodCard({ order }: { order: OrderTrack }) {
   return (
     <RequestPanel title="Payment method">
       <div className="flex items-center justify-between gap-3 mb-2">
-        <p className="text-foreground" style={{ fontSize:13 }}>Payment method: *****@upi</p>
-        <button className="text-xs" style={{ color: ACCENT, fontWeight:600, background:"none", border:"none", cursor:"pointer" }}>Change</button>
+        <p style={{ fontSize:13, color: ESPRESSO }}>Payment method: *****@upi</p>
+        <button style={{ fontSize:12, color: ACCENT, fontWeight:600, background:"none", border:"none", cursor:"pointer" }}>Change</button>
       </div>
-      <p className="text-foreground" style={{ fontSize:13 }}>
-        Payment status: <span className={paid ? "text-emerald-600" : "text-amber-600"}>{paid ? "Paid" : "Pending"}</span>
+      <p style={{ fontSize:13, color: ESPRESSO }}>
+        Payment status:{" "}
+        <span style={{ fontWeight:600, color: paid ? "#2d7a4f" : "#b45309" }}>{paid ? "Paid" : "Pending"}</span>
       </p>
     </RequestPanel>
   );
@@ -192,34 +198,62 @@ function OrderDetailsCard({ order, canChange, onChange }: { order: OrderTrack; c
     <RequestPanel
       title="Order Details"
       action={canChange ? (
-        <button onClick={onChange} className="text-xs" style={{ color: ACCENT, fontWeight:600, background:"none", border:"none", cursor:"pointer" }}>
+        <button onClick={onChange} style={{ fontSize:12, color: ACCENT, fontWeight:600, background:"none", border:"none", cursor:"pointer" }}>
           Change
         </button>
       ) : undefined}
     >
       <div className="flex flex-col gap-2">
-        <p className="text-foreground" style={{ fontSize:13 }}><strong>Order for:</strong> Kids</p>
-        <p className="text-foreground" style={{ fontSize:13, fontWeight:700 }}>Materials:</p>
-        <p className="text-foreground" style={{ fontSize:13 }}>Fabric Source: Fresh fabric</p>
-        <p className="text-foreground" style={{ fontSize:13 }}>Fabric type: {fabricType}</p>
-        <p className="text-foreground" style={{ fontSize:13 }}>GSM weight: {gsm}</p>
-        <p className="text-foreground" style={{ fontSize:13 }}>Weave: Plain</p>
-        <p className="text-foreground" style={{ fontSize:13, fontWeight:700 }}>Colors:</p>
-        <p className="text-foreground" style={{ fontSize:13 }}>Confirm Colors: {colors}</p>
-        <p className="text-foreground" style={{ fontSize:13 }}>Color Description: We want Minimalist style</p>
-        <p className="text-foreground" style={{ fontSize:13, fontWeight:700 }}>Size:</p>
-        <p className="text-foreground" style={{ fontSize:13 }}>Garment for: Kids</p>
-        <div className="text-foreground" style={{ fontSize:13 }}>
-          <p>Quantity per size:</p>
-          <ul className="list-disc pl-5 mt-1">
-            <li>3-4Y - 10 QC</li>
-            <li>5-6Y - 10 QC</li>
-            <li>7-8Y - 10 QC</li>
-          </ul>
+        {[
+          ["Order for", "Kids"],
+        ].map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between">
+            <span style={{ fontSize:12, color: MUTED_TEXT }}>{k}</span>
+            <span style={{ fontSize:12, fontWeight:500, color: ESPRESSO }}>{v}</span>
+          </div>
+        ))}
+        <div style={{ height:1, background: BORDER_WARM, margin:"4px 0" }}/>
+        <p style={{ fontSize:11, letterSpacing:"0.07em", textTransform:"uppercase", color: ACCENT, fontWeight:500 }}>Materials</p>
+        {[
+          ["Fabric source", "Fresh fabric"],
+          ["Fabric type", fabricType],
+          ["GSM weight", gsm],
+          ["Weave", "Plain"],
+        ].map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between">
+            <span style={{ fontSize:12, color: MUTED_TEXT }}>{k}</span>
+            <span style={{ fontSize:12, fontWeight:500, color: ESPRESSO }}>{v}</span>
+          </div>
+        ))}
+        <div style={{ height:1, background: BORDER_WARM, margin:"4px 0" }}/>
+        <p style={{ fontSize:11, letterSpacing:"0.07em", textTransform:"uppercase", color: ACCENT, fontWeight:500 }}>Colors</p>
+        {[
+          ["Confirm colors", colors],
+          ["Description", "Minimalist style"],
+        ].map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between">
+            <span style={{ fontSize:12, color: MUTED_TEXT }}>{k}</span>
+            <span style={{ fontSize:12, fontWeight:500, color: ESPRESSO }}>{v}</span>
+          </div>
+        ))}
+        <div style={{ height:1, background: BORDER_WARM, margin:"4px 0" }}/>
+        <p style={{ fontSize:11, letterSpacing:"0.07em", textTransform:"uppercase", color: ACCENT, fontWeight:500 }}>Size</p>
+        <div className="flex items-start justify-between">
+          <span style={{ fontSize:12, color: MUTED_TEXT }}>Garment for</span>
+          <span style={{ fontSize:12, fontWeight:500, color: ESPRESSO }}>Kids</span>
         </div>
-        <p className="text-foreground" style={{ fontSize:13, fontWeight:700 }}>Reference:</p>
-        <p className="text-foreground" style={{ fontSize:13 }}>Upload logo / Design: <button className="underline" style={{ background:"none", border:"none", cursor:"pointer" }}>Attachment</button></p>
-        <p className="text-foreground" style={{ fontSize:13 }}>Share a style photo: <button className="underline" style={{ background:"none", border:"none", cursor:"pointer" }}>Attachment</button></p>
+        <div className="flex items-start justify-between">
+          <span style={{ fontSize:12, color: MUTED_TEXT }}>Qty per size</span>
+          <span style={{ fontSize:12, fontWeight:500, color: ESPRESSO, textAlign:"right" }}>3-4Y · 5-6Y · 7-8Y<br/><span style={{ color: MUTED_TEXT, fontWeight:400 }}>10 pcs each</span></span>
+        </div>
+        <div style={{ height:1, background: BORDER_WARM, margin:"4px 0" }}/>
+        <p style={{ fontSize:11, letterSpacing:"0.07em", textTransform:"uppercase", color: ACCENT, fontWeight:500 }}>Reference</p>
+        {[["Logo / Design", "Attachment"], ["Style photo", "Attachment"]].map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between">
+            <span style={{ fontSize:12, color: MUTED_TEXT }}>{k}</span>
+            <button style={{ fontSize:12, fontWeight:500, color: ACCENT, background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>{v}</button>
+          </div>
+        ))}
       </div>
     </RequestPanel>
   );
@@ -240,13 +274,13 @@ function ProcurementStageStrip({ status }: { status: OrderStatus }) {
           const active = i === current;
           const done = i < current;
           return (
-            <div key={stage} className="rounded-xl px-3 py-2.5 border flex items-center gap-2"
-              style={{ borderColor: active ? ACCENT : "rgba(0,0,0,0.08)", background: done ? "rgba(16,185,129,0.07)" : active ? "rgba(200,169,126,0.12)" : "var(--muted)" }}>
+            <div key={stage} className="rounded-xl px-3 py-2.5 flex items-center gap-2"
+              style={{ border: `1px solid ${active ? ACCENT : BORDER_WARM}`, background: done ? "#EEF7EE" : active ? GOLD_LIGHT : "#fff" }}>
               <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                style={{ background: done ? "#10b981" : active ? ACCENT : "#fff", color: done || active ? "#fff" : "var(--muted-foreground)", fontSize:10, fontWeight:700 }}>
+                style={{ background: done ? "#2d7a4f" : active ? ACCENT : BORDER_WARM, color: done || active ? "#fff" : MUTED_TEXT, fontSize:10, fontWeight:700 }}>
                 {done ? <Check size={11} strokeWidth={2.5}/> : i + 1}
               </span>
-              <span className={active ? "text-foreground" : "text-muted-foreground"} style={{ fontSize:11, fontWeight:active ? 600 : 400 }}>{stage}</span>
+              <span style={{ fontSize:11, fontWeight: active ? 600 : 400, color: active ? ESPRESSO : MUTED_TEXT }}>{stage}</span>
             </div>
           );
         })}
@@ -257,12 +291,12 @@ function ProcurementStageStrip({ status }: { status: OrderStatus }) {
 
 function CoordinatorCard({ onMessage }: { onMessage?: () => void }) {
   return (
-    <MiniSection title="Your procurement manager" icon={<UserCircle size={13} strokeWidth={1.5}/>}>
+    <RequestPanel title="Your Procurement Manager">
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white" style={{ background:"#0D0D0D", fontWeight:700 }}>P</div>
+        <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: ESPRESSO, color: GOLD_LIGHT, fontWeight:700, fontSize:16 }}>P</div>
         <div className="min-w-0 flex-1">
-          <p className="text-foreground text-sm" style={{ fontWeight:600 }}>Priya Raman</p>
-          <p className="text-muted-foreground" style={{ fontSize:11 }}>Owns quote, mill follow-up, QA and delivery</p>
+          <p style={{ fontSize:14, fontWeight:600, color: ESPRESSO }}>Priya Raman</p>
+          <p style={{ fontSize:11, color: MUTED_TEXT, marginTop:2 }}>Owns quote, mill follow-up, QA and delivery</p>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-2">
@@ -272,13 +306,13 @@ function CoordinatorCard({ onMessage }: { onMessage?: () => void }) {
           [<Mail size={13} strokeWidth={1.5}/>, "Email"],
         ].map(([icon, label]) => (
           <button key={String(label)} onClick={label === "WhatsApp" ? onMessage : undefined}
-            className="rounded-xl border border-border bg-muted py-2 flex items-center justify-center gap-1.5 text-foreground"
-            style={{ fontSize:11, fontWeight:500 }}>
+            className="rounded-xl py-2 flex items-center justify-center gap-1.5"
+            style={{ fontSize:11, fontWeight:500, background:"#fff", border:`1px solid ${BORDER_WARM}`, color: ESPRESSO }}>
             {icon}{label}
           </button>
         ))}
       </div>
-    </MiniSection>
+    </RequestPanel>
   );
 }
 
@@ -293,13 +327,14 @@ function PaymentMilestones({ order }: { order: OrderTrack }) {
     <MiniSection title="Payment milestones" icon={<Wallet size={13} strokeWidth={1.5}/>}>
       <div className="flex flex-col gap-2">
         {rows.map(([label, pct, status]) => (
-          <div key={label} className="flex items-center justify-between rounded-xl bg-muted px-3 py-2.5">
+          <div key={label} className="flex items-center justify-between rounded-xl px-3 py-2.5" style={{ background:"#fff", border:`1px solid ${BORDER_WARM}` }}>
             <div>
-              <p className="text-foreground" style={{ fontSize:12, fontWeight:600 }}>{label}</p>
-              <p className="text-muted-foreground" style={{ fontSize:10 }}>{pct} of order value</p>
+              <p style={{ fontSize:12, fontWeight:600, color: ESPRESSO }}>{label}</p>
+              <p style={{ fontSize:10, color: MUTED_TEXT }}>{pct} of order value</p>
             </div>
-            <span className={status === "Received" ? "text-emerald-700 bg-emerald-50" : "text-stone-600 bg-white"}
-              style={{ fontSize:10, fontWeight:600, borderRadius:999, padding:"4px 8px" }}>
+            <span style={{ fontSize:10, fontWeight:600, borderRadius:999, padding:"4px 8px",
+              background: status === "Received" ? "#EEF7EE" : GOLD_LIGHT,
+              color: status === "Received" ? "#2d7a4f" : MUTED_TEXT }}>
               {status}
             </span>
           </div>
@@ -332,8 +367,8 @@ function SampleApprovalCard() {
         </p>
       ) : (
         <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setDecision("approved")} className="rounded-xl py-2.5 text-white text-xs" style={{ background: ACCENT, fontWeight:600 }}>Approve</button>
-          <button onClick={() => setDecision("changes")} className="rounded-xl py-2.5 bg-muted border border-border text-foreground text-xs" style={{ fontWeight:600 }}>Request change</button>
+          <button onClick={() => setDecision("approved")} className="rounded-xl py-2.5 text-xs" style={{ background: ESPRESSO, color: GOLD_LIGHT, fontWeight:600 }}>Approve</button>
+          <button onClick={() => setDecision("changes")} className="rounded-xl py-2.5 text-xs" style={{ background:"#fff", border:`1px solid ${BORDER_WARM}`, color: ESPRESSO, fontWeight:600 }}>Request change</button>
         </div>
       )}
     </MiniSection>
@@ -352,11 +387,11 @@ function DocumentVault({ order }: { order: OrderTrack }) {
     <RequestPanel title="Documents">
       <div className="flex flex-col gap-2">
         {docs.map(([label, status]) => (
-          <button key={label} className="flex items-center justify-between rounded-xl bg-muted px-3 py-2.5 text-left">
-            <span className="flex items-center gap-2 text-foreground" style={{ fontSize:12, fontWeight:500 }}>
-              <ReceiptText size={13} strokeWidth={1.5}/>{label}
+          <button key={label} className="flex items-center justify-between rounded-xl px-3 py-2.5 text-left" style={{ background:"#fff", border:`1px solid ${BORDER_WARM}` }}>
+            <span className="flex items-center gap-2" style={{ fontSize:12, fontWeight:500, color: ESPRESSO }}>
+              <ReceiptText size={13} strokeWidth={1.5} color={ACCENT}/>{label}
             </span>
-            <span className="text-muted-foreground" style={{ fontSize:10 }}>{status}</span>
+            <span style={{ fontSize:10, color: MUTED_TEXT }}>{status}</span>
           </button>
         ))}
       </div>
@@ -406,8 +441,8 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
               ["Reference",     order.paymentReference ?? `TXN-${order.id.slice(1)}-2025`],
             ].map(([k, v]) => (
               <div key={k} className="flex items-start justify-between gap-4">
-                <span className="text-muted-foreground flex-shrink-0" style={{ fontSize:12 }}>{k}</span>
-                <span className={v === "Payment received" ? "text-emerald-600 text-right" : "text-foreground text-right"} style={{ fontSize:12, fontWeight:500 }}>{v}</span>
+                <span className="flex-shrink-0" style={{ fontSize:12, color: MUTED_TEXT }}>{k}</span>
+                <span className="text-right" style={{ fontSize:12, fontWeight:500, color: v === "Payment received" ? "#2d7a4f" : ESPRESSO }}>{v}</span>
               </div>
             ))}
           </div>
@@ -434,8 +469,8 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
                     className="w-full bg-muted border border-border rounded-xl px-3 py-2.5 text-foreground text-xs outline-none resize-none h-16 mb-3"
                     style={{ fontFamily:"DM Sans, sans-serif" }}/>
                   <button onClick={() => setRatingDone(true)}
-                    className="w-full py-2.5 rounded-xl text-white text-sm"
-                    style={{ background: ACCENT, fontWeight:500, cursor:"pointer" }}>
+                    className="w-full py-2.5 rounded-xl text-sm"
+                    style={{ background: ESPRESSO, color: GOLD_LIGHT, fontWeight:500, cursor:"pointer" }}>
                     Submit feedback
                   </button>
                 </>
@@ -450,8 +485,8 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
       {/* Reorder CTA */}
       {onReorder && (
         <button onClick={onReorder}
-          className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl text-white text-sm"
-          style={{ background: ACCENT, fontWeight:500, cursor:"pointer" }}>
+          className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl text-sm"
+          style={{ background: ESPRESSO, color: GOLD_LIGHT, fontWeight:500, cursor:"pointer" }}>
           <RotateCcw size={15} strokeWidth={1.5}/> Reorder last year's uniform
         </button>
       )}
@@ -470,36 +505,36 @@ function OrderCard({ order, accountType, onMessage, onReorder, forceOpen }: {
   const canChange    = CHANGEABLE_STATUSES.includes(order.statusLabel);
 
   return (
-    <div className="bg-card rounded-2xl overflow-hidden mb-3"
-      style={{ border: order.isNew ? `1.5px solid ${ACCENT}` : "1px solid rgba(0,0,0,0.08)" }}>
+    <div className="rounded-2xl overflow-hidden mb-3"
+      style={{ background: CREAM, border: order.isNew ? `1.5px solid ${ACCENT}` : `1px solid ${BORDER_WARM}` }}>
       {order.isNew && (
-        <div className="px-4 py-2" style={{ background:"rgba(200,169,126,0.1)", borderBottom:`1px solid rgba(200,169,126,0.25)` }}>
-          <span style={{ fontSize:11, color:"#7c5419", fontWeight:500 }}>✨ Newly submitted — awaiting coordinator review</span>
+        <div className="px-4 py-2" style={{ background: GOLD_LIGHT, borderBottom:`1px solid ${BORDER_WARM}` }}>
+          <span style={{ fontSize:11, color: ACCENT, fontWeight:500 }}>✨ Newly submitted — awaiting coordinator review</span>
         </div>
       )}
 
       <button onClick={() => setOpen(v => !v)} className="w-full flex items-start justify-between p-4 text-left" style={{ background:"transparent", border:"none", cursor:"pointer" }}>
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-muted-foreground" style={{ fontSize:11 }}>{order.id}</span>
+            <span style={{ fontSize:11, color: ACCENT }}>{order.id}</span>
             <span className={`text-xs px-2 py-0.5 rounded-full ${order.statusColor}`} style={{ fontWeight:500, fontSize:10 }}>{order.statusLabel}</span>
           </div>
-          <p className="text-foreground text-sm" style={{ fontWeight:500 }}>{order.name}</p>
+          <p style={{ fontSize:14, fontWeight:500, color: ESPRESSO }}>{order.name}</p>
           {!open && (
             <div className="flex items-center gap-1.5 mt-1">
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: ACCENT }}/>
-              <span className="text-muted-foreground" style={{ fontSize:11 }}>{order.statusLabel} · {order.etaDate}</span>
+              <span style={{ fontSize:11, color: MUTED_TEXT }}>{order.statusLabel} · {order.etaDate}</span>
             </div>
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0 ml-2 mt-0.5">
-          {!open && <span className="text-muted-foreground" style={{ fontSize:11 }}>{order.etaDate}</span>}
-          {open ? <ChevronUp size={15} className="text-muted-foreground" strokeWidth={1.5}/> : <ChevronDown size={15} className="text-muted-foreground" strokeWidth={1.5}/>}
+          {!open && <span style={{ fontSize:11, color: MUTED_TEXT }}>{order.etaDate}</span>}
+          {open ? <ChevronUp size={15} strokeWidth={1.5} style={{ color: ACCENT }}/> : <ChevronDown size={15} strokeWidth={1.5} style={{ color: ACCENT }}/>}
         </div>
       </button>
 
       {open && (
-        <div className="px-4 pb-4 border-t border-border">
+        <div className="px-4 pb-4" style={{ borderTop: `1px solid ${BORDER_WARM}` }}>
           {/* For past orders: show Amazon-style detail */}
           {isPast ? (
             <div className="pt-3">
@@ -510,27 +545,27 @@ function OrderCard({ order, accountType, onMessage, onReorder, forceOpen }: {
             <div className="pt-3">
               {order.steps.map((step, i) => {
                 const isLast = i === order.steps.length - 1;
-                const iconBg    = step.status==="done" ? "var(--foreground)" : step.status==="active" ? "rgba(200,169,126,0.15)" : "var(--muted)";
-                const iconBorder = step.status==="done" ? "var(--foreground)" : step.status==="active" ? ACCENT : "rgba(0,0,0,0.1)";
-                const iconColor  = step.status==="done" ? "#fff" : step.status==="active" ? "#7c5419" : "var(--muted-foreground)";
+                const iconBg    = step.status==="done" ? ESPRESSO : step.status==="active" ? GOLD_LIGHT : "#fff";
+                const iconBorder = step.status==="done" ? ESPRESSO : step.status==="active" ? ACCENT : BORDER_WARM;
+                const iconColor  = step.status==="done" ? GOLD_LIGHT : step.status==="active" ? ACCENT : MUTED_TEXT;
                 return (
                   <div key={i} className="flex items-start gap-3 relative" style={{ marginBottom: isLast ? 0 : 16 }}>
-                    {!isLast && <div className="absolute" style={{ left:11, top:24, bottom:-16, width:1, background:"var(--border)", zIndex:0 }}/>}
+                    {!isLast && <div className="absolute" style={{ left:11, top:24, bottom:-16, width:1, background: BORDER_WARM, zIndex:0 }}/>}
                     <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center relative"
                       style={{ background:iconBg, border:`1.5px solid ${iconBorder}`, color:iconColor, zIndex:1 }}>
                       {step.icon}
                     </div>
                     <div style={{ paddingTop:2 }}>
-                      <p className={step.status==="pending" ? "text-muted-foreground" : "text-foreground"} style={{ fontSize:13, fontWeight:step.status==="pending" ? 400 : 500, lineHeight:1.3 }}>{step.label}</p>
-                      <p className="text-muted-foreground" style={{ fontSize:11, marginTop:1 }}>{step.sub}</p>
+                      <p style={{ fontSize:13, fontWeight:step.status==="pending" ? 400 : 500, lineHeight:1.3, color: step.status==="pending" ? MUTED_TEXT : ESPRESSO }}>{step.label}</p>
+                      <p style={{ fontSize:11, marginTop:1, color: MUTED_TEXT }}>{step.sub}</p>
                     </div>
                   </div>
                 );
               })}
 
-              <div className="flex items-center justify-between mt-4 pt-3.5 border-t border-border">
-                <p className="text-muted-foreground text-xs">Estimated delivery</p>
-                <p className="text-foreground text-sm" style={{ fontWeight:600 }}>{order.etaDate}</p>
+              <div className="flex items-center justify-between mt-4 pt-3.5" style={{ borderTop:`1px solid ${BORDER_WARM}` }}>
+                <p style={{ fontSize:12, color: MUTED_TEXT }}>Estimated delivery</p>
+                <p style={{ fontSize:13, fontWeight:600, color: ESPRESSO }}>{order.etaDate}</p>
               </div>
 
               <div className="mt-3 flex flex-col gap-3">
@@ -582,7 +617,7 @@ export function TrackTab({ showNew, accountType, onMessageCoordinator, onReorder
         {(["active","past","all"] as TrackFilter[]).map(f => (
           <button key={f} onClick={() => setFilter(f)}
             className="flex-1 py-2 rounded-xl text-xs transition-all"
-            style={{ background: filter===f ? "var(--foreground)" : "var(--muted)", color: filter===f ? "#fff" : "var(--muted-foreground)", fontWeight: filter===f ? 500 : 400, border:"none", cursor:"pointer" }}>
+            style={{ background: filter===f ? ESPRESSO : GOLD_LIGHT, color: filter===f ? GOLD_LIGHT : MUTED_TEXT, fontWeight: filter===f ? 500 : 400, border: `1px solid ${filter===f ? ESPRESSO : BORDER_WARM}`, cursor:"pointer" }}>
             {f==="active" ? `Active (${counts.active})` : f==="past" ? `Past (${counts.past})` : `All (${counts.all})`}
           </button>
         ))}
