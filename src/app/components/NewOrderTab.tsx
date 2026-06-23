@@ -960,54 +960,51 @@ function SwitchConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; on
 
 // ─── Org Details Form (Step 1 for Organisation) ───────────────────────────────
 
-interface OrgDetails { type: OrgType; services: OrgService[]; name: string; board: string; address: string; city: string; pin: string; contactName: string; contactPhone: string; contactEmail: string }
+interface OrgDetails { type: OrgType; service: OrgService; isAccessoryOrder: boolean; accessoryQty: Record<string, number>; name: string; board: string; address: string; city: string; pin: string; contactName: string; contactPhone: string; contactEmail: string }
 
 function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { onContinue: (d: OrgDetails) => void; onBack?: () => void; onCustomOrder?: () => void; switchBanner?: React.ReactNode }) {
-  const [orgType, setOrgType] = useState<OrgType>(currentUser.orgType);
-  const [services, setServices] = useState<OrgService[]>(["uniform"]);
-  const [serviceQty, setServiceQty] = useState<Record<string, number>>({ uniform: orgCfg[currentUser.orgType].minQty });
+  const [orgType, setOrgType]       = useState<OrgType>(currentUser.orgType);
+  const [service, setService]       = useState<OrgService>(orgServiceOptions[currentUser.orgType][0].id);
   const [accessoryQty, setAccessoryQty] = useState<Record<string, number>>({});
-  const [name, setName]           = useState(currentUser.org);
-  const [board, setBoard]         = useState("");
-  const [address, setAddress]     = useState("");
-  const [city, setCity]           = useState("");
-  const [pin, setPin]             = useState("");
+  const [name, setName]             = useState(currentUser.org);
+  const [board, setBoard]           = useState("");
+  const [address, setAddress]       = useState("");
+  const [city, setCity]             = useState("");
+  const [pin, setPin]               = useState("");
   const [contactName, setContactName]   = useState(currentUser.name);
   const [contactPhone, setContactPhone] = useState(currentUser.phone);
   const [contactEmail, setContactEmail] = useState(currentUser.email);
-  const [errors, setErrors]       = useState<string[]>([]);
-
-  function handleContinue() {
-    const errs: string[] = [];
-    if (services.length === 0) errs.push("Select at least one order category");
-    setErrors(errs); if (errs.length > 0) return;
-    onContinue({ type: orgType, services, name, board, address, city, pin, contactName, contactPhone, contactEmail });
-  }
+  const [errors, setErrors]         = useState<string[]>([]);
 
   const cfg = orgCfg[orgType];
   const activeServiceOptions = orgServiceOptions[orgType];
+  const selectedOpt = activeServiceOptions.find(o => o.id === service)!;
+  const isAccessoryOrder = !!selectedOpt?.accessories;
+  const accessoryTotal = Object.values(accessoryQty).reduce((a, b) => a + b, 0);
 
   function switchOrgType(next: OrgType) {
     setOrgType(next);
     setName(currentUser.org);
     setBoard("");
-    setServices([orgServiceOptions[next][0].id]);
-    setServiceQty({ [orgServiceOptions[next][0].id]: orgCfg[next].minQty });
+    setService(orgServiceOptions[next][0].id);
     setAccessoryQty({});
   }
 
-  function toggleService(id: OrgService) {
-    setServices(prev => {
-      const removing = prev.includes(id);
-      if (removing) return prev.filter(s => s !== id);
-      setServiceQty(q => ({ ...q, [id]: q[id] ?? cfg.minQty }));
-      return [...prev, id];
-    });
+  function selectService(id: OrgService) {
+    setService(id);
+    setAccessoryQty({});
   }
 
-  function stepQty(key: string, delta: number, min = 0, accessory = false) {
-    const setter = accessory ? setAccessoryQty : setServiceQty;
-    setter(prev => ({ ...prev, [key]: Math.max(min, (prev[key] ?? min) + delta) }));
+  function stepAccessoryQty(key: string, delta: number) {
+    setAccessoryQty(prev => ({ ...prev, [key]: Math.max(0, (prev[key] ?? 0) + delta) }));
+  }
+
+  function handleContinue() {
+    const errs: string[] = [];
+    if (isAccessoryOrder && accessoryTotal === 0) errs.push("Add quantity for at least one accessory item");
+    setErrors(errs);
+    if (errs.length > 0) return;
+    onContinue({ type: orgType, service, isAccessoryOrder, accessoryQty, name, board, address, city, pin, contactName, contactPhone, contactEmail });
   }
 
   return (
@@ -1024,8 +1021,8 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
         <div className="flex items-center gap-3 mb-4">
           <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-lg">🏛️</div>
           <div className="flex-1">
-            <p className="text-foreground" style={{ fontSize: 17, fontWeight: 600 }}>Organisation details</p>
-            <p className="text-muted-foreground" style={{ fontSize: 12 }}>Tell us about your organisation</p>
+            <p className="text-foreground" style={{ fontSize: 17, fontWeight: 600 }}>Organisation order</p>
+            <p className="text-muted-foreground" style={{ fontSize: 12 }}>Select your org type and what you want to order</p>
           </div>
           <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: ACCENT_BG, color:"#7c5419" }}>Step 1 of 2</span>
         </div>
@@ -1046,7 +1043,6 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
                 <span style={{ fontSize: 10, fontWeight: orgType===t.id ? 700 : 400, color: orgType===t.id ? DARK : "#374151", lineHeight: 1.3 }}>{t.label}</span>
               </button>
             ))}
-
           </div>
           <div className="flex gap-2 px-2.5 py-2 rounded-xl bg-blue-50 border border-blue-100">
             <span style={{ fontSize: 14, flexShrink: 0 }}>{orgTypeDefs.find(t => t.id === orgType)?.emoji}</span>
@@ -1056,69 +1052,103 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
           </div>
         </Section>
 
-        <Section title="Order category" icon={Scissors}>
-          <p className="text-muted-foreground mb-2" style={{ fontSize:12 }}>Choose one or more categories for this enquiry.</p>
+        <Section title="What would you like to order?" icon={Scissors}>
+          <p className="text-muted-foreground mb-3" style={{ fontSize:12 }}>Select <strong>one category</strong> per order. For multiple categories, place separate orders.</p>
           <div className="flex flex-col gap-2">
             {activeServiceOptions.map(opt => {
-              const selected = services.includes(opt.id);
+              const isSelected = service === opt.id;
+              const isAccOpt = !!opt.accessories;
               return (
-                <div key={opt.id} className="rounded-xl overflow-hidden" style={{ border:`1.5px solid ${selected ? DARK : "rgba(0,0,0,0.08)"}`, background:selected ? "rgba(13,13,13,0.03)" : "#fff" }}>
-                  <button onClick={() => toggleService(opt.id)}
-                    className="w-full flex items-start gap-3 px-3.5 py-3 text-left"
+                <div key={opt.id} className="rounded-xl overflow-hidden" style={{ border:`1.5px solid ${isSelected ? DARK : "rgba(0,0,0,0.08)"}`, background: isSelected ? "rgba(13,13,13,0.03)" : "#fff" }}>
+                  {/* Radio row */}
+                  <button onClick={() => selectService(opt.id)}
+                    className="w-full flex items-center gap-3 px-3.5 py-3 text-left"
                     style={{ background:"transparent", border:"none", cursor:"pointer" }}>
-                    <div className="w-5 h-5 rounded-md flex-shrink-0 flex items-center justify-center mt-0.5" style={{ border:`2px solid ${selected ? DARK : "#d1d5db"}`, background:selected ? DARK : "#fff" }}>
-                      {selected && <Check size={12} color="#fff" strokeWidth={3}/>}
+                    {/* Radio circle */}
+                    <div className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border:`2px solid ${isSelected ? DARK : "#d1d5db"}`, background: isSelected ? DARK : "#fff" }}>
+                      {isSelected && <div className="w-2 h-2 rounded-full bg-white"/>}
                     </div>
                     <div className="flex-1">
                       <p className="text-foreground text-sm" style={{ fontWeight:600 }}>{opt.label}</p>
                       <p className="text-muted-foreground" style={{ fontSize:11, marginTop:1 }}>{opt.sub}</p>
                     </div>
+                    {isAccOpt && (
+                      <span className="text-xs px-2 py-0.5 rounded-full flex-shrink-0" style={{ background:"rgba(200,169,126,0.15)", color:"#7c5419", fontWeight:500 }}>Qty here</span>
+                    )}
+                    {!isAccOpt && (
+                      <span className="text-xs px-2 py-0.5 rounded-full flex-shrink-0" style={{ background:"#f0f0f0", color:"#6b7280", fontWeight:500 }}>Qty next</span>
+                    )}
                   </button>
 
-                  {selected && (
-                    <div className="px-3.5 pb-3">
-                      <div className="flex items-center justify-between rounded-xl bg-muted border border-border px-3 py-2 mb-2">
-                        <span className="text-muted-foreground" style={{ fontSize:12 }}>Quantity</span>
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => stepQty(opt.id, -10, cfg.minQty)} className="w-7 h-7 rounded-lg bg-card border border-border flex items-center justify-center"><Minus size={12}/></button>
-                          <span className="text-foreground text-center" style={{ width:54, fontSize:13, fontWeight:700 }}>{serviceQty[opt.id] ?? cfg.minQty}</span>
-                          <button onClick={() => stepQty(opt.id, 10, cfg.minQty)} className="w-7 h-7 rounded-lg bg-card border border-border flex items-center justify-center"><Plus size={12}/></button>
-                        </div>
+                  {/* Accessories: quantity per item right here in Step 1 */}
+                  {isSelected && isAccOpt && (
+                    <div className="px-3.5 pb-3.5">
+                      <div className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl mb-3" style={{ background:"#fef3c7", border:"0.5px solid #fbbf24" }}>
+                        <Info size={11} style={{ color:"#d97706", flexShrink:0 }}/>
+                        <p style={{ fontSize:11, color:"#92400e" }}>Accessories don't need fabric or size distribution — set quantities below and proceed directly to references.</p>
                       </div>
-                      {opt.accessories && (
-                        <div className="grid grid-cols-2 gap-2">
-                          {opt.accessories.map(item => {
-                            const key = `${orgType}-${item}`;
-                            return (
-                              <div key={key} className="rounded-xl bg-card border border-border px-2.5 py-2">
-                                <p className="text-foreground" style={{ fontSize:11, fontWeight:600 }}>{item}</p>
-                                <div className="flex items-center justify-between mt-1.5">
-                                  <button onClick={() => stepQty(key, -1, 0, true)} className="w-6 h-6 rounded bg-muted border border-border flex items-center justify-center"><Minus size={10}/></button>
-                                  <span style={{ fontSize:12, fontWeight:700 }}>{accessoryQty[key] ?? 0}</span>
-                                  <button onClick={() => stepQty(key, 1, 0, true)} className="w-6 h-6 rounded bg-muted border border-border flex items-center justify-center"><Plus size={10}/></button>
-                                </div>
+                      <p className="text-foreground mb-2" style={{ fontSize:12, fontWeight:500 }}>How many of each item?</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {opt.accessories!.map(item => {
+                          const key = `${orgType}-${item}`;
+                          const q = accessoryQty[key] ?? 0;
+                          return (
+                            <div key={key} className="rounded-xl bg-card border border-border px-2.5 py-2.5">
+                              <p className="text-foreground mb-2" style={{ fontSize:11, fontWeight:600 }}>{item}</p>
+                              <div className="flex items-center justify-between">
+                                <button onClick={() => stepAccessoryQty(key, -1)} className="w-7 h-7 rounded-lg bg-muted border border-border flex items-center justify-center" style={{ cursor:"pointer" }}><Minus size={11}/></button>
+                                <span style={{ fontSize:13, fontWeight:700, color: q > 0 ? DARK : "#9ca3af" }}>{q}</span>
+                                <button onClick={() => stepAccessoryQty(key, 1)} className="w-7 h-7 rounded-lg bg-muted border border-border flex items-center justify-center" style={{ cursor:"pointer" }}><Plus size={11}/></button>
                               </div>
-                            );
-                          })}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {accessoryTotal > 0 && (
+                        <div className="mt-3 flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-emerald-50 border border-emerald-200">
+                          <Check size={11} className="text-emerald-600" strokeWidth={2.5}/>
+                          <p style={{ fontSize:11, color:"#065f46", fontWeight:500 }}>{accessoryTotal} items added — ready to continue</p>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* Non-accessory: just a hint that qty comes in Step 2 */}
+                  {isSelected && !isAccOpt && (
+                    <div className="px-3.5 pb-3">
+                      <div className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl" style={{ background: ACCENT_BG, border:`0.5px solid ${ACCENT}` }}>
+                        <Info size={11} style={{ color: ACCENT, flexShrink:0 }}/>
+                        <p style={{ fontSize:11, color:"#7c5419" }}>Fabric, quantity & size distribution set in the next step</p>
+                      </div>
                     </div>
                   )}
                 </div>
               );
             })}
           </div>
+
+          {/* Multi-order guidance */}
+          <div className="mt-3 flex gap-2 px-3 py-2.5 rounded-xl bg-muted border border-border">
+            <Info size={12} style={{ color:"#9ca3af", flexShrink:0, marginTop:1 }}/>
+            <p style={{ fontSize:11, color:"#6b7280", lineHeight:1.55 }}>
+              Need to order <strong>Uniform + Sports dress</strong> together? Place two separate orders — each gets its own fabric, colour and size specs.
+            </p>
+          </div>
         </Section>
-        <SizeInfoBanner minQty={cfg.minQty}/>
+
         <div className="rounded-2xl bg-muted border border-border p-3 mb-3">
           <p className="text-foreground text-sm" style={{ fontWeight:600 }}>Organisation details come last</p>
-          <p className="text-muted-foreground mt-1" style={{ fontSize:12, lineHeight:1.55 }}>After material, color, stitching, package and references, you will confirm saved organisation name, contact and address in one merged screen.</p>
+          <p className="text-muted-foreground mt-1" style={{ fontSize:12, lineHeight:1.55 }}>Name, contact and address are confirmed in a single screen at the end — after material, colour, stitching and references.</p>
         </div>
       </div>
 
       <div className="flex-shrink-0 px-5 py-3 border-t border-border bg-background">
-        <button onClick={handleContinue} className="w-full bg-foreground text-white rounded-2xl py-3.5 flex items-center justify-center gap-2 text-sm" style={{ fontWeight: 500 }}>
-          Continue · Step 2: Order details <ArrowRight size={15} strokeWidth={2}/>
+        <button
+          onClick={handleContinue}
+          disabled={isAccessoryOrder && accessoryTotal === 0}
+          className="w-full bg-foreground text-white rounded-2xl py-3.5 flex items-center justify-center gap-2 text-sm"
+          style={{ fontWeight:500, opacity: isAccessoryOrder && accessoryTotal === 0 ? 0.45 : 1, cursor: isAccessoryOrder && accessoryTotal === 0 ? "not-allowed" : "pointer" }}>
+          {isAccessoryOrder ? "Continue · Step 2: References & submit" : "Continue · Step 2: Order details"} <ArrowRight size={15} strokeWidth={2}/>
         </button>
       </div>
     </div>
@@ -1686,17 +1716,25 @@ function PersonaOrderForm({
     ? `✂️ Custom order`
     : persona === "organisation" ? "🏛️ Organisation" : "👤 Individual";
 
-  const subName = orgDetails?.name ?? (customDetails ? `${customDetails.audience === "kids" ? "Kids sizing" : customDetails.audience === "women" ? "Women sizing" : "Men sizing"} · Min 10 pcs` : undefined);
+  const serviceLabel = orgDetails ? (orgServiceOptions[orgDetails.type].find(o => o.id === orgDetails.service)?.label ?? "") : null;
+  const subName = orgDetails?.name
+    ? `${orgDetails.name}${serviceLabel ? " · " + serviceLabel : ""}`
+    : serviceLabel || (customDetails ? (customDetails.audience === "kids" ? "Kids sizing" : customDetails.audience === "women" ? "Women sizing" : "Men sizing") + " · Min 10 pcs" : undefined);
 
   const accentBg = persona === "organisation" ? "#E0F0FF" : ACCENT_BG;
   const accentC  = persona === "organisation" ? "#1a4a8a" : "#7c5419";
 
-  // Build sub-step label arrays based on persona/isUniformOrder
-  const subStepLabels = !isUniformOrder
-    ? persona === "individual"
-      ? ["Material", "Colors", "Sizes", "References"]
-      : ["Material", "Colors", "Sizes", "Packaging", "References", "Organisation"]
-    : ["References"];
+  // Accessory org orders skip fabric/colour/size — just References + Organisation
+  const isAccessoryOrgOrder = persona === "organisation" && !!orgDetails?.isAccessoryOrder;
+
+  // Build sub-step label arrays based on persona/isUniformOrder/isAccessoryOrgOrder
+  const subStepLabels = isAccessoryOrgOrder
+    ? ["References", "Organisation"]
+    : !isUniformOrder
+      ? persona === "individual"
+        ? ["Material", "Colors", "Sizes", "References"]
+        : ["Material", "Colors", "Sizes", "Packaging", "References", "Organisation"]
+      : ["References"];
 
   const totalSubSteps = subStepLabels.length;
   const currentSubStepLabel = subStepLabels[subStep - 1];
@@ -1859,7 +1897,7 @@ function PersonaOrderForm({
                   <div>
                     <p className="text-foreground text-sm" style={{ fontWeight:600 }}>{displayOrg.name || "Add organisation name"}</p>
                     <p className="text-muted-foreground" style={{ fontSize:11 }}>{displayOrg.board || "Registration details to be confirmed"}</p>
-                    <p className="text-muted-foreground" style={{ fontSize:11, marginTop:3 }}>{orgDetails.services.map(s => activeServiceLabel(orgDetails.type, s)).join(", ")}</p>
+                    <p className="text-muted-foreground" style={{ fontSize:11, marginTop:3 }}>{activeServiceLabel(orgDetails.type, orgDetails.service)}</p>
                   </div>
                   <button onClick={() => setEditingOrgDetails(true)} className="text-xs px-2.5 py-1 rounded-xl bg-card border border-border text-foreground" style={{ cursor:"pointer", fontWeight:500 }}>Change</button>
                 </div>
@@ -1897,6 +1935,33 @@ function PersonaOrderForm({
             <div className="mb-3 flex gap-1.5 px-3 py-2 rounded-xl bg-muted border border-border">
               <Info size={12} style={{ color:"#9ca3af", flexShrink: 0, marginTop: 1 }}/>
               <p style={{ fontSize: 11, color:"#6b7280", lineHeight: 1.5 }}>Fabric & stitching auto-filled from database</p>
+            </div>
+          )}
+          {isAccessoryOrgOrder && orgDetails && (
+            <div className="mb-3 rounded-xl overflow-hidden border border-border">
+              <div className="px-3 py-2 bg-muted flex items-center justify-between">
+                <p style={{ fontSize:12, fontWeight:600, color:DARK }}>Your accessory order summary</p>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" style={{ fontWeight:500 }}>Confirmed ✓</span>
+              </div>
+              <div className="px-3 py-2.5 grid grid-cols-2 gap-2">
+                {Object.entries(orgDetails.accessoryQty)
+                  .filter(([, q]) => q > 0)
+                  .map(([key, q]) => {
+                    const itemName = key.replace(`${orgDetails.type}-`, "");
+                    return (
+                      <div key={key} className="flex items-center justify-between bg-card border border-border rounded-xl px-2.5 py-2">
+                        <span style={{ fontSize:11, fontWeight:500, color:DARK }}>{itemName}</span>
+                        <span style={{ fontSize:12, fontWeight:700, color:DARK }}>{q} pcs</span>
+                      </div>
+                    );
+                  })}
+              </div>
+              <div className="px-3 pb-3">
+                <div className="flex items-center justify-between px-3 py-2 rounded-xl" style={{ background:ACCENT_BG, border:`0.5px solid ${ACCENT}` }}>
+                  <span style={{ fontSize:12, color:"#7c5419" }}>Total accessories</span>
+                  <span style={{ fontSize:13, fontWeight:700, color:"#7c5419" }}>{Object.values(orgDetails.accessoryQty).reduce((a,b)=>a+b,0)} pcs</span>
+                </div>
+              </div>
             </div>
           )}
           <Section title="References & samples" icon={ImageIcon}><RefImagesSection persona={persona}/></Section>
