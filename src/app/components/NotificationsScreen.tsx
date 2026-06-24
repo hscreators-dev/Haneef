@@ -98,7 +98,7 @@ export function NotificationsScreen({ onClose, onNavigate }: { onClose: () => vo
               <Check size={20} className="text-muted-foreground" strokeWidth={1.5}/>
             </div>
             <p className="text-foreground text-sm" style={{ fontWeight: 500 }}>All caught up</p>
-            <p className="text-muted-foreground text-xs mt-1">No {filter === "unread" ? "unread" : ""} notifications</p>
+            <p className="text-muted-foreground text-xs mt-1">No {filter === "unread" ? "unread " : ""}notifications</p>
           </div>
         )}
 

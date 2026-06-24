@@ -1,7 +1,11 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* ── Base font ─────────────────────────────────────── */
   --font-size: 16px;
+  --font-family: "DM Sans", system-ui, sans-serif;
+
+  /* ── Core palette ──────────────────────────────────── */
   --background: #F8F7F5;
   --foreground: #0D0D0D;
   --card: #FFFFFF;
@@ -10,27 +14,92 @@
   --popover-foreground: #0D0D0D;
   --primary: #0D0D0D;
   --primary-foreground: #FFFFFF;
-  --secondary: #F0EFed;
+  --secondary: #F0EFED;
   --secondary-foreground: #0D0D0D;
   --muted: #F0EFED;
   --muted-foreground: #888580;
+
+  /* ── Brand accent (warm gold) ──────────────────────── */
   --accent: #C8A97E;
   --accent-foreground: #0D0D0D;
+  --accent-bg: rgba(200, 169, 126, 0.12);
+  --accent-text: #7C5419;
+  --accent-text-sub: #92400E;
+
+  /* ── Semantic status colors ────────────────────────── */
+  --success: #059669;
+  --success-bg: #ECFDF5;
+  --success-border: #A7F3D0;
+  --success-text: #065F46;
+  --warning: #D97706;
+  --warning-bg: #FFFBEB;
+  --warning-border: #FDE68A;
+  --warning-text: #92400E;
+  --error: #DC2626;
+  --error-bg: #FEF2F2;
+  --error-border: #FECACA;
+  --error-text: #991B1B;
+  --info: #2563EB;
+  --info-bg: #EFF6FF;
+  --info-border: #BFDBFE;
+  --info-text: #1E40AF;
+
+  /* ── Destructive ───────────────────────────────────── */
   --destructive: #C0392B;
   --destructive-foreground: #ffffff;
+
+  /* ── Input / form ──────────────────────────────────── */
   --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.15);
   --input: transparent;
   --input-background: #F0EFED;
   --switch-background: #C8C5C0;
+  --ring: rgba(0, 0, 0, 0.2);
+
+  /* ── Typography weights ────────────────────────────── */
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: rgba(0,0,0,0.2);
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ── Spacing scale (4-pt grid) ─────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ── Border radius scale ───────────────────────────── */
+  --radius: 0.75rem;        /* 12px — small chips, tags */
+  --radius-sm: 0.5rem;      /* 8px  — micro elements */
+  --radius-md: 0.75rem;     /* 12px */
+  --radius-lg: 1rem;        /* 16px — cards, inputs */
+  --radius-xl: 1.25rem;     /* 20px — large cards */
+  --radius-2xl: 1.5rem;     /* 24px — primary buttons, modal tops */
+  --radius-full: 9999px;    /* pills, avatars */
+
+  /* ── Shadows ───────────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.06);
+
+  /* ── Icon sizes ────────────────────────────────────── */
+  --icon-xs: 12px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-xl: 24px;
+
+  /* ── Chart colors ──────────────────────────────────── */
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --radius: 0.75rem;
+
+  /* ── Sidebar ───────────────────────────────────────── */
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: #030213;
@@ -105,10 +174,10 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -126,7 +195,112 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-family);
   }
+
+  /* ── Shared utility classes for the design system ── */
+  /* Primary button */
+  .btn-primary {
+    width: 100%;
+    background: var(--foreground);
+    color: var(--primary-foreground);
+    border-radius: var(--radius-2xl);
+    padding: 14px 20px;
+    font-size: 14px;
+    font-weight: var(--font-weight-medium);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .btn-primary:disabled {
+    background: #E5E7EB;
+    color: #9CA3AF;
+    cursor: not-allowed;
+  }
+
+  /* Secondary button */
+  .btn-secondary {
+    width: 100%;
+    background: var(--muted);
+    color: var(--foreground);
+    border-radius: var(--radius-2xl);
+    padding: 14px 20px;
+    font-size: 14px;
+    font-weight: var(--font-weight-medium);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+  }
+
+  /* Accent button */
+  .btn-accent {
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    border-radius: var(--radius-2xl);
+    padding: 14px 20px;
+    font-size: 14px;
+    font-weight: var(--font-weight-medium);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: none;
+    cursor: pointer;
+  }
+
+  /* Standard card */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+  }
+
+  /* Standard input */
+  .input {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 10px 14px;
+    color: var(--foreground);
+    font-size: 14px;
+    font-family: var(--font-family);
+    outline: none;
+  }
+
+  /* Section label */
+  .label-section {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+    font-weight: var(--font-weight-medium);
+  }
+
+  /* Status badge base */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    font-size: 11px;
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+  }
+  .badge-success { background: var(--success-bg); color: var(--success-text); }
+  .badge-warning { background: var(--warning-bg); color: var(--warning-text); }
+  .badge-error   { background: var(--error-bg);   color: var(--error-text); }
+  .badge-info    { background: var(--info-bg);     color: var(--info-text); }
+  .badge-neutral { background: var(--muted);       color: var(--muted-foreground); }
+  .badge-accent  { background: var(--accent-bg);   color: var(--accent-text); }
 
   /**
   * Default typography styles for HTML elements (h1-h4, p, label, button, input).
