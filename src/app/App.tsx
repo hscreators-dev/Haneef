@@ -917,24 +917,26 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="flex-1 flex flex-col px-5 pt-6 pb-5 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
 
-      {/* Animated nature hero */}
-      <div className="mb-6" style={{ borderRadius: 16, overflow: "hidden", boxShadow: "0 6px 16px rgba(0,0,0,0.08)" }}>
-        <NatureScene />
+      {/* Brand row — top */}
+      <div className="flex items-center gap-2.5 mb-5">
+        <GarmLogo size={44} />
+        <div>
+          <p style={{ fontSize: 17, fontWeight: 700, letterSpacing: "0.02em", color: DARK, lineHeight: 1.1 }}>Garm</p>
+          <p className="text-muted-foreground" style={{ fontSize: 11 }}>Customise yourself</p>
+        </div>
       </div>
 
-      {/* Header */}
-      <div className="mb-7">
-        <div className="flex items-center gap-2.5 mb-5">
-          <GarmLogo size={44} />
-          <div>
-            <p style={{ fontSize: 17, fontWeight: 700, letterSpacing: "0.02em", color: DARK, lineHeight: 1.1 }}>Garm</p>
-            <p className="text-muted-foreground" style={{ fontSize: 11 }}>Customise yourself</p>
-          </div>
-        </div>
+      {/* Sign-in heading */}
+      <div className="mb-5">
         <p className="text-foreground mb-1" style={{ fontSize: 24, fontWeight: 700 }}>Sign in</p>
         <p className="text-muted-foreground text-sm leading-relaxed">
           We'll send a 6-digit OTP to verify your identity.
         </p>
+      </div>
+
+      {/* Animated nature hero — between heading and form */}
+      <div className="mb-6" style={{ borderRadius: 16, overflow: "hidden", boxShadow: "0 6px 16px rgba(0,0,0,0.08)" }}>
+        <NatureScene />
       </div>
 
       {/* Mode toggle */}
@@ -1057,7 +1059,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       )}
 
       {/* Trust badge */}
-      <div className="mt-auto pt-4 rounded-2xl p-4 bg-muted border border-border">
+      <div className="mt-6 rounded-2xl p-4 bg-muted border border-border">
         <p className="text-foreground text-sm font-semibold">Secure & private</p>
         <p className="text-muted-foreground mt-1" style={{ fontSize: 12, lineHeight: 1.55 }}>
           OTP expires in 10 minutes. You'll stay signed in on this device.
