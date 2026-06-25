@@ -1,10 +1,11 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   Bell, User, Home, PlusCircle, MapPin,
   ChevronRight, TrendingUp, Clock, CheckCircle2, ArrowRight, Box, Package,
   Mail, Smartphone, ShieldCheck, Building2, UserCircle, ChevronLeft, Phone,
   MapPinned, Headphones, Star, Check, Navigation, FileText, Trash2,
 } from "lucide-react";
+import certArt from "@/assets/undraw_certification_garm.svg";
 import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPayload } from "./components/NewOrderTab";
 import { TrackTab } from "./components/TrackTab";
 import { AccountTab, type UserProfile } from "./components/AccountTab";
@@ -51,6 +52,298 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 12, padding: "10px 14px", color: "var(--foreground)",
   fontSize: 14, fontFamily: "DM Sans, sans-serif", outline: "none",
 };
+
+// ─── Garm logo — basket-weave tile (brand mark) ─────────────────────────────────
+// Concept C: an over-under warp & weft weave inside a rounded "app icon" tile.
+// When `animated`, the threads weave themselves in (warp grows down, weft slides
+// across), then the tile gently floats — a textile-native intro animation.
+function GarmLogo({ size = 96, rounded = true, animated = false, style }: {
+  size?: number; rounded?: boolean; animated?: boolean; style?: React.CSSProperties;
+}) {
+  const ivory = "#FBF8F2";
+  const strand = { fill: ivory, stroke: DARK, strokeWidth: 4 } as const;
+  // class + stagger only applied when animated
+  const a = (cls: string, delay: number) =>
+    animated ? { className: `garm-strand ${cls}`, style: { animationDelay: `${delay}s` } } : {};
+  return (
+    <svg width={size} height={size} viewBox="0 0 96 96" fill="none" role="img" aria-label="Garm"
+      className={animated ? "garm-float" : undefined} style={style}>
+      {animated && (
+        <style>{`
+          .garm-strand{transform-box:fill-box}
+          .garm-warp{transform-origin:center top;animation:garmWarp .5s cubic-bezier(.5,0,.25,1) both}
+          .garm-weft{transform-origin:left center;animation:garmWeft .5s cubic-bezier(.5,0,.25,1) both}
+          .garm-patch{animation:garmPatch .3s ease both}
+          .garm-float{animation:garmFloat 4s ease-in-out 1.3s infinite}
+          @keyframes garmWarp{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+          @keyframes garmWeft{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+          @keyframes garmPatch{from{opacity:0}to{opacity:1}}
+          @keyframes garmFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+          @media (prefers-reduced-motion: reduce){
+            .garm-warp,.garm-weft,.garm-patch{animation:none}.garm-float{animation:none}
+          }
+        `}</style>
+      )}
+      <rect width="96" height="96" rx={rounded ? 22 : 0} fill={DARK} />
+      {/* horizontal strands — weft (laid first) */}
+      <rect x="12" y="21" width="72" height="18" rx="9" {...strand} {...a("garm-weft", 0)} />
+      <rect x="12" y="57" width="72" height="18" rx="9" {...strand} {...a("garm-weft", 0.24)} />
+      {/* vertical strands — warp (woven over) */}
+      <rect x="21" y="12" width="18" height="72" rx="9" {...strand} {...a("garm-warp", 0.12)} />
+      <rect x="57" y="12" width="18" height="72" rx="9" {...strand} {...a("garm-warp", 0.36)} />
+      {/* over-under correction patches → basket weave */}
+      <rect x="17" y="57" width="26" height="18" rx="9" {...strand} {...a("garm-patch", 0.62)} />
+      <rect x="53" y="21" width="26" height="18" rx="9" {...strand} {...a("garm-patch", 0.72)} />
+    </svg>
+  );
+}
+
+// ─── Animated welcome illustrations (flat, undraw-inspired) ──────────────────────
+// Slide 2 — kids playing football, scoring into a goal (one-shot "goal" animation).
+function FootballArt({ size = 248 }: { size?: number }) {
+  return (
+    <svg width={size} height={(size * 184) / 248} viewBox="0 0 248 184" fill="none" role="img" aria-label="Kids playing football">
+      <style>{`
+        .fbBall{transform-box:fill-box;animation:fbBall 1.5s cubic-bezier(.3,0,.55,1) forwards}
+        .fbLeg{transform-box:fill-box;transform-origin:top center;animation:fbKick 1.5s ease-out forwards}
+        .fbGoalie{transform-box:fill-box;animation:fbDive 1.5s ease-in-out forwards}
+        .fbCheer{transform-box:fill-box;animation:fbCheer .7s ease-in-out infinite}
+        .fbNet{transform-box:fill-box;transform-origin:center;animation:fbNet .5s ease 1.45s both}
+        .fbWin{transform-box:fill-box;animation:fbWin 1.2s ease 1.5s both}
+        @keyframes fbBall{0%{transform:translate(0,0)}55%{transform:translate(70px,-52px)}100%{transform:translate(112px,-30px)}}
+        @keyframes fbKick{0%{transform:rotate(-26deg)}18%{transform:rotate(44deg)}42%,100%{transform:rotate(8deg)}}
+        @keyframes fbDive{0%,52%{transform:translate(0,0) rotate(0)}82%,100%{transform:translate(-9px,7px) rotate(-15deg)}}
+        @keyframes fbCheer{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+        @keyframes fbNet{0%{transform:scaleY(1)}40%{transform:scaleY(1.06)}100%{transform:scaleY(1)}}
+        @keyframes fbWin{0%{transform:scale(.2);opacity:0}35%{transform:scale(1);opacity:1}100%{opacity:1}}
+        @media (prefers-reduced-motion:reduce){.fbBall,.fbLeg,.fbGoalie,.fbCheer,.fbNet,.fbWin{animation:none}}
+      `}</style>
+      <circle cx="124" cy="92" r="84" fill="rgba(200,169,126,0.12)" />
+      <ellipse cx="124" cy="172" rx="86" ry="9" fill="rgba(13,13,13,0.06)" />
+
+      {/* Goal */}
+      <g>
+        <rect x="172" y="64" width="66" height="5" rx="2" fill="#E6E6E6" />
+        <rect x="172" y="64" width="5" height="88" rx="2" fill="#E6E6E6" />
+        <rect x="233" y="64" width="5" height="88" rx="2" fill="#E6E6E6" />
+        <g className="fbNet" stroke="#D7D7D7" strokeWidth="1">
+          <line x1="184" y1="69" x2="184" y2="150" /><line x1="196" y1="69" x2="196" y2="150" />
+          <line x1="208" y1="69" x2="208" y2="150" /><line x1="220" y1="69" x2="220" y2="150" />
+          <line x1="177" y1="84" x2="233" y2="84" /><line x1="177" y1="102" x2="233" y2="102" />
+          <line x1="177" y1="120" x2="233" y2="120" /><line x1="177" y1="138" x2="233" y2="138" />
+        </g>
+      </g>
+
+      {/* Goalie kid — dark jersey, brand-gold shorts */}
+      <g className="fbGoalie">
+        <rect x="196" y="118" width="7" height="22" rx="3.5" fill="#C8A97E" />
+        <rect x="206" y="118" width="7" height="22" rx="3.5" fill="#C8A97E" />
+        <rect x="195" y="98" width="20" height="24" rx="8" fill="#0D0D0D" />
+        <path d="M180 104 q12 -6 16 4" stroke="#ED9DA0" strokeWidth="6" fill="none" strokeLinecap="round" />
+        <path d="M214 108 q12 -8 18 -2" stroke="#ED9DA0" strokeWidth="6" fill="none" strokeLinecap="round" />
+        <circle cx="205" cy="88" r="10" fill="#ED9DA0" />
+        <path d="M195 87 q10 -15 20 0 q-3 -9 -10 -9 q-7 0 -10 9 Z" fill="#2F2E41" />
+      </g>
+
+      {/* Cheering kid (teal) */}
+      <g className="fbCheer">
+        <rect x="26" y="120" width="7" height="22" rx="3.5" fill="#2F2E41" />
+        <rect x="36" y="120" width="7" height="22" rx="3.5" fill="#2F2E41" />
+        <rect x="25" y="98" width="20" height="26" rx="8" fill="#3E7E7A" />
+        <path d="M27 100 q-8 -10 -4 -20" stroke="#ED9DA0" strokeWidth="6" fill="none" strokeLinecap="round" />
+        <path d="M43 100 q8 -10 4 -20" stroke="#ED9DA0" strokeWidth="6" fill="none" strokeLinecap="round" />
+        <circle cx="35" cy="88" r="10" fill="#ED9DA0" />
+        <path d="M25 87 q10 -15 20 0 q-3 -9 -10 -9 q-7 0 -10 9 Z" fill="#2F2E41" />
+      </g>
+
+      {/* Kicker kid (gold) */}
+      <g>
+        <rect x="58" y="118" width="7" height="24" rx="3.5" fill="#2F2E41" />
+        <g className="fbLeg">
+          <rect x="68" y="118" width="7" height="24" rx="3.5" fill="#2F2E41" />
+          <ellipse cx="71" cy="142" rx="6" ry="3" fill="#1F2730" />
+        </g>
+        <ellipse cx="61" cy="142" rx="6" ry="3" fill="#1F2730" />
+        <rect x="54" y="96" width="22" height="26" rx="9" fill="#C8A97E" />
+        <path d="M54 100 q-9 8 -6 18" stroke="#ED9DA0" strokeWidth="6" fill="none" strokeLinecap="round" />
+        <circle cx="66" cy="86" r="11" fill="#ED9DA0" />
+        <path d="M55 85 q11 -16 22 0 q-3 -10 -11 -10 q-8 0 -11 10 Z" fill="#2F2E41" />
+      </g>
+
+      {/* Ball */}
+      <g className="fbBall">
+        <circle cx="96" cy="150" r="9" fill="#FBF8F2" stroke="#0D0D0D" strokeWidth="1" />
+        <path d="M96 144 l4.5 3.3 -1.7 5.3 -5.6 0 -1.7 -5.3 Z" fill="#0D0D0D" />
+      </g>
+
+      {/* GOAL! sparkle */}
+      <g className="fbWin"><path d="M150 54 l2.6 6.4 6.4 2.6 -6.4 2.6 -2.6 6.4 -2.6 -6.4 -6.4 -2.6 6.4 -2.6 Z" fill="#C8A97E" /></g>
+    </svg>
+  );
+}
+
+// Delivery van drives in and reaches the customer's house, then drops the parcel.
+function DeliveryArt({ size = 248 }: { size?: number }) {
+  const Wheel = ({ cx }: { cx: number }) => (
+    <g>
+      <circle cx={cx} cy="118" r="15" fill="#1F2730" />
+      <circle cx={cx} cy="118" r="15" fill="none" stroke="#3a444f" strokeWidth="2.5" />
+      <circle cx={cx} cy="118" r="5.5" fill="#9AA0A6" />
+      <g stroke="#9AA0A6" strokeWidth="2.2">
+        <line x1={cx} y1="105" x2={cx} y2="131" />
+        <line x1={cx - 13} y1="118" x2={cx + 13} y2="118" />
+        <line x1={cx - 9} y1="109" x2={cx + 9} y2="127" />
+        <line x1={cx - 9} y1="127" x2={cx + 9} y2="109" />
+      </g>
+      <line x1={cx} y1="118" x2={cx} y2="104" stroke="#C8A97E" strokeWidth="2.6" />
+      <animateTransform attributeName="transform" attributeType="XML" type="rotate"
+        from={`0 ${cx} 118`} to={`360 ${cx} 118`} dur="0.55s" repeatCount="4.4" fill="freeze" />
+    </g>
+  );
+  return (
+    <svg width={size} height={(size * 150) / 248} viewBox="0 0 248 150" fill="none" role="img" aria-label="Delivery reaching the customer's home">
+      <style>{`
+        .dvRoad{animation:dvRoad .5s linear 5 forwards}
+        .dvDrive{transform-box:fill-box;animation:dvDrive 2.4s cubic-bezier(.16,.6,.3,1) forwards}
+        .dvDone{transform-box:fill-box;transform-origin:center;animation:dvDone .5s cubic-bezier(.34,1.56,.64,1) 2.35s both}
+        @keyframes dvRoad{from{transform:translateX(0)}to{transform:translateX(-40px)}}
+        @keyframes dvDrive{from{transform:translateX(-210px)}to{transform:translateX(0)}}
+        @keyframes dvDone{0%{transform:scale(0);opacity:0}100%{transform:scale(1);opacity:1}}
+        @media (prefers-reduced-motion:reduce){.dvDrive{animation:none}.dvRoad{animation:none}.dvDone{animation:none}}
+      `}</style>
+      <circle cx="124" cy="76" r="84" fill="rgba(200,169,126,0.12)" />
+
+      {/* Customer's house */}
+      <g>
+        <path d="M180 86 L209 62 L238 86 Z" fill="#3E7E7A" />
+        <rect x="186" y="84" width="46" height="44" rx="3" fill="#FBF8F2" stroke="#E2DFD7" strokeWidth="1.5" />
+        <rect x="196" y="104" width="15" height="24" rx="2" fill="#C8A97E" />
+        <rect x="216" y="96" width="12" height="12" rx="2" fill="#BFE0DE" />
+        <circle cx="208" cy="116" r="1.4" fill="#7C5419" />
+      </g>
+
+      {/* road */}
+      <line x1="8" y1="133" x2="240" y2="133" stroke="#0D0D0D" strokeWidth="2" opacity="0.22" />
+      <g className="dvRoad">
+        {[-40, 0, 40, 80, 120, 160, 200, 240].map(x => (
+          <rect key={x} x={x} y="132" width="22" height="3" rx="1.5" fill="#0D0D0D" opacity="0.28" />
+        ))}
+      </g>
+
+      {/* van + wheels drive in together */}
+      <g className="dvDrive">
+        <g>
+          <rect x="36" y="60" width="92" height="58" rx="10" fill="#C8A97E" />
+          <path d="M128 74 h22 l22 22 v22 H128 Z" fill="#0D0D0D" />
+          <rect x="136" y="80" width="24" height="16" rx="3" fill="#BFE0DE" />
+          <circle cx="168" cy="112" r="3.5" fill="#FFD27A" />
+          <rect x="52" y="76" width="34" height="26" rx="5" fill="#FBF8F2" />
+          <g transform="translate(60,82)" stroke="#0D0D0D" strokeWidth="1.6" fill="#FBF8F2">
+            <rect x="0" y="4" width="18" height="4" rx="2" />
+            <rect x="0" y="11" width="18" height="4" rx="2" />
+            <rect x="4" y="0" width="4" height="18" rx="2" />
+            <rect x="11" y="0" width="4" height="18" rx="2" />
+          </g>
+        </g>
+        <Wheel cx={64} />
+        <Wheel cx={142} />
+      </g>
+
+      {/* delivered parcel + check (pops once the van arrives) */}
+      <g className="dvDone">
+        <rect x="183" y="120" width="18" height="13" rx="2" fill="#C8A97E" stroke="#7C5419" strokeWidth="1.2" />
+        <line x1="192" y1="120" x2="192" y2="133" stroke="#7C5419" strokeWidth="1.2" />
+        <circle cx="199" cy="110" r="9" fill="#3E7E7A" />
+        <path d="M195 110 l3 3 5 -6" stroke="#FBF8F2" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      </g>
+    </svg>
+  );
+}
+
+// Brand banner — real undraw "certification" illustration (recoloured to gold).
+function BrandShowcaseArt({ size = 104 }: { size?: number }) {
+  return (
+    <img src={certArt} alt="Your own brand, certified" draggable={false}
+      className="garm-float-soft"
+      style={{ display: "block", height: size, width: "auto" }} />
+  );
+}
+
+// Sign-in hero — animated scene: a sun rises and sets over the mountains across a
+// day → sunset → night cycle, with two explorers taking in the view on the ridge.
+function NatureScene() {
+  return (
+    <svg width="100%" viewBox="0 0 336 140" fill="none" role="img"
+      aria-label="Explorers watching the sun rise and set over the mountains" style={{ display: "block" }}>
+      <style>{`
+        .ns-sky{fill:#BFE3F5;animation:nsSky 16s ease-in-out infinite}
+        .ns-sun{animation:nsSun 16s ease-in-out infinite}
+        .ns-night{animation:nsNight 16s ease-in-out infinite}
+        .ns-star{animation:nsStar 2.6s ease-in-out infinite}
+        .ns-star.b{animation-delay:.7s}.ns-star.c{animation-delay:1.4s}.ns-star.d{animation-delay:2s}
+        .ns-hiker{transform-box:fill-box;animation:nsHiker 3s ease-in-out infinite}
+        .ns-hiker.b{animation-delay:.5s}
+        .ns-bird{animation:nsBird 13s linear infinite}.ns-bird.b{animation-delay:5s}
+        @keyframes nsSky{0%{fill:#F7D7AC}20%{fill:#BFE3F5}45%{fill:#F2924E}60%{fill:#23203F}86%{fill:#23203F}100%{fill:#F7D7AC}}
+        @keyframes nsSun{0%{transform:translate(44px,96px);opacity:1}23%{transform:translate(168px,26px);opacity:1}46%{transform:translate(292px,96px);opacity:1}50%{transform:translate(292px,112px);opacity:0}96%{transform:translate(44px,112px);opacity:0}100%{transform:translate(44px,96px);opacity:1}}
+        @keyframes nsNight{0%,40%{opacity:0}58%,84%{opacity:1}100%{opacity:0}}
+        @keyframes nsStar{0%,100%{opacity:.15}50%{opacity:1}}
+        @keyframes nsHiker{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.5px)}}
+        @keyframes nsBird{0%{transform:translate(-30px,6px)}100%{transform:translate(366px,-8px)}}
+        @media (prefers-reduced-motion:reduce){.ns-sky,.ns-sun,.ns-night,.ns-star,.ns-hiker,.ns-bird{animation:none}}
+      `}</style>
+
+      <rect className="ns-sky" x="0" y="0" width="336" height="140" />
+
+      {/* sun — rises and sets behind the mountains */}
+      <g className="ns-sun">
+        <circle cx="0" cy="0" r="20" fill="#FFE2A6" opacity="0.35" />
+        <circle cx="0" cy="0" r="13" fill="#FFD06A" />
+      </g>
+
+      {/* night — moon + stars */}
+      <g className="ns-night">
+        <circle cx="268" cy="30" r="16" fill="#F4F0E2" opacity="0.25" />
+        <circle cx="268" cy="30" r="11" fill="#F6F2E6" />
+        <circle className="ns-star" cx="40" cy="26" r="1.4" fill="#fff" />
+        <circle className="ns-star b" cx="84" cy="16" r="1.2" fill="#fff" />
+        <circle className="ns-star c" cx="130" cy="30" r="1.4" fill="#fff" />
+        <circle className="ns-star d" cx="186" cy="18" r="1.2" fill="#fff" />
+        <circle className="ns-star b" cx="222" cy="40" r="1.3" fill="#fff" />
+        <circle className="ns-star" cx="306" cy="48" r="1.2" fill="#fff" />
+      </g>
+
+      {/* birds */}
+      <g className="ns-bird"><path d="M0 0 q4 -4 8 0 q4 -4 8 0" fill="none" stroke="#2A3350" strokeWidth="1.4" transform="translate(60 44)" /></g>
+      <g className="ns-bird b"><path d="M0 0 q3 -3 6 0 q3 -3 6 0" fill="none" stroke="#2A3350" strokeWidth="1.2" transform="translate(90 58)" /></g>
+
+      {/* mountains */}
+      <path d="M0 112 L60 78 L112 104 L172 66 L232 100 L300 74 L336 94 L336 140 L0 140 Z" fill="#5E6E96" />
+      <path d="M172 66 L162 78 L172 74 L182 80 Z" fill="#EAF1F6" opacity="0.85" />
+      <path d="M300 74 L292 84 L300 81 L308 86 Z" fill="#EAF1F6" opacity="0.85" />
+      <path d="M0 140 L0 120 L72 90 L132 116 L192 86 L252 112 L322 90 L336 100 L336 140 Z" fill="#3C476A" />
+
+      {/* foreground ridge + explorers */}
+      <path d="M0 140 L0 128 L120 120 L240 130 L336 124 L336 140 Z" fill="#2A3350" />
+      <g className="ns-hiker">
+        <line x1="150" y1="116" x2="156" y2="106" stroke="#C8A97E" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="148" cy="113" r="3" fill="#1F2740" />
+        <rect x="145.6" y="116" width="5" height="9" rx="2.3" fill="#1F2740" />
+        <rect x="150" y="117" width="3.2" height="4" rx="1" fill="#C8A97E" />
+        <line x1="146" y1="125" x2="144" y2="130" stroke="#1F2740" strokeWidth="1.5" strokeLinecap="round" />
+        <line x1="150" y1="125" x2="152" y2="130" stroke="#1F2740" strokeWidth="1.5" strokeLinecap="round" />
+      </g>
+      <g className="ns-hiker b">
+        <circle cx="166" cy="115" r="2.7" fill="#1F2740" />
+        <rect x="163.8" y="118" width="4.6" height="8" rx="2.2" fill="#1F2740" />
+        <rect x="167.5" y="119" width="3" height="3.6" rx="1" fill="#C8A97E" />
+        <line x1="164" y1="126" x2="162" y2="130" stroke="#1F2740" strokeWidth="1.4" strokeLinecap="round" />
+        <line x1="168" y1="126" x2="170" y2="130" stroke="#1F2740" strokeWidth="1.4" strokeLinecap="round" />
+        <line x1="168" y1="120" x2="174" y2="115" stroke="#1F2740" strokeWidth="1.4" strokeLinecap="round" />
+      </g>
+    </svg>
+  );
+}
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ label, cls }: { label: string; cls: string }) {
@@ -444,6 +737,136 @@ function OTPInput({ value, onChange }: { value: string; onChange: (v: string) =>
   );
 }
 
+// ─── Welcome / Onboarding intro carousel ────────────────────────────────────────
+// Shown on first launch, before sign in. Introduces Garm with a few value slides.
+function WelcomeScreen({ onDone }: { onDone: () => void }) {
+  const [idx, setIdx] = useState(0);
+  const [replay, setReplay] = useState(0); // bump to re-weave the logo
+  // Slides 1 & 2 gate "Continue" until their animation finishes (goal scored / van arrives).
+  const COMPLETE_AFTER: Record<number, number> = { 1: 1700, 2: 2900 };
+  const [done, setDone] = useState<Record<number, boolean>>({ 0: true });
+  useEffect(() => {
+    if (done[idx]) return;
+    const ms = COMPLETE_AFTER[idx];
+    if (!ms) { setDone(d => ({ ...d, [idx]: true })); return; }
+    const t = setTimeout(() => setDone(d => ({ ...d, [idx]: true })), ms);
+    return () => clearTimeout(t);
+  }, [idx, done]);
+
+  const slides = [
+    {
+      hero: "logo" as const,
+      title: "Welcome to Garm",
+      body: "Managed textile sourcing for teams and individuals — requirements, quotes, QA and delivery, all in one place.",
+    },
+    {
+      hero: <FootballArt />,
+      title: "Sourcing for everyone",
+      body: "From a single jersey to a whole squad's kit — browse fabrics and order free swatches before you buy.",
+    },
+    {
+      hero: <DeliveryArt />,
+      title: "Tracked to your doorstep",
+      body: "Live production, QA and delivery tracking — your order arrives without a single phone call.",
+    },
+  ];
+
+  const isLast = idx === slides.length - 1;
+  const slide = slides[idx];
+
+  return (
+    <div className="flex-1 flex flex-col px-6 pt-4 pb-6 min-h-0">
+      {/* Top row — wordmark + skip */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <GarmLogo size={26} style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "0.02em", color: DARK }}>Garm</span>
+        </div>
+        <button onClick={onDone}
+          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "var(--muted-foreground)", fontWeight: 500 }}>
+          Skip
+        </button>
+      </div>
+
+      {/* Hero */}
+      <div className="flex-1 flex flex-col items-center justify-center text-center">
+        {slide.hero === "logo" ? (
+          <>
+            {/* Tap the woven logo to watch it weave again (Doherty-fast feedback) */}
+            <button
+              onClick={() => setReplay(r => r + 1)}
+              aria-label="Replay logo animation"
+              className="relative mb-7 flex items-center justify-center"
+              style={{ width: 150, height: 150, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+              <span className="garm-ring" style={{ position: "absolute", width: 132, height: 132, borderRadius: "50%", border: `1.5px solid ${ACCENT}` }} />
+              <span className="garm-ring garm-ring2" style={{ position: "absolute", width: 132, height: 132, borderRadius: "50%", border: `1.5px solid ${ACCENT}` }} />
+              <GarmLogo key={replay} size={108} animated />
+            </button>
+          </>
+        ) : (
+          <div key={`h${idx}`} className="mb-6 flex items-center justify-center garm-pop" style={{ minHeight: 172 }}>
+            {slide.hero}
+          </div>
+        )}
+        <h1 key={`t${idx}`} className="garm-fade-up" style={{ fontSize: 26, fontWeight: 700, color: DARK, lineHeight: 1.2, marginBottom: 12 }}>
+          {slide.title}
+        </h1>
+        <p key={`b${idx}`} className="text-muted-foreground garm-fade-up garm-delay" style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 290 }}>
+          {slide.body}
+        </p>
+      </div>
+
+      <style>{`
+        .garm-ring{animation:garmRing 2.8s ease-out infinite}
+        .garm-ring2{animation-delay:1.4s}
+        @keyframes garmRing{0%{transform:scale(.72);opacity:.5}70%{opacity:0}100%{transform:scale(1.15);opacity:0}}
+        .garm-hint{animation:garmHint 2s ease-in-out infinite}
+        @keyframes garmHint{0%,100%{opacity:.45}50%{opacity:.9}}
+        .garm-pop{animation:garmPop .4s cubic-bezier(.34,1.56,.64,1) both}
+        @keyframes garmPop{from{transform:scale(.8);opacity:0}to{transform:scale(1);opacity:1}}
+        .garm-fade-up{animation:garmFadeUp .5s ease both}
+        .garm-delay{animation-delay:.1s}
+        @keyframes garmFadeUp{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}
+        .garm-float-soft{animation:garmFloatSoft 4s ease-in-out infinite}
+        @keyframes garmFloatSoft{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+        .goalBall{animation:goalBall 1.6s cubic-bezier(.3,0,.55,1) forwards}
+        @keyframes goalBall{0%{transform:translate(64px,118px) scale(.95);opacity:0}12%{opacity:1}55%{transform:translate(150px,44px) scale(.78)}100%{transform:translate(200px,70px) scale(.6);opacity:1}}
+        @media (prefers-reduced-motion: reduce){
+          .garm-ring,.garm-hint,.garm-pop,.garm-fade-up,.garm-float-soft,.goalBall{animation:none}
+        }
+      `}</style>
+
+      {/* Dots */}
+      <div className="flex justify-center gap-2 mb-6">
+        {slides.map((_, i) => (
+          <button key={i} onClick={() => setIdx(i)}
+            className="transition-all"
+            style={{
+              height: 7, borderRadius: 99, border: "none", cursor: "pointer", padding: 0,
+              width: i === idx ? 22 : 7,
+              background: i === idx ? DARK : "var(--border)",
+            }}/>
+        ))}
+      </div>
+
+      {/* CTA — gated until the slide's animation completes */}
+      <button
+        onClick={() => { if (!done[idx]) return; isLast ? onDone() : setIdx(idx + 1); }}
+        disabled={!done[idx]}
+        style={done[idx] ? btnPrimary : btnPrimaryDisabled}>
+        {!done[idx]
+          ? (idx === 1 ? "Scoring…" : "On the way…")
+          : <>{isLast ? "Get started" : "Continue"} <ArrowRight size={15} strokeWidth={2} /></>}
+      </button>
+      <button onClick={onDone}
+        className="w-full text-center mt-3"
+        style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "var(--muted-foreground)" }}>
+        I already have an account
+      </button>
+    </div>
+  );
+}
+
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [mode, setMode]         = useState<"phone" | "email">("phone");
@@ -494,10 +917,19 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="flex-1 flex flex-col px-5 pt-6 pb-5 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "none" }}>
 
+      {/* Animated nature hero */}
+      <div className="mb-6" style={{ borderRadius: 16, overflow: "hidden", boxShadow: "0 6px 16px rgba(0,0,0,0.08)" }}>
+        <NatureScene />
+      </div>
+
       {/* Header */}
       <div className="mb-7">
-        <div className="w-12 h-12 rounded-2xl bg-foreground flex items-center justify-center mb-4">
-          <ShieldCheck size={22} color="#fff" strokeWidth={1.5}/>
+        <div className="flex items-center gap-2.5 mb-5">
+          <GarmLogo size={44} />
+          <div>
+            <p style={{ fontSize: 17, fontWeight: 700, letterSpacing: "0.02em", color: DARK, lineHeight: 1.1 }}>Garm</p>
+            <p className="text-muted-foreground" style={{ fontSize: 11 }}>Customise yourself</p>
+          </div>
         </div>
         <p className="text-foreground mb-1" style={{ fontSize: 24, fontWeight: 700 }}>Sign in</p>
         <p className="text-muted-foreground text-sm leading-relaxed">
@@ -747,10 +1179,27 @@ function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) =
       {/* ── Account type step ── */}
       {step === "type" && (
         <>
-          <div className="mb-8">
+          <div className="mb-5">
             <p className="text-foreground mb-1" style={{ fontSize: 24, fontWeight: 700 }}>How will you use Garm?</p>
             <p className="text-muted-foreground text-sm">This helps us tailor your experience.</p>
           </div>
+
+          {/* Brand value banner */}
+          <div className="mb-6 flex items-center gap-3 rounded-2xl p-3.5"
+            style={{ background: ACCENT_BG, border: "1px solid rgba(200,169,126,0.3)" }}>
+            <div className="flex-shrink-0 flex items-center justify-center" style={{ width: 84, height: 104 }}>
+              <BrandShowcaseArt size={100} />
+            </div>
+            <div>
+              <p style={{ fontSize: 14, fontWeight: 700, color: ACCENT_TEXT, lineHeight: 1.25 }}>
+                Have your own brand in your hand
+              </p>
+              <p className="text-muted-foreground" style={{ fontSize: 12, lineHeight: 1.45, marginTop: 2 }}>
+                Custom-branded uniforms, tags &amp; packaging — made yours.
+              </p>
+            </div>
+          </div>
+
           <div className="flex flex-col gap-3">
             {/* Organisation option */}
             <button onClick={() => handleTypeSelect("organisation")}
@@ -1092,7 +1541,7 @@ const tabTitleMap: Record<Tab, string> = {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [authStep, setAuthStep]               = useState<"login" | "onboarding" | "app">("login");
+  const [authStep, setAuthStep]               = useState<"welcome" | "login" | "onboarding" | "app">("welcome");
   const [activeTab, setActiveTab]             = useState<Tab>("home");
   const [showNotifications, setShowNotifications] = useState(false);
   const [showNewOrder, setShowNewOrder]       = useState(false);
@@ -1200,6 +1649,7 @@ export default function App() {
   );
 
   // ── Auth screens ──────────────────────────────────────────────────────────
+  if (authStep === "welcome")     return phoneShell(<WelcomeScreen onDone={() => setAuthStep("login")}/>);
   if (authStep === "login")       return phoneShell(<LoginScreen onLogin={() => setAuthStep("onboarding")}/>);
   if (authStep === "onboarding")  return phoneShell(<OnboardingScreen onComplete={p => { setUserProfile(p); setAuthStep("app"); }}/>);
 
@@ -1209,6 +1659,7 @@ export default function App() {
       {activeTab !== "home" && !showHelp && (
         <div className="px-5 pt-1 pb-3 flex items-center justify-between border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
+            <GarmLogo size={18} style={{ flexShrink: 0 }} />
             <span className="text-foreground/25 text-xs" style={{ letterSpacing: "0.1em", textTransform: "uppercase" }}>Garm</span>
             <span className="text-border">·</span>
             <span className="text-foreground text-sm font-semibold">{tabTitleMap[activeTab]}</span>
