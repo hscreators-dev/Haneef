@@ -1,4 +1,4 @@
-# FabricLink Backend
+# Garm Backend
 
 Node.js · Express · TypeScript · MongoDB · Twilio · Gmail
 

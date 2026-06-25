@@ -246,7 +246,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, draftCount = 0, profile }: {
           style={{ transform: "translate(30%,-30%)" }}/>
         <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full border border-white/5"
           style={{ transform: "translate(-30%,30%)" }}/>
-        <p className="text-white/40 mb-2 label-section">FabricLink Procurement</p>
+        <p className="text-white/40 mb-2 label-section">Garm Procurement</p>
         <h1 className="text-white mb-1" style={{ fontSize: 24, fontWeight: 600, lineHeight: 1.25 }}>
           Managed textile<br/><span style={{ color: ACCENT }}>sourcing for teams</span>
         </h1>
@@ -748,7 +748,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) =
       {step === "type" && (
         <>
           <div className="mb-8">
-            <p className="text-foreground mb-1" style={{ fontSize: 24, fontWeight: 700 }}>How will you use FabricLink?</p>
+            <p className="text-foreground mb-1" style={{ fontSize: 24, fontWeight: 700 }}>How will you use Garm?</p>
             <p className="text-muted-foreground text-sm">This helps us tailor your experience.</p>
           </div>
           <div className="flex flex-col gap-3">
@@ -1209,7 +1209,7 @@ export default function App() {
       {activeTab !== "home" && !showHelp && (
         <div className="px-5 pt-1 pb-3 flex items-center justify-between border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
-            <span className="text-foreground/25 text-xs" style={{ letterSpacing: "0.1em", textTransform: "uppercase" }}>FabricLink</span>
+            <span className="text-foreground/25 text-xs" style={{ letterSpacing: "0.1em", textTransform: "uppercase" }}>Garm</span>
             <span className="text-border">·</span>
             <span className="text-foreground text-sm font-semibold">{tabTitleMap[activeTab]}</span>
           </div>

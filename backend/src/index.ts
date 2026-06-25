@@ -81,7 +81,7 @@ app.use(errorHandler);
 async function start() {
   await connectDB();
   app.listen(PORT, () => {
-    console.log(`\n🚀 FabricLink API running at http://localhost:${PORT}`);
+    console.log(`\n🚀 Garm API running at http://localhost:${PORT}`);
     console.log(`   Health: http://localhost:${PORT}/health\n`);
   });
 }

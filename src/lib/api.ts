@@ -1,5 +1,5 @@
 /**
- * FabricLink API client
+ * Garm API client
  * All calls go through this module — swap BASE_URL for production.
  */
 

@@ -1182,7 +1182,7 @@ function PolicyScreen({ kind, onBack, isOrg }: { kind: "terms" | "payment_gatewa
   const content = {
     terms: {
       title:"Terms & conditions",
-      sub:"How orders work on FabricLink",
+      sub:"How orders work on Garm",
       rows:[
         ["Orders", "Prices shown are indicative until your coordinator confirms fabric, finishing and delivery for your order."],
         ["Production", isOrg

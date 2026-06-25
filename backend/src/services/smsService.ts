@@ -24,7 +24,7 @@ export async function sendSMS(to: string, otp: string): Promise<void> {
   const toNorm = to.startsWith("+") ? to : `+91${to.replace(/\D/g, "").slice(-10)}`;
 
   const message = await getClient().messages.create({
-    body: `Your FabricLink verification code is: ${otp}. Valid for ${process.env.OTP_EXPIRES_MINUTES ?? 10} minutes. Do not share this OTP.`,
+    body: `Your Garm verification code is: ${otp}. Valid for ${process.env.OTP_EXPIRES_MINUTES ?? 10} minutes. Do not share this OTP.`,
     from,
     to: toNorm,
   });

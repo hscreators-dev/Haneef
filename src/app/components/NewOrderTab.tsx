@@ -886,8 +886,8 @@ function CourierModal({ onClose }: { onClose: () => void }) {
               <div className="flex items-center gap-2 mb-1">
                 <QrCode size={26} style={{ color: DARK }}/>
                 <div>
-                  <p style={{ fontSize: 11, fontWeight: 600, color: DARK }}>FABRICLINK SAMPLE · #SP-0821</p>
-                  <p style={{ fontSize: 10, color: "#9ca3af" }}>FabricLink Pvt. Ltd., Coimbatore 641001</p>
+                  <p style={{ fontSize: 11, fontWeight: 600, color: DARK }}>GARM SAMPLE · #SP-0821</p>
+                  <p style={{ fontSize: 10, color: "#9ca3af" }}>Garm Pvt. Ltd., Coimbatore 641001</p>
                 </div>
               </div>
               <p style={{ fontSize: 10, color: "#9ca3af" }}>Scan at pickup · Handle with care</p>
@@ -4345,7 +4345,7 @@ function CustomAudienceForm({ onContinue, onBack, onAccessories }: { onContinue:
 
         {/* Accessories — same catalog as organisation orders */}
         {onAccessories && (
-          <Section title="Or order accessories" icon={Gift}>
+          <Section title="Accessories" icon={Gift}>
             <p className="text-muted-foreground mb-3" style={{ fontSize:12 }}>Bottles, bags, ID cards, awards & more — the same catalog organisations use.</p>
             <button onClick={onAccessories}
               className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left"
