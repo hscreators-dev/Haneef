@@ -6,8 +6,10 @@ import {
   Palette, Scissors, MapPin, User, Building2, Package, RotateCcw,
   Hash, Percent, ChevronRight, GraduationCap, BookOpen, Factory,
   Landmark, Trophy, Utensils, Heart, Shirt, Dumbbell, Users, Briefcase,
-  Award, Smartphone, Gift, Star, Navigation, Loader2, ChevronLeft,
+  Award, Smartphone, Gift, Star, Navigation, Loader2, ChevronLeft, FileText,
+  Wallet, ReceiptText, ShieldCheck,
 } from "lucide-react";
+import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 
 const ACCENT      = "#C8A97E";
 const ACCENT_BG   = "rgba(200,169,126,0.12)";
@@ -28,14 +30,15 @@ const btnSecondary: React.CSSProperties = {
 };
 
 // Reusable select with properly aligned custom chevron
-function SelectField({ options, className, extraStyle }: { options: string[]; className?: string; extraStyle?: React.CSSProperties }) {
+function SelectField({ options, className, extraStyle, value, onChange, priceFor }: { options: string[]; className?: string; extraStyle?: React.CSSProperties; value?: string; onChange?: (v: string) => void; priceFor?: (o: string) => string }) {
   return (
     <div className="relative">
       <select
+        {...(value !== undefined ? { value, onChange: (e: React.ChangeEvent<HTMLSelectElement>) => onChange?.(e.target.value) } : {})}
         className={`w-full appearance-none bg-card border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm outline-none pr-10 ${className ?? ""}`}
         style={{ fontFamily: "DM Sans, sans-serif", cursor: "pointer", ...extraStyle }}
       >
-        {options.map(o => <option key={o}>{o}</option>)}
+        {options.map(o => <option key={o} value={o}>{o}{priceFor ? priceFor(o) : ""}</option>)}
       </select>
       <ChevronDown size={15} strokeWidth={1.8} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#6b7280", pointerEvents: "none" }} />
     </div>
@@ -44,8 +47,20 @@ function SelectField({ options, className, extraStyle }: { options: string[]; cl
 const fnt: React.CSSProperties = { fontFamily: "DM Sans, sans-serif" };
 
 // ─── Accessories business rule ────────────────────────────────────────────────
-const ACCESSORY_MOQ  = 100;  // minimum order quantity per accessory product
-const ACCESSORY_STEP = 10;   // increment once a product is past its first 100
+// Accessory minimum order quantity differs by persona.
+const ORG_ACCESSORY_MOQ  = 100; // organisation accessories minimum per product
+const ORG_ACCESSORY_STEP = 10;  // organisation accessories increment
+const IND_ACCESSORY_MOQ  = 1;   // individual accessories minimum per product
+const IND_ACCESSORY_STEP = 1;   // individual accessories increment
+
+const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
+
+// ─── Payment helpers (no real charge — captured for the coordinator's link) ───
+const validateUpi = (v: string) => /^[a-zA-Z0-9._-]{2,}@[a-zA-Z]{2,}$/.test(v.trim());
+const formatCardNum = (v: string) => v.replace(/\D/g, "").slice(0, 16).replace(/(.{4})/g, "$1 ").trim();
+const formatExpiry  = (v: string) => { const d = v.replace(/\D/g, "").slice(0, 4); return d.length >= 3 ? d.slice(0, 2) + "/" + d.slice(2) : d; };
+const maskCardNum   = (v: string) => { const d = v.replace(/\D/g, ""); return d.length >= 4 ? "•••• " + d.slice(-4) : d; };
+const validExpiry   = (v: string) => { const m = v.match(/^(\d{2})\/(\d{2})$/); if (!m) return false; const mo = +m[1]; return mo >= 1 && mo <= 12; };
 
 // ─── Validation helpers ───────────────────────────────────────────────────────
 
@@ -53,6 +68,12 @@ const ACCESSORY_STEP = 10;   // increment once a product is past its first 100
 function sanitizePhone(raw: string): string {
   const after = raw.replace(/^\+91\s*/, "").replace(/\D/g, "").slice(0, 10);
   return "+91" + after;
+}
+/** Format a canonical "+91XXXXXXXXXX" number for display as "+91 98765 43210" */
+function fmtPhone(canonical: string): string {
+  const d = canonical.replace(/^\+91/, "").replace(/\D/g, "").slice(0, 10);
+  const a = d.slice(0, 5), b = d.slice(5, 10);
+  return "+91" + (a ? " " + a : "") + (b ? " " + b : "");
 }
 /** Validate exactly 10 Indian mobile digits after +91 */
 function isPhoneValid(v: string): boolean {
@@ -76,6 +97,112 @@ function FieldError({ msg }: { msg: string }) {
       <AlertTriangle size={10} style={{ color:"#dc2626", flexShrink:0 }}/>
       <p style={{ fontSize:10, color:"#dc2626" }}>{msg}</p>
     </div>
+  );
+}
+
+// ─── Current-location picker (shared by individual & org delivery editors) ──────
+// Detects the device location, reverse-geocodes it, lets the user confirm on a
+// map, then calls back so the caller can auto-fill its address fields.
+function GeoLocate({ onResolved }: { onResolved: (r: { address: string; city: string; pin: string }) => void }) {
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState("");
+  const [coords, setCoords]     = useState<{ lat: number; lng: number } | null>(null);
+  const [resolved, setResolved] = useState<{ address: string; city: string; pin: string } | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [showMap, setShowMap]   = useState(false);
+
+  async function reverseGeocode(lat: number, lng: number) {
+    setResolving(true);
+    try {
+      const resp = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`,
+        { headers: { "Accept-Language": "en" } }
+      );
+      const data = await resp.json();
+      const a = data.address || {};
+      const road     = [a.road, a.house_number, a.suburb, a.neighbourhood].filter(Boolean).join(", ");
+      const cityVal  = a.city || a.town || a.village || a.county || "";
+      const postcode = (a.postcode || "").replace(/\s/g, "").slice(0, 6);
+      setResolved({ address: road || data.display_name?.split(",")[0] || "", city: cityVal, pin: postcode });
+    } catch { setResolved(null); }
+    setResolving(false);
+  }
+
+  function handleUse() {
+    if (!navigator.geolocation) { setError("Geolocation not supported on this device."); return; }
+    setLoading(true); setError("");
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const pt = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setCoords(pt); reverseGeocode(pt.lat, pt.lng); setShowMap(true); setLoading(false);
+      },
+      err => {
+        setLoading(false);
+        setError(err.code === 1 ? "Location access denied — enable it in browser settings." : "Couldn't get your location. Enter the address manually.");
+      },
+      { timeout: 12000, enableHighAccuracy: true }
+    );
+  }
+
+  function confirm() {
+    if (resolved) onResolved(resolved);
+    setShowMap(false);
+  }
+
+  return (
+    <>
+      <button onClick={handleUse} disabled={loading}
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl mb-2"
+        style={{ border: `1.5px dashed ${DARK}`, background: "rgba(13,13,13,0.04)", color: DARK, cursor: loading ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13 }}>
+        {loading ? <Loader2 size={14} className="animate-spin"/> : <Navigation size={14} strokeWidth={2}/>}
+        {loading ? "Getting your location…" : "Use current location"}
+      </button>
+      {error && <p style={{ fontSize: 11, color: "#dc2626", marginBottom: 6 }}>{error}</p>}
+
+      {showMap && coords && (
+        <div className="absolute inset-0 z-50 flex flex-col" style={{ background: "var(--background)", borderRadius: 44, overflow: "hidden" }}>
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-border flex-shrink-0">
+            <button onClick={() => setShowMap(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+              <ChevronLeft size={20} style={{ color: DARK }}/>
+            </button>
+            <div className="flex-1">
+              <p style={{ fontSize: 15, fontWeight: 700, color: DARK }}>Choose delivery location</p>
+              <p style={{ fontSize: 11, color: "var(--muted-foreground)" }}>Pin shows your detected spot</p>
+            </div>
+          </div>
+          <div className="relative flex-shrink-0" style={{ height: 300 }}>
+            <iframe
+              title="Delivery map"
+              src={`https://www.openstreetmap.org/export/embed.html?bbox=${coords.lng - 0.008},${coords.lat - 0.008},${coords.lng + 0.008},${coords.lat + 0.008}&layer=mapnik&marker=${coords.lat},${coords.lng}`}
+              className="w-full h-full" style={{ border: "none" }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <MapPin size={36} strokeWidth={2} style={{ color: DARK, marginBottom: 28, filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.35))" }}/>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 pt-4">
+            <div className="rounded-2xl border border-border bg-card p-4 mb-3">
+              <p style={{ fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Detected address</p>
+              {resolving ? (
+                <p style={{ fontSize: 13, color: "var(--muted-foreground)" }}>Locating…</p>
+              ) : resolved ? (
+                <>
+                  <p style={{ fontSize: 14, fontWeight: 600, color: DARK, lineHeight: 1.4 }}>{resolved.address}</p>
+                  <p style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{resolved.city}{resolved.pin ? ` — ${resolved.pin}` : ""}</p>
+                </>
+              ) : (
+                <p style={{ fontSize: 13, color: "var(--muted-foreground)" }}>Couldn't detect — edit manually after confirming.</p>
+              )}
+            </div>
+          </div>
+          <div className="flex-shrink-0 px-4 py-3 border-t border-border">
+            <button onClick={confirm} disabled={resolving} style={{ ...(resolving ? btnPrimaryDisabled : btnPrimary) }}>
+              <Check size={15}/> Confirm this location
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -345,15 +472,15 @@ function activeServiceLabel(type: OrgType, id: OrgService) {
 }
 
 const orgCfg: Record<OrgType, { minQty: number; defaultQty: number; qtyStep: number; defaultSizeCat: SizeCat; fabricLabel: string; fabricOptions: string[]; gsmOptions: string[]; weaveOptions: string[]; nameLabel: string; namePlaceholder: string; regLabel: string; regPlaceholder: string }> = {
-  school:      { minQty: 50,  defaultQty: 200, qtyStep: 50,  defaultSizeCat: "school",  fabricLabel: "Fabric type",    fabricOptions: ["100% Cotton Pique","Cotton-Poly Blend","100% Polyester","Linen Blend","Heavy Cotton Twill"],                  gsmOptions: ["160–180 GSM (polo shirts)","180–220 GSM (shirts)","240–280 GSM (jackets)"],          weaveOptions: ["Plain","Pique","Twill","Oxford"],                nameLabel: "School name",                namePlaceholder: "e.g. St. Mary's High School",      regLabel: "Board / Affiliation",                        regPlaceholder: "e.g. CBSE, ICSE, State Board" },
+  school:      { minQty: 100, defaultQty: 200, qtyStep: 50, defaultSizeCat: "school",  fabricLabel: "Fabric type",    fabricOptions: ["100% Cotton Pique","Cotton-Poly Blend","100% Polyester","Linen Blend","Heavy Cotton Twill"],                  gsmOptions: ["160–180 GSM (polo shirts)","180–220 GSM (shirts)","240–280 GSM (jackets)"],          weaveOptions: ["Plain","Pique","Twill","Oxford"],                nameLabel: "School name",                namePlaceholder: "e.g. St. Mary's High School",      regLabel: "Board / Affiliation",                        regPlaceholder: "e.g. CBSE, ICSE, State Board" },
   college:     { minQty: 100, defaultQty: 500, qtyStep: 50,  defaultSizeCat: "college", fabricLabel: "Fabric type",    fabricOptions: ["Cotton-Poly Blend (Dri-fit)","100% Cotton","Fleece / Sweatshirt","Micro Pique","Heavy GSM for Hoodies"],     gsmOptions: ["160–180 GSM (tees)","200–240 GSM (sweatshirts)","280–320 GSM (hoodies)"],          weaveOptions: ["Plain","Pique","French Terry","Fleece"],         nameLabel: "College / University name",  namePlaceholder: "e.g. PSG College of Technology",   regLabel: "Affiliated under",                           regPlaceholder: "e.g. Anna University, Autonomous" },
-  corporate:   { minQty: 50,  defaultQty: 300, qtyStep: 50,  defaultSizeCat: "mens",   fabricLabel: "Fabric type",    fabricOptions: ["Oxford Cotton (formal shirts)","Cotton-Poly Blend (polo)","Premium Pique","Linen Blend","Dri-fit (branded tees)"], gsmOptions: ["120–140 GSM (summer wear)","180–200 GSM (formal shirts)","220–260 GSM (polos)"],  weaveOptions: ["Oxford","Plain","Pique","Twill"],                nameLabel: "Company name",               namePlaceholder: "e.g. Tata Consultancy Services",   regLabel: "Industry / Sector",                          regPlaceholder: "e.g. IT, Finance, Manufacturing" },
-  hospital:    { minQty: 50,  defaultQty: 150, qtyStep: 25,  defaultSizeCat: "mens",   fabricLabel: "Garment type",   fabricOptions: ["Medical scrubs (Cotton-Poly)","Lab coats (100% Cotton)","Patient gowns (soft cotton)","OT wear (poly-cotton)"], gsmOptions: ["130–160 GSM (patient gowns)","180–200 GSM (scrubs & lab coats)","220–240 GSM"], weaveOptions: ["Plain weave","Twill","Ripstop"],                  nameLabel: "Hospital / Clinic name",     namePlaceholder: "e.g. Apollo Hospitals, City Clinic", regLabel: "Registration / NABH no.",                    regPlaceholder: "e.g. NABH-2024-XXXX" },
+  corporate:   { minQty: 100, defaultQty: 300, qtyStep: 50, defaultSizeCat: "mens",   fabricLabel: "Fabric type",    fabricOptions: ["Oxford Cotton (formal shirts)","Cotton-Poly Blend (polo)","Premium Pique","Linen Blend","Dri-fit (branded tees)"], gsmOptions: ["120–140 GSM (summer wear)","180–200 GSM (formal shirts)","220–260 GSM (polos)"],  weaveOptions: ["Oxford","Plain","Pique","Twill"],                nameLabel: "Company name",               namePlaceholder: "e.g. Tata Consultancy Services",   regLabel: "Industry / Sector",                          regPlaceholder: "e.g. IT, Finance, Manufacturing" },
+  hospital:    { minQty: 100, defaultQty: 150, qtyStep: 25, defaultSizeCat: "mens",   fabricLabel: "Garment type",   fabricOptions: ["Medical scrubs (Cotton-Poly)","Lab coats (100% Cotton)","Patient gowns (soft cotton)","OT wear (poly-cotton)"], gsmOptions: ["130–160 GSM (patient gowns)","180–200 GSM (scrubs & lab coats)","220–240 GSM"], weaveOptions: ["Plain weave","Twill","Ripstop"],                  nameLabel: "Hospital / Clinic name",     namePlaceholder: "e.g. Apollo Hospitals, City Clinic", regLabel: "Registration / NABH no.",                    regPlaceholder: "e.g. NABH-2024-XXXX" },
   industry:    { minQty: 100, defaultQty: 500, qtyStep: 100, defaultSizeCat: "mens",   fabricLabel: "Workwear type",  fabricOptions: ["Heavy cotton twill (workwear)","Poly-Cotton Ripstop (durable)","FR Cotton (fire-retardant)","100% Polyester (hi-vis)"], gsmOptions: ["240–280 GSM (standard workwear)","300–340 GSM (heavy duty)","360+ GSM (protective)"], weaveOptions: ["Twill","Ripstop","Plain","Canvas"],             nameLabel: "Company / Factory name",     namePlaceholder: "e.g. Mahindra Industries",         regLabel: "Industry type",                              regPlaceholder: "e.g. Automotive, Textile, Construction" },
-  hospitality: { minQty: 30,  defaultQty: 100, qtyStep: 25,  defaultSizeCat: "mens",   fabricLabel: "Fabric type",    fabricOptions: ["Premium Cotton-Poly (staff shirts)","Cotton Twill (trousers & aprons)","Pique knit (polo uniforms)","Chef coat cotton"], gsmOptions: ["160–180 GSM (shirts)","200–240 GSM (aprons)","260–300 GSM (chef coats)"], weaveOptions: ["Plain","Twill","Pique","Oxford"],                nameLabel: "Hotel / Restaurant name",    namePlaceholder: "e.g. Taj Hotels, The Grand Brasserie", regLabel: "Property type",                              regPlaceholder: "e.g. 5-star hotel, Restaurant chain" },
-  sports:      { minQty: 20,  defaultQty: 100, qtyStep: 20,  defaultSizeCat: "college",fabricLabel: "Sports fabric",  fabricOptions: ["Dri-fit Polyester (jerseys)","Mesh knit (ventilated kits)","Compression spandex blend","Fleece (tracksuits)"], gsmOptions: ["100–130 GSM (jerseys & singlets)","160–180 GSM (training wear)","280–320 GSM (tracksuits)"], weaveOptions: ["Knit (jersey)","Mesh","Interlock","Fleece"],   nameLabel: "Club / Team name",           namePlaceholder: "e.g. Chennai Super Kings, ABC FC",  regLabel: "Sport / League",                             regPlaceholder: "e.g. Cricket, Football, Basketball" },
+  hospitality: { minQty: 100, defaultQty: 100, qtyStep: 25, defaultSizeCat: "mens",   fabricLabel: "Fabric type",    fabricOptions: ["Premium Cotton-Poly (staff shirts)","Cotton Twill (trousers & aprons)","Pique knit (polo uniforms)","Chef coat cotton"], gsmOptions: ["160–180 GSM (shirts)","200–240 GSM (aprons)","260–300 GSM (chef coats)"], weaveOptions: ["Plain","Twill","Pique","Oxford"],                nameLabel: "Hotel / Restaurant name",    namePlaceholder: "e.g. Taj Hotels, The Grand Brasserie", regLabel: "Property type",                              regPlaceholder: "e.g. 5-star hotel, Restaurant chain" },
+  sports:      { minQty: 100, defaultQty: 100, qtyStep: 20, defaultSizeCat: "college",fabricLabel: "Sports fabric",  fabricOptions: ["Dri-fit Polyester (jerseys)","Mesh knit (ventilated kits)","Compression spandex blend","Fleece (tracksuits)"], gsmOptions: ["100–130 GSM (jerseys & singlets)","160–180 GSM (training wear)","280–320 GSM (tracksuits)"], weaveOptions: ["Knit (jersey)","Mesh","Interlock","Fleece"],   nameLabel: "Club / Team name",           namePlaceholder: "e.g. Chennai Super Kings, ABC FC",  regLabel: "Sport / League",                             regPlaceholder: "e.g. Cricket, Football, Basketball" },
   government:  { minQty: 100, defaultQty: 500, qtyStep: 100, defaultSizeCat: "mens",   fabricLabel: "Fabric type",    fabricOptions: ["Heavy Cotton Twill (uniforms)","Poly-Cotton Blend (formal)","100% Cotton (summer wear)","Wool Blend (winter formal)"], gsmOptions: ["180–220 GSM (standard uniform)","240–280 GSM (formal & ceremonial)","300–340 GSM (winter)"], weaveOptions: ["Twill","Plain","Serge","Oxford"],            nameLabel: "Department / Organisation name", namePlaceholder: "e.g. Tamil Nadu Police, TNEB",  regLabel: "Department code / Ministry",                 regPlaceholder: "e.g. Home Dept., Ministry of Health" },
-  ngo:         { minQty: 20,  defaultQty: 100, qtyStep: 20,  defaultSizeCat: "college",fabricLabel: "Fabric type",    fabricOptions: ["100% Cotton (tees & polos)","Organic Cotton (eco-friendly)","Cotton-Poly Blend","Recycled Polyester","Bamboo Blend"], gsmOptions: ["140–160 GSM (lightweight tees)","180–200 GSM (standard)","220–240 GSM (polo & jackets)"], weaveOptions: ["Plain","Pique","Jersey knit"],              nameLabel: "NGO / Trust name",           namePlaceholder: "e.g. Teach For India, HelpAge India", regLabel: "Registration number (optional)",              regPlaceholder: "e.g. 80G / FCRA no." },
+  ngo:         { minQty: 100, defaultQty: 100, qtyStep: 20, defaultSizeCat: "college",fabricLabel: "Fabric type",    fabricOptions: ["100% Cotton (tees & polos)","Organic Cotton (eco-friendly)","Cotton-Poly Blend","Recycled Polyester","Bamboo Blend"], gsmOptions: ["140–160 GSM (lightweight tees)","180–200 GSM (standard)","220–240 GSM (polo & jackets)"], weaveOptions: ["Plain","Pique","Jersey knit"],              nameLabel: "NGO / Trust name",           namePlaceholder: "e.g. Teach For India, HelpAge India", regLabel: "Registration number (optional)",              regPlaceholder: "e.g. 80G / FCRA no." },
 };
 
 const sizeSets: Record<SizeCat, { label: string; hint: string }[]> = {
@@ -423,6 +550,88 @@ const packagingOpts = [
   { id:"hangtag_hanger",  label:"Hangtag + hanger",       sub:"Retail-ready on hanger with tag",          cost:"+₹15/pc" },
   { id:"gift_box",        label:"Gift box packing",       sub:"Premium box with tissue paper",            cost:"+₹25/pc" },
 ];
+
+// Parse the per-piece add-on (₹) from a stitching/packaging cost label like "+₹2/pc" or "+₹1.5/pc".
+const perPcCost = (cost?: string): number => {
+  const m = cost?.match(/₹\s*([\d.]+)/);
+  return m ? parseFloat(m[1]) : 0;
+};
+
+// ─── Indicative pricing model (₹/piece) ───────────────────────────────────────
+// All sensible defaults — tweak the numbers here in one place. Garment price is
+// derived from the chosen fabric + weave so the total updates with each selection.
+function fabricRatePerPc(fabric?: string): number {
+  const f = (fabric || "").toLowerCase();
+  if (!f) return 180;
+  if (/\bfr\b|fire|retardant|hi-?vis|protective/.test(f)) return 320; // safety / industrial
+  if (/wool|fleece|hoodie|sweatshirt|french terry|chef|coat/.test(f)) return 300;
+  if (/linen|oxford|premium|organic|bamboo/.test(f))                  return 260;
+  if (/canvas|denim|workwear|heavy|ripstop|twill/.test(f))            return 240;
+  if (/pique|polo|interlock|jersey|knit/.test(f))                     return 210;
+  if (/cotton/.test(f))                                               return 190;
+  if (/poly|polyester|mesh|dri-?fit|blend/.test(f))                   return 170;
+  return 180;
+}
+function weaveAddOnPerPc(weave?: string): number {
+  const w = (weave || "").toLowerCase();
+  if (/fleece|french terry|interlock/.test(w)) return 30;
+  if (/twill|oxford|serge|canvas/.test(w))     return 20;
+  if (/pique|mesh|ripstop/.test(w))            return 12;
+  if (/jersey|knit/.test(w))                   return 10;
+  return 0; // plain / standard weave
+}
+// Base garment rate (fabric + weave) per piece — before stitching/packaging add-ons.
+function garmentRatePerPc(fabric?: string, weave?: string): number {
+  return fabricRatePerPc(fabric) + weaveAddOnPerPc(weave);
+}
+
+// Accessory price per piece — per-category base, nudged by item keywords (premium vs basic).
+const accessoryCategoryRate: Record<string, number> = {
+  bottles_mugs: 220, id_lanyards: 60, office_essentials: 90, bags: 350,
+  awards: 280, event_promo: 120, photo_personal: 260, mobile_tech: 240, textiles: 200,
+};
+function accessoryRatePerPc(categoryId: string, itemName?: string): number {
+  const base = accessoryCategoryRate[categoryId] ?? 150;
+  const n = (itemName || "").toLowerCase();
+  if (/steel|travel mug|power bank|usb|backpack|laptop|crystal|trophy|wooden|led|conference|welcome kit|gift box|gift set|gift kit|lamp|engraved/.test(n))
+    return Math.round(base * 1.6);                       // premium items
+  if (/sticker|keychain|magnet|badge|wrist band|whistle|\bpen\b|certificate|pass|fridge/.test(n))
+    return Math.max(25, Math.round(base * 0.45));        // small / low-cost items
+  return base;
+}
+// The chosen material (the first spec field) changes the price — premium materials
+// cost more, basic ones less. Multiplier is keyword-based so it covers every option.
+function accessoryMaterialMultiplier(materialValue?: string): number {
+  const m = (materialValue || "").toLowerCase();
+  if (!m) return 1;
+  if (/crystal|k9|\bmetal\b|steel|copper|leather|wooden|teak|marble|nylon|\bled\b|genuine|premium|600d/.test(m)) return 1.5;
+  if (/plastic|pvc|paper|non-?woven|acrylic|rubber|kraft|vinyl|aluminium|jute/.test(m)) return 0.8;
+  return 1;
+}
+// Per-piece price for an accessory item, factoring in the selected material spec.
+// The catalog base price is treated as the price for the DEFAULT material (first option),
+// so picking a premium material costs more and a basic one less — relative to that default.
+function accessoryItemRate(categoryId: string, itemName: string, accSpec?: Record<string, string>): number {
+  const base = accessoryRatePerPc(categoryId, itemName);
+  const specs = getAccessoryCategorySpecs(categoryId);
+  const matLabel = specs?.fields[0]?.label;
+  const defaultMat = specs?.fields[0]?.options[0];
+  const chosenMat = (matLabel ? accSpec?.[matLabel] : undefined) ?? defaultMat;
+  const rel = accessoryMaterialMultiplier(chosenMat) / accessoryMaterialMultiplier(defaultMat);
+  return Math.round(base * rel);
+}
+// Total ₹ for a map of accessory selections (key = "categoryId-itemName" → qty).
+// Pass accSpecState to price by the chosen material; without it, default materials are used.
+function accessoryOrderTotal(accessoryQty: Record<string, number>, accSpecState?: Record<string, Record<string, string>>): number {
+  let total = 0;
+  for (const [key, q] of Object.entries(accessoryQty)) {
+    if (q > 0) {
+      const { categoryId, itemName } = parseAccessoryQtyKey(key);
+      total += q * accessoryItemRate(categoryId, itemName, accSpecState?.[key]);
+    }
+  }
+  return total;
+}
 
 const refOptDefs = [
   { id:"upload_logo"    as RefOption, Icon: Upload,  label:"Upload logo / design file",   sub:"Any photo works — we digitise it for free",    badge:null, badgeCls:"" },
@@ -774,9 +983,12 @@ const individualColorPresets = [
   { hex:"#8b3a3a", label:"Burgundy"    },
 ];
 
-function IndividualColorSection() {
-  const [selected, setSelected] = useState<string[]>([]);
-  const [desc, setDesc]         = useState("");
+function IndividualColorSection({ onStateChange, initial }: { onStateChange?: (s: { selected: string[]; desc: string }) => void; initial?: { selected: string[]; desc: string } }) {
+  const [selected, setSelected] = useState<string[]>(initial?.selected ?? []);
+  const [desc, setDesc]         = useState(initial?.desc ?? "");
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onStateChange?.({ selected, desc }); }, [selected, desc]);
 
   function toggle(hex: string) {
     setSelected(p => p.includes(hex) ? p.filter(h => h !== hex) : [...p, hex]);
@@ -832,8 +1044,8 @@ function IndividualColorSection() {
 
 const COLORS_PER_PAGE = 5;
 let cid = 10;
-function ColorSection() {
-  const [colors, setColors] = useState<ColorEntry[]>([{ id:1, hex:"#1a2540", pantone:"PMS 289 C", label:"Navy Blue", position:"" }]);
+function ColorSection({ onStateChange, initial }: { onStateChange?: (colors: ColorEntry[]) => void; initial?: ColorEntry[] }) {
+  const [colors, setColors] = useState<ColorEntry[]>(initial ?? [{ id:1, hex:"#1a2540", pantone:"PMS 289 C", label:"Navy Blue", position:"" }]);
   const [open, setOpen] = useState(false);
   const [hex, setHex] = useState("#c8a84b");
   const [pantone, setPantone] = useState("");
@@ -843,6 +1055,9 @@ function ColorSection() {
   const [page, setPage] = useState(0);
   const [dupError, setDupError] = useState("");
   const fRef = useRef<HTMLInputElement>(null);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onStateChange?.(colors); }, [colors]);
 
   const totalPages = Math.ceil(colors.length / COLORS_PER_PAGE);
   const pagedColors = colors.slice(page * COLORS_PER_PAGE, (page + 1) * COLORS_PER_PAGE);
@@ -976,15 +1191,23 @@ function ColorSection() {
 
 // ─── Size Section ─────────────────────────────────────────────────────────────
 
-function SizeSection({ totalQty, defaultCat = "school", step = 1, onAllocationChange }: { totalQty: number; defaultCat?: SizeCat; step?: number; onAllocationChange?: (n: number) => void }) {
-  const [cat, setCat] = useState<SizeCat>(defaultCat);
+function SizeSection({ totalQty, defaultCat = "school", step = 1, onAllocationChange, onStateChange, initialCat, initialQtys }: { totalQty: number; defaultCat?: SizeCat; step?: number; onAllocationChange?: (n: number) => void; onStateChange?: (s: { cat: SizeCat; qtys: Record<string, number> }) => void; initialCat?: SizeCat; initialQtys?: Record<string, number> }) {
+  const [cat, setCat] = useState<SizeCat>(initialCat ?? defaultCat);
   const [showCat, setShowCat] = useState(false);
-  const [qtys, setQtys] = useState<Record<string, number>>({});
+  const [qtys, setQtys] = useState<Record<string, number>>(initialQtys ?? {});
   const [customSizes, setCustomSizes] = useState<string[]>([]);
   const [customIn, setCustomIn] = useState("");
   const [mode, setMode] = useState<"qty" | "pct">("qty");
 
-  useEffect(() => { setCat(defaultCat); setQtys({}); setShowCat(false); }, [defaultCat]);
+  // Reset on group/category change — but skip the very first mount so a resumed
+  // draft keeps its restored category & quantities.
+  const didMountSize = useRef(false);
+  useEffect(() => {
+    if (!didMountSize.current) { didMountSize.current = true; return; }
+    setCat(defaultCat); setQtys({}); setShowCat(false);
+  }, [defaultCat]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onStateChange?.({ cat, qtys }); }, [cat, qtys]);
 
   const sizes = cat === "custom" ? customSizes.map(l => ({ label: l, hint: "" })) : sizeSets[cat];
   const distributed = Object.values(qtys).reduce((a, b) => a + b, 0);
@@ -1110,9 +1333,11 @@ function SizeSection({ totalQty, defaultCat = "school", step = 1, onAllocationCh
 
 // ─── Packaging Section ────────────────────────────────────────────────────────
 
-function PackagingSection() {
-  const [stitch, setStitch] = useState("single_needle");
-  const [packing, setPacking] = useState("bulk_loose");
+function PackagingSection({ onStateChange, initial }: { onStateChange?: (s: { stitch: string; packing: string }) => void; initial?: { stitch: string; packing: string } }) {
+  const [stitch, setStitch] = useState(initial?.stitch ?? "single_needle");
+  const [packing, setPacking] = useState(initial?.packing ?? "bulk_loose");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onStateChange?.({ stitch, packing }); }, [stitch, packing]);
   const selStitch = stitchingOpts.find(s => s.id === stitch);
   const selPack   = packagingOpts.find(p => p.id === packing);
   return (
@@ -1136,13 +1361,16 @@ function PackagingSection() {
 // ─── Ref Images Section ───────────────────────────────────────────────────────
 
 let imgId = 0;
-function RefImagesSection({ persona, isAccessoryOrder = false }: { persona: Persona; isAccessoryOrder?: boolean }) {
-  const [chosen, setChosen] = useState<RefOption | null>(null);
+function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, initialChosen }: { persona: Persona; isAccessoryOrder?: boolean; onStateChange?: (s: { chosen: RefOption | null; logoNames: string[]; inspNames: string[] }) => void; initialChosen?: RefOption | null }) {
+  const [chosen, setChosen] = useState<RefOption | null>(initialChosen ?? null);
   const [logoFiles, setLogoFiles] = useState<RefImg[]>([]);
   const [showDigiBanner, setShowDigiBanner] = useState(false);
   const [inspirationFiles, setInspirationFiles] = useState<RefImg[]>([]);
   const [showCourier, setShowCourier] = useState(false);
   const [showSwatchModal, setShowSwatchModal] = useState(false);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onStateChange?.({ chosen, logoNames: logoFiles.map(f => f.name), inspNames: inspirationFiles.map(f => f.name) }); }, [chosen, logoFiles, inspirationFiles]);
 
   const logoCamRef = useRef<HTMLInputElement>(null);
   const logoGalRef = useRef<HTMLInputElement>(null);
@@ -1327,7 +1555,7 @@ function PersonaSelector({ onSelect }: { onSelect: (p: Persona) => void }) {
             </div>
           </div>
           <div className="flex items-center justify-between px-4 py-2.5 bg-foreground">
-            <span style={{ fontSize: 12, color:"rgba(255,255,255,0.7)" }}>Minimum 50 pcs · Bulk pricing</span>
+            <span style={{ fontSize: 12, color:"rgba(255,255,255,0.7)" }}>Minimum 100 pcs · Bulk pricing</span>
             <ChevronRight size={15} color="rgba(255,255,255,0.6)" strokeWidth={1.5}/>
           </div>
         </button>
@@ -1391,6 +1619,21 @@ function SwitchConfirmModal({ onConfirm, onCancel }: { onConfirm: () => void; on
 
 interface OrgDetails { type: OrgType; service: OrgService; isAccessoryOrder: boolean; accessoryQty: Record<string, number>; name: string; board: string; address: string; city: string; pin: string; contactName: string; contactPhone: string; contactEmail: string }
 
+export interface OrderSummaryColor { hex: string; label: string }
+export interface OrderAccessorySpec { name: string; qty: number; fields: { label: string; value: string }[]; notes: string }
+export interface OrderSummaryDelivery { name: string; phone: string; email?: string; address: string; city: string; pin: string }
+
+// Display-ready price details, computed at submit so Track can render both flows cleanly:
+// individuals pay a fixed price up front; organisations get an indicative estimate range.
+export interface OrderPrice {
+  kind: "fixed" | "estimate";
+  rateLine: string;        // e.g. "₹350/pc × 2 pcs"
+  addOnLine?: string;      // org only, e.g. "+₹8/pc"
+  totalLabel: string;      // "Total paid" | "Estimated total"
+  totalValue: string;      // "₹700" | "₹6,300 – ₹7,700"
+  note?: string;
+}
+
 export interface SubmittedOrderSummary {
   id: string;
   name: string;
@@ -1398,6 +1641,64 @@ export interface SubmittedOrderSummary {
   serviceLabel?: string;
   accessoryItems?: { name: string; qty: number }[];
   totalPcs?: number;
+  // ── Full order detail captured at submit (so Track shows real values) ──
+  persona?: Persona;
+  isUniform?: boolean;
+  orderForLabel?: string;
+  fabricSource?: string;
+  fabric?: string;
+  gsm?: string;
+  weave?: string;
+  colors?: OrderSummaryColor[];
+  colorDesc?: string;
+  qty?: number;
+  sizeCatLabel?: string;
+  sizeBreakdown?: { size: string; qty: number }[];
+  stitching?: string;
+  packaging?: string;
+  referenceMethod?: string;
+  referenceFiles?: number;
+  paymentMethod?: string;
+  price?: OrderPrice;
+  delivery?: OrderSummaryDelivery;
+  accessorySpecs?: OrderAccessorySpec[];
+  // Full editable snapshot so the order can be reopened at the Review step (org, pre-production).
+  editPayload?: DraftPayload;
+}
+
+// A saved-but-not-submitted order. The form builds the payload; App assigns id/createdAt.
+// A full snapshot of the editable order state, so a draft can be reopened at Review.
+export interface ResumeState {
+  material: { fabric: string; gsm: string; weave: string };
+  fabricSource: "fresh" | "surplus";
+  orgColors: ColorEntry[];
+  indivColors: { selected: string[]; desc: string };
+  sizeState: { cat: SizeCat; qtys: Record<string, number> };
+  packaging: { stitch: string; packing: string };
+  refState: { chosen: RefOption | null; logoNames: string[]; inspNames: string[] };
+  accSpecState: Record<string, Record<string, string>>;
+  delivery: { name: string; phone: string; email: string; address: string; city: string; pin: string };
+  payment: "upi" | "card";
+  savedUpis?: string[];
+  selectedUpi?: string;
+  card?: { number: string; expiry: string; name: string };
+  orgDraft: { name: string; board: string; address: string; city: string; pin: string; contactName: string; contactPhone: string; contactEmail: string };
+  qty: number;
+}
+
+export interface DraftPayload {
+  persona: Persona;
+  title: string;
+  subtitle: string;
+  summary?: SubmittedOrderSummary;
+  // For resuming the draft back into the editor:
+  orgDetails?: OrgDetails | null;
+  customDetails?: CustomOrderDetails | null;
+  resume?: ResumeState;
+}
+export interface OrderDraft extends DraftPayload {
+  id: string;
+  createdAt: number;
 }
 
 function buildSubmittedOrderSummary(orgDetails: OrgDetails): SubmittedOrderSummary {
@@ -1476,6 +1777,7 @@ function OrgTypeSelect({ value, onChange }: { value: OrgType; onChange: (v: OrgT
 }
 
 function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { onContinue: (d: OrgDetails) => void; onBack?: () => void; onCustomOrder?: () => void; switchBanner?: React.ReactNode }) {
+  const ACCESSORY_MOQ = ORG_ACCESSORY_MOQ, ACCESSORY_STEP = ORG_ACCESSORY_STEP;
   const [orgType, setOrgType]       = useState<OrgType>(currentUser.orgType);
   const [service, setService]       = useState<OrgService>(orgServiceOptions[currentUser.orgType][0].id);
   const [accessoryQty, setAccessoryQty] = useState<Record<string, number>>({});
@@ -1593,7 +1895,7 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
                   style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, background: active ? ACCENT_BG : "var(--card)" }}>
                   <div className="flex-1 min-w-0">
                     <p style={{ fontSize:13, fontWeight: active ? 600 : 500, color: active ? "#7c5419" : DARK, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item}</p>
-                    <p style={{ fontSize:10.5, color: active ? ACCENT_TEXT : "#9ca3af", marginTop:1 }}>{active ? `${q} pcs` : `Min ${ACCESSORY_MOQ} pcs`}</p>
+                    <p style={{ fontSize:10.5, color: active ? ACCENT_TEXT : "#9ca3af", marginTop:1 }}>{inr(accessoryRatePerPc(activeCat.id, item))}/pc{active ? ` · ${q} pcs · ${inr(q * accessoryRatePerPc(activeCat.id, item))}` : ` · min ${ACCESSORY_MOQ}`}</p>
                   </div>
                   <div className="flex items-center flex-shrink-0"
                     style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, borderRadius:9, overflow:"hidden", background:"var(--card)" }}>
@@ -1688,7 +1990,7 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
           {accessorySelected.length > 0 && (
             <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background:"#ecfdf5", border:"1px solid #a7f3d0" }}>
               <Check size={12} style={{ color:"#059669", flexShrink:0 }} strokeWidth={2.5}/>
-              <p style={{ fontSize:11, color:"#065f46", fontWeight:500 }}>{accessoryTotal} pcs across {accessorySelected.length} product{accessorySelected.length !== 1 ? "s" : ""} — ready to continue</p>
+              <p style={{ fontSize:11, color:"#065f46", fontWeight:500 }}>{accessoryTotal} pcs across {accessorySelected.length} product{accessorySelected.length !== 1 ? "s" : ""} · {inr(accessoryOrderTotal(accessoryQty))} — ready to continue</p>
             </div>
           )}
         </div>
@@ -1721,7 +2023,7 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
             <p className="text-foreground" style={{ fontSize: 17, fontWeight: 600 }}>Organisation order</p>
             <p className="text-muted-foreground" style={{ fontSize: 12 }}>Select your org type and what you want to order</p>
           </div>
-          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: ACCENT_BG, color:"#7c5419" }}>Step 1 of 2</span>
+          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: ACCENT_BG, color:"#7c5419" }}>Step 1 · Setup</span>
         </div>
 
         {errors.length > 0 && (
@@ -1823,7 +2125,7 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
 
 // ─── Custom Order Form (Individual / Step 1) ──────────────────────────────────
 
-interface CustomOrderDetails { garmentType: GarmentType; groupType: GroupType; audience?: CustomAudience; name: string; phone: string; email: string; address: string; city: string; pin: string }
+interface CustomOrderDetails { garmentType: GarmentType; groupType: GroupType; audience?: CustomAudience; name: string; phone: string; email: string; address: string; city: string; pin: string; isAccessoryOrder?: boolean; accessoryQty?: Record<string, number> }
 
 // educationLevel lets a parent have Child 1 (School) and Child 2 (College) in one form
 interface ChildInfo {
@@ -2243,7 +2545,7 @@ function CustomOrderForm({ onContinue, onBack }: { onContinue: (d: CustomOrderDe
             <p className="text-foreground" style={{ fontSize: 17, fontWeight: 600 }}>Custom order</p>
             <p className="text-muted-foreground" style={{ fontSize: 12 }}>Fully personalised · From 1 pc</p>
           </div>
-          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: ACCENT_BG, color:"#7c5419" }}>Step 1 of 2</span>
+          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: ACCENT_BG, color:"#7c5419" }}>Step 1 · Setup</span>
         </div>
 
         <Section title="What would you like?" icon={Scissors}>
@@ -2521,11 +2823,11 @@ function CustomOrderForm({ onContinue, onBack }: { onContinue: (d: CustomOrderDe
           <FieldError msg={name ? VALIDATORS.name(name) : ""}/>
           <div className="mb-3"/>
           <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Phone number *</p>
-          <input value={phone}
+          <input value={fmtPhone(phone)}
             onChange={e => setPhone(sanitizePhone(e.target.value))}
-            onKeyDown={e => { if ((e.key==="Backspace"||e.key==="Delete") && phone.length<=3) e.preventDefault(); }}
-            placeholder="+91 98765 43210" inputMode="tel" maxLength={13} className={INP + " block"} style={fnt}/>
-          <FieldError msg={phone ? VALIDATORS.phone(phone) : ""}/>
+            onKeyDown={e => { if ((e.key==="Backspace"||e.key==="Delete") && phone.replace(/\D/g,"").length<=2) e.preventDefault(); }}
+            placeholder="+91 98765 43210" inputMode="tel" maxLength={16} className={INP + " block"} style={fnt}/>
+          <FieldError msg={phone.replace(/^\+91/,"").replace(/\D/g,"").length > 0 ? VALIDATORS.phone(phone) : ""}/>
           <div className="mb-3"/>
           <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Email (optional)</p>
           <input value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" inputMode="email" className={INP + " block"} style={fnt}/>
@@ -2566,28 +2868,30 @@ function CustomOrderForm({ onContinue, onBack }: { onContinue: (d: CustomOrderDe
 // ─── Persona Order Form (Step 2 — shared for org & individual) ────────────────
 
 function PersonaOrderForm({
-  persona, orgDetails, customDetails, onSubmit, onChangePersona,
+  persona, orgDetails, customDetails, onSubmit, onChangePersona, onSaveDraft, resume,
 }: {
   persona: Persona;
   orgDetails?: OrgDetails | null;
   customDetails?: CustomOrderDetails | null;
-  onSubmit: (summary?: SubmittedOrderSummary) => void;
+  onSubmit: (summary?: SubmittedOrderSummary, editPayload?: DraftPayload) => void;
   onChangePersona: () => void;
+  onSaveDraft?: (d: DraftPayload) => void;
+  resume?: ResumeState | null;
 }) {
   const cfg = persona === "organisation" && orgDetails ? orgCfg[orgDetails.type]
-    : customDetails ? { ...orgCfg.school, defaultQty: 10, minQty: 10, qtyStep: 5, fabricOptions: garmentFabricMap[customDetails.garmentType].fabricOptions, gsmOptions: garmentFabricMap[customDetails.garmentType].gsmOptions, weaveOptions: ["Plain","Twill","Jersey knit","Custom"], defaultSizeCat: customDetails.audience === "kids" ? "school" as SizeCat : customDetails.audience === "women" ? "womens" as SizeCat : "mens" as SizeCat }
+    : customDetails ? { ...orgCfg.school, defaultQty: 1, minQty: 1, qtyStep: 1, fabricOptions: garmentFabricMap[customDetails.garmentType].fabricOptions, gsmOptions: garmentFabricMap[customDetails.garmentType].gsmOptions, weaveOptions: ["Plain","Twill","Jersey knit","Custom"], defaultSizeCat: customDetails.audience === "kids" ? "school" as SizeCat : customDetails.audience === "women" ? "womens" as SizeCat : "mens" as SizeCat }
     : orgCfg.school;
 
-  const [qty, setQty] = useState(cfg.minQty);
-  const [orgSizeAllocated, setOrgSizeAllocated] = useState(0);
+  const [qty, setQty] = useState(resume?.qty ?? cfg.minQty);
+  const [orgSizeAllocated, setOrgSizeAllocated] = useState(() => resume ? Object.values(resume.sizeState.qtys).reduce((a, b) => a + b, 0) : 0);
   // Track if user has explicitly visited the Sizes step — only block submit if they have and didn't complete
-  const [sizeStepVisited, setSizeStepVisited] = useState(false);
-  const [fabricSource, setFabricSource] = useState<"fresh" | "surplus">("fresh");
+  const [sizeStepVisited, setSizeStepVisited] = useState(!!resume);
+  const [fabricSource, setFabricSource] = useState<"fresh" | "surplus">(resume?.fabricSource ?? "fresh");
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [showConfirmChange, setShowConfirmChange] = useState(false);
   const [subStep, setSubStep] = useState(1);
   const [editingOrgDetails, setEditingOrgDetails] = useState(false);
-  const [orgDraft, setOrgDraft] = useState({
+  const [orgDraft, setOrgDraft] = useState(resume?.orgDraft ?? {
     name: orgDetails?.name || currentUser.org,
     board: orgDetails?.board || "",
     address: orgDetails?.address || currentUser.org + ", Erode, Tamil Nadu",
@@ -2598,12 +2902,78 @@ function PersonaOrderForm({
     contactEmail: orgDetails?.contactEmail || currentUser.email,
   });
 
+  // ── Selections lifted up from section components (for the Review step) ──
+  const [material, setMaterial] = useState(() => resume?.material ?? ({
+    fabric: cfg.fabricOptions?.[0] ?? "",
+    gsm: cfg.gsmOptions?.[0] ?? "",
+    weave: cfg.weaveOptions?.[0] ?? "",
+  }));
+  const [orgColors, setOrgColors] = useState<ColorEntry[]>(resume?.orgColors ?? []);
+  const [indivColors, setIndivColors] = useState<{ selected: string[]; desc: string }>(resume?.indivColors ?? { selected: [], desc: "" });
+  const [sizeState, setSizeState] = useState<{ cat: SizeCat; qtys: Record<string, number> }>(resume?.sizeState ?? { cat: cfg.defaultSizeCat, qtys: {} });
+  const [packaging, setPackaging] = useState<{ stitch: string; packing: string }>(resume?.packaging ?? { stitch: "single_needle", packing: "bulk_loose" });
+  const [refState, setRefState] = useState<{ chosen: RefOption | null; logoNames: string[]; inspNames: string[] }>(resume?.refState ?? { chosen: null, logoNames: [], inspNames: [] });
+  // Footer price card — tap to expand the full cost breakdown.
+  const [priceExpanded, setPriceExpanded] = useState(false);
+  // Accessory per-item specs, keyed by accessory item key → { fieldLabel: value, __notes: notes }
+  const [accSpecState, setAccSpecState] = useState<Record<string, Record<string, string>>>(resume?.accSpecState ?? {});
+  function setAccSpec(itemKey: string, field: string, value: string) {
+    setAccSpecState(s => ({ ...s, [itemKey]: { ...s[itemKey], [field]: value } }));
+  }
+
+  // Delivery + payment (used by individual orders in the Review step)
+  const [delivery, setDelivery] = useState(resume?.delivery ?? {
+    name: customDetails?.name || currentUser.name,
+    phone: customDetails?.phone || currentUser.phone,
+    email: customDetails?.email || currentUser.email,
+    address: customDetails?.address || "",
+    city: customDetails?.city || "",
+    pin: customDetails?.pin || "",
+  });
+  const [editingDelivery, setEditingDelivery] = useState(!resume);
+  const [payment, setPayment] = useState<"upi" | "card">(resume?.payment ?? "upi");
+
+  // Quick-pay UPI app (matches Payment details in account) — selected app for instant pay
+  const [upiApp, setUpiApp]           = useState<UpiProvider>("gpay");
+  // UPI + card details captured for the coordinator's secure payment link (no charge now)
+  const [savedUpis, setSavedUpis]     = useState<string[]>(resume?.savedUpis ?? []);
+  const [selectedUpi, setSelectedUpi] = useState<string>(resume?.selectedUpi ?? "");
+  const [upiInput, setUpiInput]       = useState("");
+  const [upiError, setUpiError]       = useState("");
+  const [showUpiAdd, setShowUpiAdd]   = useState((resume?.savedUpis?.length ?? 0) === 0);
+  const [cardData, setCardData]       = useState(resume?.card ?? { number: "", expiry: "", name: "" });
+  const [cardCvv, setCardCvv]         = useState("");
+  const [cardErrors, setCardErrors]   = useState<{ number?: string; expiry?: string; cvv?: string; name?: string }>({});
+
+  function addUpi() {
+    const v = upiInput.trim();
+    if (!validateUpi(v)) { setUpiError("Enter a valid UPI ID (e.g. name@bank)"); return; }
+    if (savedUpis.includes(v)) { setUpiError("This UPI ID is already added"); return; }
+    setSavedUpis(prev => [...prev, v]);
+    setSelectedUpi(v);
+    setUpiInput(""); setUpiError(""); setShowUpiAdd(false);
+  }
+
+  // Once the user has seen Review, editing a section can jump straight back to it.
+  const [visitedReview, setVisitedReview] = useState(false);
+  // Resuming a draft jumps straight to the Review step.
+  const didResumeJump = useRef(false);
+  useEffect(() => {
+    if (resume && !didResumeJump.current) { didResumeJump.current = true; setSubStep(subStepLabels.length); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resume]);
+
   const isUniformOrder = customDetails?.garmentType === "school_uniform" && (customDetails.groupType === "kids" || customDetails.groupType === "students");
+  // Accessory & uniform orders have no garment size-distribution step, so they're never "size incomplete".
+  const hasSizeStep = !isUniformOrder
+    && !((persona === "organisation" && !!orgDetails?.isAccessoryOrder) || (persona === "individual" && !!customDetails?.isAccessoryOrder));
   // Only block submit if user actually went to the Sizes step AND didn't finish
-  const sizeIncomplete = sizeStepVisited && qty > 0 && orgSizeAllocated !== qty;
+  const sizeIncomplete = hasSizeStep && sizeStepVisited && qty > 0 && orgSizeAllocated !== qty;
 
   const subLabel = orgDetails
     ? orgTypeDefs.find(o => o.id === orgDetails.type)?.label ?? "Organisation"
+    : customDetails?.isAccessoryOrder
+    ? "Accessories"
     : customDetails
     ? "Custom order"
     : persona === "organisation" ? "Organisation" : "Individual";
@@ -2612,28 +2982,76 @@ function PersonaOrderForm({
   // Show only org-type label + service in the pill — org name removed to avoid confusion
   const subName = orgDetails
     ? (serviceLabel || "Bulk order")
+    : customDetails?.isAccessoryOrder
+    ? `Personal · Min ${IND_ACCESSORY_MOQ} pcs`
     : customDetails
-    ? ((customDetails.audience === "kids" ? "Kids sizing" : customDetails.audience === "women" ? "Women sizing" : "Men sizing") + " · Min 10 pcs")
+    ? ((customDetails.audience === "kids" ? "Kids sizing" : customDetails.audience === "women" ? "Women sizing" : "Men sizing") + " · Min 3 pcs")
     : undefined;
 
   const accentBg = persona === "organisation" ? "#E0F0FF" : ACCENT_BG;
   const accentC  = persona === "organisation" ? "#1a4a8a" : "#7c5419";
 
   // Accessory org orders skip fabric/colour/size — just Specs + References + Organisation
-  const isAccessoryOrgOrder = persona === "organisation" && !!orgDetails?.isAccessoryOrder;
+  // Accessory orders are supported for BOTH organisation and individual personas.
+  const isAccessoryOrder = (persona === "organisation" && !!orgDetails?.isAccessoryOrder)
+    || (persona === "individual" && !!customDetails?.isAccessoryOrder);
+  const accessoryQtyData: Record<string, number> = orgDetails?.accessoryQty ?? customDetails?.accessoryQty ?? {};
+  // Back-compat alias (org-specific paths still read this name in places)
+  const isAccessoryOrgOrder = isAccessoryOrder;
 
-  // Build sub-step label arrays based on persona/isUniformOrder/isAccessoryOrgOrder
+  // ── Derived pricing (shared by the Sizes estimate, Review, footer & submit) ──
+  // Garment per-pc rate comes from the chosen fabric + weave; finishing adds the
+  // selected stitching + packaging. Accessory orders are priced from the catalog.
+  const garmentRate    = garmentRatePerPc(material.fabric, material.weave);
+  const finishingPerPc = perPcCost(stitchingOpts.find(s => s.id === packaging.stitch)?.cost)
+    + perPcCost(packagingOpts.find(p => p.id === packaging.packing)?.cost);
+  const accessoryTotalAmt = accessoryOrderTotal(accessoryQtyData, accSpecState);
+  // The amount an individual pays now (fixed) — garment + finishing, or accessory total.
+  const individualPayable = isAccessoryOrder ? accessoryTotalAmt : qty * (garmentRate + finishingPerPc);
+
+  // Snapshot the order as it was reopened, so Review can flag which sections changed.
+  function sectionFingerprints() {
+    return {
+      material: JSON.stringify({ ...material, fabricSource }),
+      colors: JSON.stringify(persona === "individual" ? indivColors : orgColors),
+      sizes: JSON.stringify({ qty, sizeState }),
+      packaging: JSON.stringify(packaging),
+      references: JSON.stringify(refState),
+      accessories: JSON.stringify(accSpecState),
+    } as Record<string, string>;
+  }
+  // Baseline captured the first time the user reaches Review (works for fresh orders too,
+  // not just reopened ones), so editing a section afterwards flags it as UPDATED.
+  const originalSnapshot = useRef<Record<string, string> | null>(null);
+  const sectionChanged = (key: string) => !!originalSnapshot.current && originalSnapshot.current[key] !== sectionFingerprints()[key];
+  // Per-accessory-item change detection (so each product shows its own UPDATED chip).
+  const originalAccSpec = useRef<Record<string, Record<string, string>> | null>(null);
+  function accItemFingerprint(state: Record<string, Record<string, string>> | null, itemKey: string) {
+    const { categoryId } = parseAccessoryQtyKey(itemKey);
+    const specs = getAccessoryCategorySpecs(categoryId);
+    const fields = specs ? specs.fields.map(f => state?.[itemKey]?.[f.label] ?? f.options[0]) : [];
+    const notes = state?.[itemKey]?.__notes ?? state?.[`cat:${categoryId}`]?.__notes ?? "";
+    return JSON.stringify({ fields, notes });
+  }
+  const accessoryItemChanged = (itemKey: string) => !!originalSnapshot.current
+    && accItemFingerprint(originalAccSpec.current, itemKey) !== accItemFingerprint(accSpecState, itemKey);
+
+  // Build sub-step label arrays based on persona/isUniformOrder/isAccessoryOrgOrder.
+  // Every flow ends with a "Review" step that previews the order before submission.
+  // Organisation contact/delivery is captured inside Review (no separate step).
   const subStepLabels = isAccessoryOrgOrder
-    ? ["Specs", "References", "Organisation"]
+    ? ["Specs", "References", "Review"]
     : !isUniformOrder
       ? persona === "individual"
-        ? ["Material", "Colors", "Sizes", "References"]
-        : ["Material", "Colors", "Sizes", "Packaging", "References", "Organisation"]
-      : ["References"];
+        ? ["Material", "Colors", "Sizes", "References", "Review"]
+        : ["Material", "Colors", "Sizes", "Packaging", "References", "Review"]
+      : ["References", "Review"];
 
   const totalSubSteps = subStepLabels.length;
   const currentSubStepLabel = subStepLabels[subStep - 1];
-  const orgDetailsIncomplete = currentSubStepLabel === "Organisation" && !!orgDetails && (
+
+  // True whenever org contact/address data is incomplete (independent of which step is showing)
+  const orgDataIncomplete = !!orgDetails && (
     !orgDraft.name.trim() ||
     !orgDraft.contactName.trim() ||
     orgDraft.contactPhone.replace(/\D/g, "").length < 10 ||
@@ -2641,17 +3059,664 @@ function PersonaOrderForm({
     !orgDraft.city.trim() ||
     !/^\d{6}$/.test(orgDraft.pin.trim())
   );
+  // True whenever an individual's delivery details are incomplete
+  const deliveryIncomplete = persona === "individual" && (
+    VALIDATORS.name(delivery.name) !== "" ||
+    !isPhoneValid(delivery.phone) ||
+    !delivery.address.trim() ||
+    !delivery.city.trim() ||
+    !/^\d{6}$/.test(delivery.pin.trim())
+  );
+
+  // Block forward navigation when the current step has unmet requirements, with a visible reason.
+  const sizesStepIncomplete = currentSubStepLabel === "Sizes" && qty > 0 && orgSizeAllocated !== qty;
+  // The final Review step can't submit until everything (incl. contact/delivery) is valid.
+  const reviewIncomplete = currentSubStepLabel === "Review" && (sizeIncomplete || orgDataIncomplete || deliveryIncomplete);
+  const currentStepBlocked = sizesStepIncomplete || reviewIncomplete;
+
+  const blockReason = sizesStepIncomplete
+    ? `Distribute all pieces to continue — ${orgSizeAllocated} of ${qty} pcs assigned`
+    : (currentSubStepLabel === "Review" && sizeIncomplete)
+      ? `Go back to Sizes and distribute all pieces — ${orgSizeAllocated} of ${qty} assigned`
+      : (currentSubStepLabel === "Review" && orgDataIncomplete)
+        ? "Complete the organisation, contact & delivery details before submitting"
+        : (currentSubStepLabel === "Review" && deliveryIncomplete)
+          ? "Add a valid delivery name, phone, address, city & PIN before submitting"
+          : "";
 
   useEffect(() => {
     if (currentSubStepLabel === "Sizes") setSizeStepVisited(true);
+    if (currentSubStepLabel === "Review") {
+      setVisitedReview(true);
+      if (!originalSnapshot.current) {
+        originalSnapshot.current = sectionFingerprints();
+        originalAccSpec.current = JSON.parse(JSON.stringify(accSpecState));
+      }
+    }
   }, [currentSubStepLabel]);
+
+  // Jump straight back to a named step (used by "Change" links in the Review step)
+  function goToStep(label: string) {
+    const i = subStepLabels.indexOf(label);
+    if (i >= 0) setSubStep(i + 1);
+  }
+
+  // Per-accessory-item specs (material, finish, branding, notes) for Review + summary
+  function buildAccessorySpecsList(): { key: string; name: string; qty: number; fields: { label: string; value: string }[]; notes: string }[] {
+    return Object.entries(accessoryQtyData)
+      .filter(([, q]) => q > 0)
+      .map(([key, q]) => {
+        const { categoryId, itemName } = parseAccessoryQtyKey(key);
+        const specs = getAccessoryCategorySpecs(categoryId);
+        const fields = specs ? specs.fields.map(f => ({ label: f.label, value: accSpecState[key]?.[f.label] ?? f.options[0] })) : [];
+        const notes = accSpecState[key]?.__notes ?? accSpecState[`cat:${categoryId}`]?.__notes ?? "";
+        return { key, name: itemName, qty: q, fields, notes };
+      });
+  }
+
+  // Capture the full order — every actual selection — so Track shows real data.
+  function buildFullSummary(): SubmittedOrderSummary {
+    const colors = persona === "individual"
+      ? indivColors.selected.map(hex => ({ hex, label: individualColorPresets.find(c => c.hex === hex)?.label ?? hex }))
+      : orgColors.map(c => ({ hex: c.hex, label: c.label }));
+    const sizeBreakdown = Object.entries(sizeState.qtys).filter(([, q]) => q > 0).map(([size, q]) => ({ size, qty: q }));
+    const accessorySpecs = isAccessoryOrder ? buildAccessorySpecsList() : undefined;
+    const accessoryItems = accessorySpecs?.map(a => ({ name: a.name, qty: a.qty }));
+    const accTotal = accessoryItems?.reduce((a, b) => a + b.qty, 0) ?? 0;
+    const refDef = refState.chosen ? refOptDefs.find(o => o.id === refState.chosen) : null;
+    const firstColor = colors[0]?.label;
+
+    const orderForLabel = isAccessoryOrder ? "Accessories"
+      : orgDetails ? `${subLabel}${serviceLabel ? " · " + serviceLabel : ""}`
+      : customDetails?.audience === "kids" ? "Kids"
+      : customDetails?.audience === "women" ? "Women"
+      : customDetails?.audience === "men" ? "Men"
+      : "Personal";
+
+    const name = isAccessoryOrder ? `Accessories — ${accTotal} pcs`
+      : isUniformOrder ? `${subLabel} — Uniform`
+      : `${material.fabric || "Custom order"}${firstColor ? " — " + firstColor : ""}`;
+
+    const deliveryInfo: OrderSummaryDelivery = persona === "individual"
+      ? { name: delivery.name, phone: delivery.phone, email: delivery.email, address: delivery.address, city: delivery.city, pin: delivery.pin }
+      : { name: orgDraft.contactName, phone: orgDraft.contactPhone, email: orgDraft.contactEmail, address: orgDraft.address, city: orgDraft.city, pin: orgDraft.pin };
+
+    // ── Price details — same logic as the Review step, captured for Track ──
+    // Individuals pay a fixed price up front (garment+finishing, or accessory total);
+    // organisations get an indicative range. Uniform orders are quoted by the coordinator.
+    let price: OrderPrice | undefined;
+    if (isUniformOrder) {
+      price = undefined;
+    } else if (isAccessoryOrder) {
+      const itemCount = accessoryItems?.length ?? 0;
+      const rateLine = `${accTotal} pcs · ${itemCount} product${itemCount !== 1 ? "s" : ""}`;
+      price = persona === "individual"
+        ? { kind: "fixed", rateLine, totalLabel: "Total paid", totalValue: inr(accessoryTotalAmt),
+            note: `Fixed price, paid by ${payment === "upi" ? "UPI" : "card"} to place this order.` }
+        : { kind: "estimate", rateLine, totalLabel: "Estimated total", totalValue: inr(accessoryTotalAmt),
+            note: "Indicative — your coordinator confirms the final price before production." };
+    } else if (persona === "individual") {
+      const perPc = garmentRate + finishingPerPc;
+      price = {
+        kind: "fixed",
+        rateLine: `${qty} ${qty > 1 ? "pieces" : "piece"} × ${inr(perPc)} each`,
+        totalLabel: "Total paid",
+        totalValue: inr(qty * perPc),
+        note: `Fixed price, paid by ${payment === "upi" ? "UPI" : "card"} to place this order.`,
+      };
+    } else {
+      price = {
+        kind: "estimate",
+        rateLine: `${qty} pieces × about ${inr(garmentRate)} each`,
+        addOnLine: finishingPerPc > 0 ? `+${inr(finishingPerPc)}/pc` : undefined,
+        totalLabel: "Estimated total",
+        totalValue: `${inr(qty * garmentRate * 0.9 + qty * finishingPerPc)} – ${inr(qty * garmentRate * 1.1 + qty * finishingPerPc)}`,
+        note: "Indicative — your coordinator confirms the final price before production.",
+      };
+    }
+
+    return {
+      id: "#FL-2046",
+      name,
+      isAccessoryOrder,
+      serviceLabel: serviceLabel ?? undefined,
+      accessoryItems,
+      totalPcs: isAccessoryOrder ? accTotal : undefined,
+      persona,
+      isUniform: isUniformOrder,
+      orderForLabel,
+      fabricSource: isAccessoryOrder || isUniformOrder ? undefined : (fabricSource === "surplus" ? "Surplus (mill stock)" : "New fabric"),
+      fabric: isAccessoryOrder || isUniformOrder ? undefined : material.fabric,
+      gsm: isAccessoryOrder || isUniformOrder ? undefined : material.gsm,
+      weave: isAccessoryOrder || isUniformOrder ? undefined : material.weave,
+      colors: isAccessoryOrder ? undefined : colors,
+      colorDesc: persona === "individual" ? indivColors.desc : "",
+      qty: isAccessoryOrder ? undefined : qty,
+      sizeCatLabel: isAccessoryOrder || isUniformOrder ? undefined : sizeCats.find(c => c.id === sizeState.cat)?.label,
+      sizeBreakdown: isAccessoryOrder ? undefined : sizeBreakdown,
+      stitching: isAccessoryOrder ? undefined : stitchingOpts.find(s => s.id === packaging.stitch)?.label,
+      packaging: isAccessoryOrder ? undefined : packagingOpts.find(p => p.id === packaging.packing)?.label,
+      referenceMethod: refDef?.label,
+      referenceFiles: refState.logoNames.length + refState.inspNames.length,
+      paymentMethod: persona === "individual"
+        ? (payment === "upi"
+            ? (selectedUpi ? `UPI · ${selectedUpi}` : "UPI")
+            : (cardData.number ? `Card · ${maskCardNum(cardData.number)}` : "Card"))
+        : undefined,
+      price,
+      delivery: deliveryInfo,
+      accessorySpecs,
+    };
+  }
+
+  // Snapshot the current order into a draft payload (App assigns id + timestamp)
+  function buildDraftPayload(): DraftPayload {
+    const accTotal = isAccessoryOrder
+      ? Object.values(accessoryQtyData).reduce((a, b) => a + b, 0)
+      : 0;
+    const subtitle = isAccessoryOrder
+      ? `Accessories · ${accTotal} pcs`
+      : `${serviceLabel || subName || (persona === "organisation" ? "Bulk order" : "Custom order")} · ${qty} pcs`;
+    return {
+      persona,
+      title: subLabel,
+      subtitle,
+      summary: buildFullSummary(),
+      orgDetails: orgDetails ?? null,
+      customDetails: customDetails ?? null,
+      resume: {
+        material, fabricSource, orgColors, indivColors, sizeState, packaging, refState,
+        accSpecState, delivery, payment, savedUpis, selectedUpi, card: cardData, orgDraft, qty,
+      },
+    };
+  }
+
+  // ── Final Review step: previews everything selected before submission ──
+  function renderReview() {
+    const isAccessory = isAccessoryOrgOrder;
+    const showMaterial  = !isUniformOrder && !isAccessory;
+    const showColors    = !isUniformOrder && !isAccessory;
+    const showSizes     = !isUniformOrder && !isAccessory;
+    const showPackaging = persona === "organisation" && !isUniformOrder && !isAccessory;
+
+    const colorChips = persona === "individual"
+      ? indivColors.selected.map(hex => ({ hex, label: individualColorPresets.find(c => c.hex === hex)?.label ?? hex }))
+      : orgColors.map(c => ({ hex: c.hex, label: c.label }));
+    const colorDesc = persona === "individual" ? indivColors.desc.trim() : "";
+
+    const sizeRows = Object.entries(sizeState.qtys).filter(([, q]) => q > 0);
+    const refDef = refState.chosen ? refOptDefs.find(o => o.id === refState.chosen) : null;
+    const refFileCount = refState.logoNames.length + refState.inspNames.length;
+    const stitchLabel = stitchingOpts.find(s => s.id === packaging.stitch)?.label ?? "";
+    const packLabel   = packagingOpts.find(p => p.id === packaging.packing)?.label ?? "";
+
+    const accessorySpecsList = isAccessory ? buildAccessorySpecsList() : [];
+    const accTotal = accessorySpecsList.reduce((a, b) => a + b.qty, 0);
+
+    const header = (title: string, to?: string, changedKey?: string) => (
+      <div className="flex items-center justify-between px-3.5 py-2.5" style={{ background: "var(--muted)", borderBottom: "0.5px solid var(--border)" }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <p style={{ fontSize: 12, fontWeight: 700, color: DARK }}>{title}</p>
+          {changedKey && sectionChanged(changedKey) && (
+            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.4, color: ACCENT_TEXT, background: ACCENT_BG, border: `1px solid ${ACCENT}`, padding: "2px 6px", borderRadius: 5 }}>UPDATED</span>
+          )}
+        </div>
+        {to && <button onClick={() => goToStep(to)} className="text-xs px-2.5 py-1 rounded-lg bg-card border border-border text-foreground" style={{ cursor: "pointer", fontWeight: 500 }}>Change</button>}
+      </div>
+    );
+    const line = (k: React.ReactNode, v: React.ReactNode) => (
+      <div className="flex items-start justify-between gap-4 py-1">
+        <span className="text-muted-foreground flex-shrink-0" style={{ fontSize: 12 }}>{k}</span>
+        <span className="text-foreground text-right" style={{ fontSize: 12, fontWeight: 500 }}>{v}</span>
+      </div>
+    );
+    const card = "rounded-2xl border border-border bg-card mb-3 overflow-hidden";
+
+    return (
+      <div>
+        {/* Intro */}
+        <div className="mb-3 flex gap-2 px-3 py-2.5 rounded-xl" style={{ background: ACCENT_BG, border: `0.5px solid ${ACCENT}` }}>
+          <Info size={13} style={{ color: ACCENT, marginTop: 1, flexShrink: 0 }}/>
+          <p style={{ fontSize: 12, color: "#7c5419", lineHeight: 1.5 }}>
+            Here's everything you selected. Check it over and tap <strong>Change</strong> on any section to edit — then submit.
+          </p>
+        </div>
+
+        {/* Accessories — items with their material / finish / branding / notes */}
+        {isAccessory && (
+          <div className={card}>
+            {header("Accessories", "Specs", "accessories")}
+            <div className="px-3.5 py-3 flex flex-col gap-2.5">
+              {accessorySpecsList.length === 0
+                ? <p className="text-muted-foreground" style={{ fontSize: 12 }}>No accessory items selected yet.</p>
+                : accessorySpecsList.map(it => (
+                    <div key={it.name} className="rounded-xl border border-border overflow-hidden">
+                      <div className="flex items-center justify-between gap-3 px-3 py-2" style={{ background: "var(--muted)" }}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{it.name}</span>
+                          {accessoryItemChanged(it.key) && (
+                            <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: ACCENT_TEXT, background: ACCENT_BG, border: `1px solid ${ACCENT}`, padding: "1px 5px", borderRadius: 5, flexShrink: 0 }}>UPDATED</span>
+                          )}
+                        </div>
+                        <span className="text-foreground" style={{ fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{it.qty} pcs</span>
+                      </div>
+                      {(it.fields.length > 0 || it.notes) && (
+                        <div className="px-3 py-2">
+                          {it.fields.map(f => line(f.label, f.value))}
+                          {it.notes && line("Notes", `“${it.notes}”`)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+              {accessorySpecsList.length > 0 && (
+                <div className="flex items-center justify-between px-3 py-2 mt-1 rounded-xl" style={{ background: ACCENT_BG, border: `0.5px solid ${ACCENT}` }}>
+                  <span style={{ fontSize: 12, color: "#7c5419" }}>Total accessories</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#7c5419" }}>{accTotal} pcs</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Material */}
+        {showMaterial && (
+          <div className={card}>
+            {header("Material", "Material", "material")}
+            <div className="px-3.5 py-3">
+              {line("Fabric source", fabricSource === "surplus" ? "Surplus (mill stock)" : "New fabric")}
+              {line("Fabric", material.fabric || "—")}
+              {line("GSM weight", material.gsm || "—")}
+              {line("Weave", material.weave || "—")}
+            </div>
+          </div>
+        )}
+
+        {/* Uniform note (fabric on record) */}
+        {isUniformOrder && (
+          <div className={card}>
+            {header("Fabric & stitching")}
+            <div className="px-3.5 py-3">
+              <div className="flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: "#ecfdf5", border: "0.5px solid #a7f3d0" }}>
+                <CheckCircle2 size={12} style={{ color: "#059669", flexShrink: 0, marginTop: 1 }}/>
+                <p style={{ fontSize: 11, color: "#065f46", lineHeight: 1.5 }}>Fabric type, GSM, colours & stitching are auto-filled from your school/college record. Your coordinator confirms before production.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Colours */}
+        {showColors && (
+          <div className={card}>
+            {header("Colours", "Colors", "colors")}
+            <div className="px-3.5 py-3">
+              {colorChips.length === 0
+                ? <p className="text-muted-foreground" style={{ fontSize: 12 }}>No colours chosen yet.</p>
+                : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {colorChips.map((c, i) => (
+                      <div key={c.hex + i} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border bg-muted">
+                        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: c.hex, border: "1px solid rgba(0,0,0,0.12)" }}/>
+                        <span style={{ fontSize: 11, fontWeight: 500 }}>{c.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              {colorDesc && <p className="text-muted-foreground mt-2" style={{ fontSize: 11, lineHeight: 1.5 }}>“{colorDesc}”</p>}
+            </div>
+          </div>
+        )}
+
+        {/* Quantity & sizes */}
+        {showSizes && (
+          <div className={card}>
+            {header("Quantity & sizes", "Sizes", "sizes")}
+            <div className="px-3.5 py-3">
+              {line("Total pieces", `${qty} pcs`)}
+              {line("Sizing", sizeCats.find(c => c.id === sizeState.cat)?.label ?? "—")}
+              {sizeRows.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {sizeRows.map(([sz, q]) => (
+                    <span key={sz} className="px-2 py-0.5 rounded-lg bg-muted border border-border" style={{ fontSize: 11, fontWeight: 500, color: DARK }}>{sz}: {q}</span>
+                  ))}
+                </div>
+              )}
+              {sizeIncomplete && (
+                <div className="mt-2 flex gap-1.5 px-2.5 py-2 rounded-lg bg-red-50 border border-red-200">
+                  <AlertTriangle size={11} className="text-red-500 flex-shrink-0 mt-0.5"/>
+                  <p className="text-red-700" style={{ fontSize: 11 }}>{orgSizeAllocated} of {qty} pcs assigned — tap Change to finish the size split.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Packaging */}
+        {showPackaging && (
+          <div className={card}>
+            {header("Stitching & packaging", "Packaging", "packaging")}
+            <div className="px-3.5 py-3">
+              {line("Stitching", stitchLabel)}
+              {line("Packaging", packLabel)}
+            </div>
+          </div>
+        )}
+
+        {/* References */}
+        <div className={card}>
+          {header("References & samples", "References", "references")}
+          <div className="px-3.5 py-3">
+            {refDef
+              ? <>{line("Method", refDef.label)}{refFileCount > 0 && line("Files attached", `${refFileCount} file${refFileCount > 1 ? "s" : ""}`)}</>
+              : <p className="text-muted-foreground" style={{ fontSize: 12 }}>No reference added — your coordinator will reach out for design details.</p>}
+          </div>
+        </div>
+
+        {/* Organisation contact & delivery — editable inline (no separate step) */}
+        {persona === "organisation" && orgDetails && (
+          <div className={card}>
+            <div className="flex items-center justify-between px-3.5 py-2.5" style={{ background: "var(--muted)", borderBottom: "0.5px solid var(--border)" }}>
+              <div className="flex items-center gap-2">
+                <Building2 size={13} style={{ color: ACCENT }}/>
+                <p style={{ fontSize: 12, fontWeight: 700, color: DARK }}>Organisation, contact & delivery</p>
+              </div>
+              {!editingOrgDetails && !orgDataIncomplete && (
+                <button onClick={() => setEditingOrgDetails(true)} className="text-xs px-2.5 py-1 rounded-lg bg-card border border-border text-foreground" style={{ cursor: "pointer", fontWeight: 500 }}>Change</button>
+              )}
+            </div>
+            <div className="px-3.5 py-3">
+              {(editingOrgDetails || orgDataIncomplete) ? (
+                <div>
+                  <GeoLocate onResolved={r => setOrgDraft(p => ({ ...p, address: r.address || p.address, city: r.city || p.city, pin: r.pin || p.pin }))}/>
+                  <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Organisation name *</p>
+                  <input value={orgDraft.name} onChange={e => setOrgDraft(p => ({ ...p, name: e.target.value }))} placeholder={orgCfg[orgDetails.type].namePlaceholder} className={INP + " mb-3 block"} style={fnt}/>
+                  <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>{orgCfg[orgDetails.type].regLabel}</p>
+                  <input value={orgDraft.board} onChange={e => setOrgDraft(p => ({ ...p, board: e.target.value }))} placeholder={orgCfg[orgDetails.type].regPlaceholder} className={INP + " mb-3 block"} style={fnt}/>
+                  <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Contact person *</p>
+                  <input value={orgDraft.contactName} onChange={e => setOrgDraft(p => ({ ...p, contactName: e.target.value }))} className={INP + " block"} style={fnt}/>
+                  <FieldError msg={orgDraft.contactName ? VALIDATORS.name(orgDraft.contactName) : ""}/>
+                  <div className="mb-3"/>
+                  <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Phone number *</p>
+                  <input value={fmtPhone(orgDraft.contactPhone)}
+                    onChange={e => setOrgDraft(p => ({ ...p, contactPhone: sanitizePhone(e.target.value) }))}
+                    onKeyDown={e => { if ((e.key === "Backspace" || e.key === "Delete") && orgDraft.contactPhone.replace(/\D/g, "").length <= 2) e.preventDefault(); }}
+                    inputMode="tel" placeholder="+91 98765 43210" maxLength={16} className={INP + " block"} style={fnt}/>
+                  <FieldError msg={orgDraft.contactPhone ? VALIDATORS.phone(orgDraft.contactPhone) : ""}/>
+                  <div className="mb-3"/>
+                  <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Email</p>
+                  <input value={orgDraft.contactEmail} onChange={e => setOrgDraft(p => ({ ...p, contactEmail: e.target.value }))} inputMode="email" className={INP + " block"} style={fnt}/>
+                  <FieldError msg={orgDraft.contactEmail ? VALIDATORS.email(orgDraft.contactEmail) : ""}/>
+                  <div className="mb-3"/>
+                  <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Delivery address *</p>
+                  <input value={orgDraft.address} onChange={e => setOrgDraft(p => ({ ...p, address: e.target.value }))} placeholder="Building, street, area" className={INP + " mb-3 block"} style={fnt}/>
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    <div>
+                      <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>City *</p>
+                      <input value={orgDraft.city} onChange={e => setOrgDraft(p => ({ ...p, city: e.target.value }))} placeholder="City" className={INP} style={fnt}/>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>PIN *</p>
+                      <input value={orgDraft.pin} onChange={e => setOrgDraft(p => ({ ...p, pin: e.target.value.replace(/\D/g, "").slice(0, 6) }))} placeholder="6-digit PIN" inputMode="numeric" maxLength={6} className={INP} style={fnt}/>
+                      <FieldError msg={orgDraft.pin ? VALIDATORS.pin(orgDraft.pin) : ""}/>
+                    </div>
+                  </div>
+                  <button onClick={() => { if (!orgDataIncomplete) setEditingOrgDetails(false); }} disabled={orgDataIncomplete}
+                    style={{ ...(orgDataIncomplete ? btnPrimaryDisabled : btnPrimary), padding: "11px 20px" }}>
+                    Save organisation details
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {line("Organisation", orgDraft.name || "—")}
+                  {orgDraft.board && line(orgCfg[orgDetails.type].regLabel, orgDraft.board)}
+                  {line("Contact", `${orgDraft.contactName || "—"} · ${fmtPhone(orgDraft.contactPhone)}`)}
+                  {orgDraft.contactEmail && line("Email", orgDraft.contactEmail)}
+                  {line("Delivery address", `${orgDraft.address}, ${orgDraft.city} ${orgDraft.pin}`)}
+                  <div className="mt-2 flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: "#ecfdf5", border: "0.5px solid #a7f3d0" }}>
+                    <Check size={11} style={{ color: "#059669", flexShrink: 0, marginTop: 1 }}/>
+                    <p style={{ fontSize: 11, color: "#065f46", lineHeight: 1.5 }}>Saved. These details are reused for your next order — tap Change only if they've changed.</p>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Delivery & contact — individual (editable) + payment */}
+        {persona === "individual" && (
+          <>
+            <div className={card}>
+              <div className="flex items-center justify-between px-3.5 py-2.5" style={{ background: "var(--muted)", borderBottom: "0.5px solid var(--border)" }}>
+                <div className="flex items-center gap-2">
+                  <Truck size={13} style={{ color: ACCENT }}/>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: DARK }}>Delivery address & contact</p>
+                </div>
+                {!editingDelivery && !deliveryIncomplete && (
+                  <button onClick={() => setEditingDelivery(true)} className="text-xs px-2.5 py-1 rounded-lg bg-card border border-border text-foreground" style={{ cursor: "pointer", fontWeight: 500 }}>Change</button>
+                )}
+              </div>
+              <div className="px-3.5 py-3">
+                {(editingDelivery || deliveryIncomplete) ? (
+                  <div>
+                    <GeoLocate onResolved={r => setDelivery(p => ({ ...p, address: r.address || p.address, city: r.city || p.city, pin: r.pin || p.pin }))}/>
+                    <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Full name *</p>
+                    <input value={delivery.name} onChange={e => setDelivery(p => ({ ...p, name: e.target.value }))} className={INP + " block"} style={fnt}/>
+                    <FieldError msg={delivery.name ? VALIDATORS.name(delivery.name) : ""}/>
+                    <div className="mb-3"/>
+                    <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Phone number *</p>
+                    <input value={fmtPhone(delivery.phone)}
+                      onChange={e => setDelivery(p => ({ ...p, phone: sanitizePhone(e.target.value) }))}
+                      onKeyDown={e => { if ((e.key === "Backspace" || e.key === "Delete") && delivery.phone.replace(/\D/g, "").length <= 2) e.preventDefault(); }}
+                      inputMode="tel" placeholder="+91 98765 43210" maxLength={16} className={INP + " block"} style={fnt}/>
+                    <FieldError msg={delivery.phone ? VALIDATORS.phone(delivery.phone) : ""}/>
+                    <div className="mb-3"/>
+                    <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Email</p>
+                    <input value={delivery.email} onChange={e => setDelivery(p => ({ ...p, email: e.target.value }))} inputMode="email" className={INP + " block"} style={fnt}/>
+                    <FieldError msg={delivery.email ? VALIDATORS.email(delivery.email) : ""}/>
+                    <div className="mb-3"/>
+                    <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Delivery address *</p>
+                    <input value={delivery.address} onChange={e => setDelivery(p => ({ ...p, address: e.target.value }))} placeholder="Flat / house, street, area" className={INP + " mb-3 block"} style={fnt}/>
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                      <div>
+                        <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>City *</p>
+                        <input value={delivery.city} onChange={e => setDelivery(p => ({ ...p, city: e.target.value }))} placeholder="City" className={INP} style={fnt}/>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>PIN *</p>
+                        <input value={delivery.pin} onChange={e => setDelivery(p => ({ ...p, pin: e.target.value.replace(/\D/g, "").slice(0, 6) }))} placeholder="6-digit PIN" inputMode="numeric" maxLength={6} className={INP} style={fnt}/>
+                        <FieldError msg={delivery.pin ? VALIDATORS.pin(delivery.pin) : ""}/>
+                      </div>
+                    </div>
+                    <button onClick={() => { if (!deliveryIncomplete) setEditingDelivery(false); }} disabled={deliveryIncomplete}
+                      style={{ ...(deliveryIncomplete ? btnPrimaryDisabled : btnPrimary), padding: "11px 20px" }}>
+                      <Check size={14}/> Save delivery address
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {line("Name", delivery.name)}
+                    {line("Phone", fmtPhone(delivery.phone))}
+                    {delivery.email && line("Email", delivery.email)}
+                    {line("Address", `${delivery.address}, ${delivery.city} ${delivery.pin}`)}
+                    <div className="mt-2 flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: "#ecfdf5", border: "0.5px solid #a7f3d0" }}>
+                      <Check size={11} style={{ color: "#059669", flexShrink: 0, marginTop: 1 }}/>
+                      <p style={{ fontSize: 11, color: "#065f46", lineHeight: 1.5 }}>Delivery address saved. Tap Change to edit or use current location.</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Payment */}
+            <div className={card}>
+              <div className="flex items-center gap-2 px-3.5 py-2.5" style={{ background: "var(--muted)", borderBottom: "0.5px solid var(--border)" }}>
+                <QrCode size={13} style={{ color: ACCENT }}/>
+                <p style={{ fontSize: 12, fontWeight: 700, color: DARK }}>Payment method</p>
+              </div>
+              <div className="px-3.5 py-3">
+                {([["upi", "UPI", "Google Pay, PhonePe, Paytm & more", QrCode], ["card", "Card", "Credit or debit card", Box]] as const).map(([id, lbl2, sub, Ic]) => {
+                  const sel = payment === id;
+                  return (
+                    <button key={id} onClick={() => setPayment(id)} className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border text-left mb-2 last:mb-0 transition-all"
+                      style={{ border: `1.5px solid ${sel ? DARK : "var(--border)"}`, background: sel ? "rgba(13,13,13,0.03)" : "var(--card)", cursor: "pointer" }}>
+                      <div className="w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border: `2px solid ${sel ? DARK : "#d1d5db"}`, background: sel ? DARK : "var(--card)" }}>
+                        {sel && <div className="w-1.5 h-1.5 rounded-full bg-white"/>}
+                      </div>
+                      <Ic size={16} strokeWidth={1.5} style={{ color: sel ? DARK : "#6b7280" }}/>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-foreground text-sm" style={{ fontWeight: sel ? 600 : 400 }}>{lbl2}</p>
+                        <p className="text-muted-foreground" style={{ fontSize: 11 }}>{sub}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {/* ── Quick-pay UPI apps (same as Payment details in account) ── */}
+                {payment === "upi" && (
+                  <>
+                    <p className="text-muted-foreground mt-1 mb-2" style={{ fontSize: 11, fontWeight: 500 }}>Pay instantly via</p>
+                    <div className="grid grid-cols-4 gap-2 mb-2">
+                      {(Object.keys(upiProviderDefs) as UpiProvider[]).map(key => {
+                        const sel = upiApp === key;
+                        return (
+                          <button key={key} onClick={() => setUpiApp(key)}
+                            className="flex flex-col items-center gap-1.5 py-3 rounded-2xl transition-transform active:scale-95"
+                            style={{ cursor: "pointer", background: sel ? ACCENT_BG : "var(--card)", border: `1.5px solid ${sel ? DARK : "var(--border)"}` }}>
+                            <UpiLogo provider={key} size={32}/>
+                            <span style={{ fontSize: 10, fontWeight: sel ? 600 : 500, color: "var(--foreground)" }}>{upiProviderDefs[key].label.split(" ")[0]}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+
+                {/* ── Expanded UPI detail ── */}
+                {payment === "upi" && (
+                  <div className="mt-1 mb-2 rounded-xl" style={{ border: "0.5px solid var(--border)", overflow: "hidden" }}>
+                    {savedUpis.map((u) => {
+                      const sel = selectedUpi === u;
+                      return (
+                        <div key={u} className="w-full flex items-center gap-2.5 px-3 py-2.5 transition-all"
+                          style={{ background: sel ? ACCENT_BG : "var(--card)", borderBottom: "0.5px solid var(--border)" }}>
+                          <button onClick={() => setSelectedUpi(u)} className="flex-1 flex items-center gap-2.5 text-left" style={{ cursor: "pointer", background: "transparent", border: "none", padding: 0 }}>
+                            <div className="w-3.5 h-3.5 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border: `2px solid ${sel ? DARK : "#d1d5db"}`, background: sel ? DARK : "var(--card)" }}>
+                              {sel && <div className="w-1 h-1 rounded-full bg-white"/>}
+                            </div>
+                            <QrCode size={14} strokeWidth={1.5} style={{ color: sel ? DARK : "#6b7280" }}/>
+                            <span className="text-sm text-foreground" style={{ fontWeight: sel ? 600 : 400, wordBreak: "break-all" }}>{u}</span>
+                          </button>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: ACCENT_TEXT, background: ACCENT_BG, padding: "2px 6px", borderRadius: 4, letterSpacing: 0.5, flexShrink: 0 }}>UPI</span>
+                          <button onClick={() => { setSavedUpis(prev => prev.filter(x => x !== u)); if (selectedUpi === u) setSelectedUpi(""); }} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 2, flexShrink: 0 }} aria-label="Remove UPI ID">
+                            <X size={13} style={{ color: "#9ca3af" }}/>
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {showUpiAdd ? (
+                      <div className="px-3 py-3">
+                        <p style={{ fontSize: 11, fontWeight: 600, color: DARK, marginBottom: 6 }}>Add UPI ID</p>
+                        <div className="flex gap-2">
+                          <input
+                            value={upiInput}
+                            onChange={(e) => { setUpiInput(e.target.value); if (upiError) setUpiError(""); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addUpi(); } }}
+                            placeholder="yourname@bank"
+                            autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                            className="flex-1 rounded-lg px-3 py-2 text-sm min-w-0"
+                            style={{ border: `1px solid ${upiError ? "#dc2626" : "var(--border)"}`, background: "var(--card)", outline: "none", color: DARK }}
+                          />
+                          <button onClick={addUpi} className="rounded-lg px-4 text-sm flex-shrink-0" style={{ background: DARK, color: "#fff", fontWeight: 600, cursor: "pointer", border: "none" }}>Save</button>
+                        </div>
+                        {upiError && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 5 }}>{upiError}</p>}
+                        <p style={{ fontSize: 10, color: "#9ca3af", marginTop: 5 }}>Works with Google Pay, PhonePe, Paytm & any UPI app.</p>
+                      </div>
+                    ) : (
+                      <button onClick={() => setShowUpiAdd(true)} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left" style={{ background: "var(--card)", cursor: "pointer", border: "none" }}>
+                        <Plus size={14} style={{ color: ACCENT }}/>
+                        <span className="flex-1 text-sm" style={{ color: ACCENT_TEXT, fontWeight: 600 }}>Add new UPI ID</span>
+                        <ChevronRight size={14} style={{ color: "#9ca3af" }}/>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Expanded Card detail ── */}
+                {payment === "card" && (
+                  <div className="mt-1 mb-2 rounded-xl px-3 py-3" style={{ border: "0.5px solid var(--border)" }}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: DARK }}>Card number</label>
+                    <input
+                      value={cardData.number}
+                      onChange={(e) => { setCardData(c => ({ ...c, number: formatCardNum(e.target.value) })); if (cardErrors.number) setCardErrors(x => ({ ...x, number: undefined })); }}
+                      onBlur={(e) => { const d = e.target.value.replace(/\D/g, ""); setCardErrors(x => ({ ...x, number: d && d.length < 13 ? "Enter a valid card number" : undefined })); }}
+                      inputMode="numeric" placeholder="1234 5678 9012 3456"
+                      className="w-full rounded-lg px-3 py-2 text-sm mt-1"
+                      style={{ border: `1px solid ${cardErrors.number ? "#dc2626" : "var(--border)"}`, background: "var(--card)", outline: "none", color: DARK, letterSpacing: 1 }}
+                    />
+                    {cardErrors.number && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 4 }}>{cardErrors.number}</p>}
+
+                    <div className="flex gap-2 mt-2.5">
+                      <div className="flex-1 min-w-0">
+                        <label style={{ fontSize: 11, fontWeight: 600, color: DARK }}>Expiry</label>
+                        <input
+                          value={cardData.expiry}
+                          onChange={(e) => { setCardData(c => ({ ...c, expiry: formatExpiry(e.target.value) })); if (cardErrors.expiry) setCardErrors(x => ({ ...x, expiry: undefined })); }}
+                          onBlur={(e) => { const v = e.target.value; setCardErrors(x => ({ ...x, expiry: v && !validExpiry(v) ? "MM/YY" : undefined })); }}
+                          inputMode="numeric" placeholder="MM/YY" maxLength={5}
+                          className="w-full rounded-lg px-3 py-2 text-sm mt-1"
+                          style={{ border: `1px solid ${cardErrors.expiry ? "#dc2626" : "var(--border)"}`, background: "var(--card)", outline: "none", color: DARK }}
+                        />
+                        {cardErrors.expiry && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 4 }}>{cardErrors.expiry}</p>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <label style={{ fontSize: 11, fontWeight: 600, color: DARK }}>CVV</label>
+                        <input
+                          value={cardCvv}
+                          onChange={(e) => { setCardCvv(e.target.value.replace(/\D/g, "").slice(0, 4)); if (cardErrors.cvv) setCardErrors(x => ({ ...x, cvv: undefined })); }}
+                          onBlur={(e) => { const v = e.target.value; setCardErrors(x => ({ ...x, cvv: v && v.length < 3 ? "3–4 digits" : undefined })); }}
+                          type="password" inputMode="numeric" placeholder="•••" maxLength={4}
+                          className="w-full rounded-lg px-3 py-2 text-sm mt-1"
+                          style={{ border: `1px solid ${cardErrors.cvv ? "#dc2626" : "var(--border)"}`, background: "var(--card)", outline: "none", color: DARK }}
+                        />
+                        {cardErrors.cvv && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 4 }}>{cardErrors.cvv}</p>}
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5">
+                      <label style={{ fontSize: 11, fontWeight: 600, color: DARK }}>Name on card</label>
+                      <input
+                        value={cardData.name}
+                        onChange={(e) => setCardData(c => ({ ...c, name: e.target.value }))}
+                        placeholder="As printed on card"
+                        className="w-full rounded-lg px-3 py-2 text-sm mt-1"
+                        style={{ border: "1px solid var(--border)", background: "var(--card)", outline: "none", color: DARK }}
+                      />
+                    </div>
+                    <p style={{ fontSize: 10, color: "#9ca3af", marginTop: 8, lineHeight: 1.5 }}>Saved securely for your coordinator's payment link. Your card is not charged now and the CVV is never stored.</p>
+                  </div>
+                )}
+
+                <div className="mt-1 flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: ACCENT_BG, border: `0.5px solid ${ACCENT}` }}>
+                  <Info size={11} style={{ color: ACCENT, flexShrink: 0, marginTop: 1 }}/>
+                  <p style={{ fontSize: 11, color: "#7c5419", lineHeight: 1.5 }}>Fixed price — pay {inr(individualPayable)} now by {payment === "upi" ? "UPI" : "card"} to place your order.{isAccessoryOrder ? "" : " Stitching & packaging are included in this price."} Your coordinator confirms fit before production.</p>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Total is shown in the sticky footer (above the buttons) so it stays visible. */}
+      </div>
+    );
+  }
 
   // Map subStep to content index within the labels array
   function getSubStepContent() {
     const label = subStepLabels[subStep - 1];
 
+    if (label === "Review") return renderReview();
+
     if (label === "Specs") {
-      const accessoryQty = orgDetails?.accessoryQty ?? {};
+      const accessoryQty = accessoryQtyData;
       const selectedItems = Object.entries(accessoryQty)
         .filter(([, q]) => q > 0)
         .map(([key, qty]) => {
@@ -2730,8 +3795,8 @@ function PersonaOrderForm({
                   <p style={{ fontSize: 13, fontWeight: 700, color: DARK }}>{cat.label}</p>
                 </div>
 
-                {accessorySpecs ? catItems.map(({ name }, idx) => (
-                  <div key={name} className="rounded-2xl overflow-hidden border border-border mb-4">
+                {accessorySpecs ? catItems.map(({ key, name }, idx) => (
+                  <div key={key} className="rounded-2xl overflow-hidden border border-border mb-4">
                     <div className="flex items-center gap-2.5 px-3.5 py-2.5" style={{ background: "var(--muted)", borderBottom: "0.5px solid var(--border)" }}>
                       <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-white" style={{ background: DARK, fontSize: 11, fontWeight: 700 }}>
                         {idx + 1}
@@ -2745,12 +3810,17 @@ function PersonaOrderForm({
                           {field.hint && (
                             <p style={{ fontSize: 10, color: "#9ca3af", marginBottom: 4 }}>{field.hint}</p>
                           )}
-                          <SelectField options={field.options} />
+                          <SelectField options={field.options}
+                            value={accSpecState[key]?.[field.label] ?? field.options[0]}
+                            onChange={v => setAccSpec(key, field.label, v)}
+                            priceFor={fi === 0 ? (opt => ` · ${inr(Math.round(accessoryRatePerPc(catId, name) * accessoryMaterialMultiplier(opt) / accessoryMaterialMultiplier(field.options[0])))}/pc`) : undefined} />
                         </div>
                       ))}
                       <div>
                         <p style={{ fontSize: 11, fontWeight: 600, color: "#374151", marginBottom: 4 }}>Notes for this item</p>
                         <textarea
+                          value={accSpecState[key]?.__notes ?? ""}
+                          onChange={e => setAccSpec(key, "__notes", e.target.value)}
                           placeholder={`Any specific requirement for ${name}…`}
                           className="w-full bg-card border border-border rounded-xl px-3 py-2 text-foreground outline-none resize-none"
                           style={{ fontSize: 12, fontFamily: "DM Sans, sans-serif", height: 52 }}
@@ -2762,6 +3832,8 @@ function PersonaOrderForm({
                   <div className="rounded-2xl border border-border p-3.5 mb-4">
                     <p className="text-foreground mb-1.5" style={{ fontSize: 13, fontWeight: 600 }}>Product notes for {cat.label}</p>
                     <textarea
+                      value={accSpecState[`cat:${catId}`]?.__notes ?? ""}
+                      onChange={e => setAccSpec(`cat:${catId}`, "__notes", e.target.value)}
                       placeholder="Describe material preferences, finish, branding or any specific requirements…"
                       className="w-full bg-card border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm outline-none resize-none h-24"
                       style={fnt}
@@ -2826,13 +3898,13 @@ function PersonaOrderForm({
               )}
 
               <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>{cfg.fabricLabel}</p>
-              <div className="mb-3"><SelectField options={cfg.fabricOptions} /></div>
+              <div className="mb-3"><SelectField options={cfg.fabricOptions} value={material.fabric} onChange={v => setMaterial(m => ({ ...m, fabric: v }))} priceFor={o => ` · ${inr(fabricRatePerPc(o))}/pc`} /></div>
 
               <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>GSM weight</p>
-              <div className="mb-3"><SelectField options={cfg.gsmOptions} /></div>
+              <div className="mb-3"><SelectField options={cfg.gsmOptions} value={material.gsm} onChange={v => setMaterial(m => ({ ...m, gsm: v }))} /></div>
 
               <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Weave</p>
-              <SelectField options={cfg.weaveOptions} />
+              <SelectField options={cfg.weaveOptions} value={material.weave} onChange={v => setMaterial(m => ({ ...m, weave: v }))} priceFor={o => { const a = weaveAddOnPerPc(o); return a > 0 ? ` · +${inr(a)}/pc` : ` · included`; }} />
             </Section>
           )}
         </div>
@@ -2841,9 +3913,9 @@ function PersonaOrderForm({
 
     if (label === "Colors") {
       if (persona === "individual") {
-        return <Section title="Colors" icon={Palette}><IndividualColorSection/></Section>;
+        return <Section title="Colors" icon={Palette}><IndividualColorSection onStateChange={setIndivColors} initial={resume ? indivColors : undefined}/></Section>;
       }
-      return <Section title="Colors" icon={Palette}><ColorSection/></Section>;
+      return <Section title="Colors" icon={Palette}><ColorSection onStateChange={setOrgColors} initial={resume ? orgColors : undefined}/></Section>;
     }
 
     if (label === "Sizes") {
@@ -2870,9 +3942,41 @@ function PersonaOrderForm({
             </div>
             <button onClick={() => setQty(q => q + cfg.qtyStep)} className="w-8 h-8 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Plus size={15}/></button>
           </div>
+
+          {/* Price — fixed for individuals (pay to order), indicative range for organisations.
+              Based on the chosen fabric + weave; finishing add-ons apply at the Packaging step. */}
+          {(() => {
+            if (persona === "individual") {
+              const perPc = garmentRate + finishingPerPc;
+              return (
+                <div className="rounded-xl px-3.5 py-3 mb-1" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
+                  <div className="flex items-center justify-between">
+                    <p style={{ fontSize:12, color:"#1a4a8a", fontWeight:600 }}>Total payable</p>
+                    <p style={{ fontSize:15, color:"#1a4a8a", fontWeight:700 }}>{inr(qty * perPc)}</p>
+                  </div>
+                  <p style={{ fontSize:10.5, color:"#315f8f", marginTop:3, lineHeight:1.5 }}>
+                    Fixed price · {qty} {qty > 1 ? "pieces" : "piece"} × {inr(perPc)} each. Pay now by UPI or card to place your order.
+                  </p>
+                </div>
+              );
+            }
+            const low = qty * garmentRate * 0.9 + qty * finishingPerPc, high = qty * garmentRate * 1.1 + qty * finishingPerPc;
+            return (
+              <div className="rounded-xl px-3.5 py-3 mb-1" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
+                <div className="flex items-center justify-between">
+                  <p style={{ fontSize:12, color:"#1a4a8a", fontWeight:600 }}>Estimated total</p>
+                  <p style={{ fontSize:15, color:"#1a4a8a", fontWeight:700 }}>{inr(low)} – {inr(high)}</p>
+                </div>
+                <p style={{ fontSize:10.5, color:"#315f8f", marginTop:3, lineHeight:1.5 }}>
+                  {qty} pieces × about {inr(garmentRate)} each. Finishing &amp; packaging add-ons adjust this — your coordinator confirms the final price.
+                </p>
+              </div>
+            );
+          })()}
+
           <div className="my-3 border-t border-border"/>
           <p className="text-foreground text-xs mb-2.5" style={{ fontWeight: 500 }}>Size distribution</p>
-          <SizeSection totalQty={qty} defaultCat={cfg.defaultSizeCat} step={10} onAllocationChange={setOrgSizeAllocated}/>
+          <SizeSection totalQty={qty} defaultCat={cfg.defaultSizeCat} step={persona === "individual" ? 1 : 10} onAllocationChange={setOrgSizeAllocated} onStateChange={setSizeState} initialCat={resume ? sizeState.cat : undefined} initialQtys={resume ? sizeState.qtys : undefined}/>
           <div className="my-3 border-t border-border"/>
           <p className="text-foreground text-xs mb-2" style={{ fontWeight: 500 }}>Additional notes</p>
           <textarea placeholder={`${subLabel} — department, special finishing, branding or OEKO-TEX requirements…`}
@@ -2888,82 +3992,9 @@ function PersonaOrderForm({
       );
     }
 
-    if (label === "Organisation" && orgDetails) {
-      const displayOrg = { ...orgDetails, ...orgDraft };
-      return (
-        <Section title="Organisation, contact & address" icon={Building2}>
-          {editingOrgDetails ? (
-            <div>
-              <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Organisation name *</p>
-              <input value={orgDraft.name} onChange={e => setOrgDraft(p => ({ ...p, name:e.target.value }))} placeholder={orgCfg[orgDetails.type].namePlaceholder} className={INP + " mb-3 block"} style={fnt}/>
-              <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>{orgCfg[orgDetails.type].regLabel}</p>
-              <input value={orgDraft.board} onChange={e => setOrgDraft(p => ({ ...p, board:e.target.value }))} placeholder={orgCfg[orgDetails.type].regPlaceholder} className={INP + " mb-3 block"} style={fnt}/>
-              <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Contact person *</p>
-              <input value={orgDraft.contactName} onChange={e => setOrgDraft(p => ({ ...p, contactName:e.target.value }))} className={INP + " block"} style={fnt}/>
-              <FieldError msg={orgDraft.contactName ? VALIDATORS.name(orgDraft.contactName) : ""}/>
-              <div className="mb-3"/>
-              <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Phone number *</p>
-              <input value={orgDraft.contactPhone}
-                onChange={e => setOrgDraft(p => ({ ...p, contactPhone:sanitizePhone(e.target.value) }))}
-                onKeyDown={e => { if ((e.key==="Backspace"||e.key==="Delete") && orgDraft.contactPhone.length<=3) e.preventDefault(); }}
-                inputMode="tel" placeholder="+91 98765 43210" maxLength={13} className={INP + " block"} style={fnt}/>
-              <FieldError msg={orgDraft.contactPhone ? VALIDATORS.phone(orgDraft.contactPhone) : ""}/>
-              <div className="mb-3"/>
-              <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Email</p>
-              <input value={orgDraft.contactEmail} onChange={e => setOrgDraft(p => ({ ...p, contactEmail:e.target.value }))} inputMode="email" className={INP + " block"} style={fnt}/>
-              <FieldError msg={orgDraft.contactEmail ? VALIDATORS.email(orgDraft.contactEmail) : ""}/>
-              <div className="mb-3"/>
-              <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Street address *</p>
-              <input value={orgDraft.address} onChange={e => setOrgDraft(p => ({ ...p, address:e.target.value }))} placeholder="Building, street, area" className={INP + " mb-3 block"} style={fnt}/>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                <div>
-                  <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>City *</p>
-                  <input value={orgDraft.city} onChange={e => setOrgDraft(p => ({ ...p, city:e.target.value }))} placeholder="City" className={INP} style={fnt}/>
-                </div>
-                <div>
-                  <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>PIN *</p>
-                  <input value={orgDraft.pin} onChange={e => setOrgDraft(p => ({ ...p, pin:e.target.value.replace(/\D/g,"").slice(0,6) }))} placeholder="6-digit PIN" inputMode="numeric" maxLength={6} className={INP} style={fnt}/>
-                  <FieldError msg={orgDraft.pin ? VALIDATORS.pin(orgDraft.pin) : ""}/>
-                </div>
-              </div>
-              <button onClick={() => setEditingOrgDetails(false)} style={{ ...btnPrimary, padding:"12px 20px" }}>Save details</button>
-            </div>
-          ) : (
-            <>
-              <div className="rounded-xl bg-muted border border-border p-3 mb-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-foreground text-sm" style={{ fontWeight:600 }}>{displayOrg.name || "Add organisation name"}</p>
-                    <p className="text-muted-foreground" style={{ fontSize:11 }}>{displayOrg.board || "Registration details to be confirmed"}</p>
-                    <p className="text-muted-foreground" style={{ fontSize:11, marginTop:3 }}>{activeServiceLabel(orgDetails.type, orgDetails.service)}</p>
-                  </div>
-                  <button onClick={() => setEditingOrgDetails(true)} className="text-xs px-2.5 py-1 rounded-xl bg-card border border-border text-foreground" style={{ cursor:"pointer", fontWeight:500 }}>Change</button>
-                </div>
-              </div>
-              <div className="flex flex-col gap-2 text-sm">
-                {[
-                  ["Contact", `${displayOrg.contactName || "Add contact"} · ${displayOrg.contactPhone || "Add phone"}`],
-                  ["Email", displayOrg.contactEmail || "Not added"],
-                  ["Address", displayOrg.address ? `${displayOrg.address}, ${displayOrg.city} ${displayOrg.pin}` : "Tap Change to add address"],
-                ].map(([k, v]) => (
-                  <div key={k} className="flex items-start justify-between gap-4">
-                    <span className="text-muted-foreground flex-shrink-0" style={{ fontSize:12 }}>{k}</span>
-                    <span className="text-foreground text-right" style={{ fontSize:12, fontWeight:500 }}>{v}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 flex gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200">
-                <Check size={12} className="text-emerald-600 flex-shrink-0 mt-0.5"/>
-                <p className="text-emerald-700 text-xs">These details are saved for the next order. Use Change only when contact or address has changed.</p>
-              </div>
-            </>
-          )}
-        </Section>
-      );
-    }
 
     if (label === "Packaging") {
-      return <Section title="Stitching & packaging" icon={Package}><PackagingSection/></Section>;
+      return <Section title="Stitching & packaging" icon={Package}><PackagingSection onStateChange={setPackaging} initial={resume ? packaging : undefined}/></Section>;
     }
 
     if (label === "References") {
@@ -2975,14 +4006,14 @@ function PersonaOrderForm({
               <p style={{ fontSize: 11, color:"#6b7280", lineHeight: 1.5 }}>Fabric & stitching auto-filled from database</p>
             </div>
           )}
-          {isAccessoryOrgOrder && orgDetails && (
+          {isAccessoryOrder && (
             <div className="mb-3 rounded-xl overflow-hidden border border-border">
               <div className="px-3 py-2 bg-muted flex items-center justify-between">
                 <p style={{ fontSize:12, fontWeight:600, color:DARK }}>Your accessory order summary</p>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" style={{ fontWeight:500 }}>Confirmed ✓</span>
               </div>
               <div className="px-3 py-2.5 flex flex-col gap-1.5">
-                {Object.entries(orgDetails.accessoryQty)
+                {Object.entries(accessoryQtyData)
                   .filter(([, q]) => q > 0)
                   .map(([key, q]) => {
                     const itemName = key.includes("-") ? key.split("-").slice(1).join("-") : key;
@@ -2997,12 +4028,12 @@ function PersonaOrderForm({
               <div className="px-3 pb-3">
                 <div className="flex items-center justify-between px-3 py-2 rounded-xl" style={{ background:ACCENT_BG, border:`0.5px solid ${ACCENT}` }}>
                   <span style={{ fontSize:12, color:"#7c5419" }}>Total accessories</span>
-                  <span style={{ fontSize:13, fontWeight:700, color:"#7c5419" }}>{Object.values(orgDetails.accessoryQty).reduce((a,b)=>a+b,0)} pcs</span>
+                  <span style={{ fontSize:13, fontWeight:700, color:"#7c5419" }}>{Object.values(accessoryQtyData).reduce((a,b)=>a+b,0)} pcs</span>
                 </div>
               </div>
             </div>
           )}
-          <Section title="References & samples" icon={ImageIcon}><RefImagesSection persona={persona} isAccessoryOrder={isAccessoryOrgOrder}/></Section>
+          <Section title="References & samples" icon={ImageIcon}><RefImagesSection persona={persona} isAccessoryOrder={isAccessoryOrgOrder} onStateChange={setRefState} initialChosen={resume ? refState.chosen : undefined}/></Section>
         </div>
       );
     }
@@ -3017,10 +4048,10 @@ function PersonaOrderForm({
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>
-              {currentSubStepLabel}
+              {currentSubStepLabel === "Packaging" ? "Stitching & Packaging" : currentSubStepLabel}
             </p>
             <p className="text-muted-foreground" style={{ fontSize: 11 }}>
-              {subStep} of {totalSubSteps}
+              Step 2 · {subStep} of {totalSubSteps}
             </p>
           </div>
           {/* Progress dots */}
@@ -3054,28 +4085,167 @@ function PersonaOrderForm({
       </div>
 
       {/* Navigation footer */}
-      <div className="flex-shrink-0 px-5 py-3 border-t border-border bg-background flex gap-3" style={{ position:"sticky", bottom:0, zIndex:10 }}>
-        {/* Back button — always visible */}
-        <button
-          onClick={() => subStep > 1 ? setSubStep(s => s - 1) : setShowConfirmChange(true)}
-          className="w-12 h-12 rounded-2xl border border-border flex items-center justify-center bg-card flex-shrink-0">
-          <ChevronDown size={16} style={{ transform: "rotate(90deg)" }} className="text-foreground"/>
-        </button>
+      <div className="flex-shrink-0 px-5 py-3 border-t border-border bg-background" style={{ position:"sticky", bottom:0, zIndex:10 }}>
+        {/* Price summary — kept in the footer (above the buttons) so it's always visible on Review */}
+        {currentSubStepLabel === "Review" && !isUniformOrder && (() => {
+          const accPcs   = Object.values(accessoryQtyData).reduce((a, b) => a + b, 0);
+          const accCount = Object.values(accessoryQtyData).filter(q => q > 0).length;
+          const perPc    = garmentRate + finishingPerPc;
+          // Sub-line under the label, tailored to garment vs accessory orders.
+          const subLine  = isAccessoryOrder
+            ? `${accPcs} pcs · ${accCount} product${accCount !== 1 ? "s" : ""}`
+            : `${qty} ${qty > 1 ? "pieces" : "piece"} × ${inr(perPc)} each`;
 
-        {/* Next or Submit */}
-        {subStep < totalSubSteps ? (
-          <button onClick={() => setSubStep(s => s + 1)} style={{ ...btnPrimary, flex:1, width:"auto" }}>
-            Next: {subStepLabels[subStep]} <ArrowRight size={14} strokeWidth={2}/>
-          </button>
-        ) : (
-          <button
-            onClick={() => !sizeIncomplete && !orgDetailsIncomplete && setShowConfirmSubmit(true)}
-            disabled={sizeIncomplete || orgDetailsIncomplete}
-            style={{ ...(sizeIncomplete || orgDetailsIncomplete ? btnPrimaryDisabled : btnPrimary), flex:1, width:"auto" }}
-          >
-            <Send size={14}/> {persona === "individual" ? "Submit My Order" : "Review & submit for quotation"}
+          // Full cost breakdown rows (shown when the card is expanded).
+          const stitchOpt = stitchingOpts.find(s => s.id === packaging.stitch);
+          const packOpt   = packagingOpts.find(p => p.id === packaging.packing);
+          const stitchCost = perPcCost(stitchOpt?.cost), packCost = perPcCost(packOpt?.cost);
+          const weaveCost  = weaveAddOnPerPc(material.weave);
+          const breakdown: { label: string; value: string; strong?: boolean }[] = isAccessoryOrder
+            ? Object.entries(accessoryQtyData).filter(([, q]) => q > 0).map(([key, q]) => {
+                const { categoryId, itemName } = parseAccessoryQtyKey(key);
+                const r = accessoryItemRate(categoryId, itemName, accSpecState[key]);
+                return { label: `${itemName} · ${q} × ${inr(r)}`, value: inr(q * r) };
+              })
+            : [
+                { label: material.fabric || "Fabric", value: `${inr(fabricRatePerPc(material.fabric))}/pc` },
+                { label: `Weave · ${material.weave || "Plain"}`, value: weaveCost > 0 ? `+${inr(weaveCost)}/pc` : "included" },
+                { label: `Stitching · ${stitchOpt?.label ?? "Standard"}`, value: stitchCost > 0 ? `+${inr(stitchCost)}/pc` : "included" },
+                { label: `Packaging · ${packOpt?.label ?? "Standard"}`, value: packCost > 0 ? `+${inr(packCost)}/pc` : "included" },
+                { label: "Per piece", value: inr(perPc), strong: true },
+                { label: "Quantity", value: `${qty} pcs` },
+              ];
+
+          const low = qty * garmentRate * 0.9 + qty * finishingPerPc, high = qty * garmentRate * 1.1 + qty * finishingPerPc;
+
+          if (persona === "individual") {
+            return (
+              // Premium dark card with a gold gradient hairline border — signals "this is what you pay".
+              <div className="mb-2.5 rounded-2xl" style={{ padding:1, background:`linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT_TEXT} 100%)`, boxShadow:"0 6px 18px rgba(13,13,13,0.18)" }}>
+                <div className="rounded-2xl overflow-hidden" style={{ background:"linear-gradient(135deg,#1c1c1c 0%,#0D0D0D 100%)" }}>
+                  <button onClick={() => setPriceExpanded(v => !v)} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ background:"transparent", border:"none", cursor:"pointer" }}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background:"rgba(200,169,126,0.16)", border:"1px solid rgba(200,169,126,0.4)" }}>
+                        <Wallet size={18} strokeWidth={1.75} style={{ color:ACCENT }}/>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p style={{ fontSize:12.5, color:"#fff", fontWeight:700 }}>Total payable</p>
+                          <span style={{ fontSize:8, fontWeight:800, letterSpacing:0.7, color:DARK, background:ACCENT, padding:"2px 6px", borderRadius:5 }}>FIXED</span>
+                        </div>
+                        <div className="flex items-center gap-1 mt-1">
+                          <ShieldCheck size={11} strokeWidth={2} style={{ color:"rgba(200,169,126,0.9)", flexShrink:0 }}/>
+                          <p style={{ fontSize:10.5, color:"rgba(255,255,255,0.62)" }} className="truncate">{priceExpanded ? `Pay by ${payment === "upi" ? "UPI" : "card"}` : "Tap to see full breakdown"}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <p style={{ fontSize:22, color:"#fff", fontWeight:800, lineHeight:1, letterSpacing:-0.3 }}>{inr(individualPayable)}</p>
+                      <ChevronDown size={16} style={{ color:"rgba(255,255,255,0.55)", transform: priceExpanded ? "rotate(180deg)" : "none", transition:"transform 0.2s" }}/>
+                    </div>
+                  </button>
+                  {priceExpanded && (
+                    <div className="px-4 pb-3.5 pt-1">
+                      {breakdown.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between py-1">
+                          <span style={{ fontSize:11.5, color: r.strong ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.55)", fontWeight: r.strong ? 600 : 400 }} className="truncate pr-3">{r.label}</span>
+                          <span style={{ fontSize:11.5, color: r.strong ? "#fff" : "rgba(255,255,255,0.8)", fontWeight: r.strong ? 700 : 500, flexShrink:0 }}>{r.value}</span>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between pt-2 mt-1" style={{ borderTop:"1px solid rgba(255,255,255,0.12)" }}>
+                        <span style={{ fontSize:12.5, color:ACCENT, fontWeight:700 }}>Total payable</span>
+                        <span style={{ fontSize:14, color:"#fff", fontWeight:800 }}>{inr(individualPayable)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
+          return (
+            // On-brand gold estimate card — softer, since this is indicative (not charged now).
+            <div className="mb-2.5 rounded-2xl overflow-hidden" style={{ background:`linear-gradient(135deg, rgba(200,169,126,0.16) 0%, rgba(200,169,126,0.06) 100%)`, border:"1px solid rgba(200,169,126,0.45)", boxShadow:"0 4px 14px rgba(124,84,25,0.08)" }}>
+              <button onClick={() => setPriceExpanded(v => !v)} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left" style={{ background:"transparent", border:"none", cursor:"pointer" }}>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background:"#fff", border:"1px solid rgba(200,169,126,0.45)" }}>
+                    <ReceiptText size={18} strokeWidth={1.6} style={{ color:ACCENT_TEXT }}/>
+                  </div>
+                  <p style={{ fontSize:12.5, color:DARK, fontWeight:700, whiteSpace:"nowrap" }}>Estimated total</p>
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <p style={{ fontSize:14.5, color:DARK, fontWeight:800, letterSpacing:-0.2, whiteSpace:"nowrap" }}>{isAccessoryOrder ? inr(accessoryTotalAmt) : `${inr(low)} – ${inr(high)}`}</p>
+                  <ChevronDown size={16} style={{ color:ACCENT_TEXT, transform: priceExpanded ? "rotate(180deg)" : "none", transition:"transform 0.2s" }}/>
+                </div>
+              </button>
+              {priceExpanded && (
+                <div className="px-4 pb-3.5 pt-1">
+                  {breakdown.map((r, i) => (
+                    <div key={i} className="flex items-center justify-between py-1">
+                      <span style={{ fontSize:11.5, color: r.strong ? DARK : ACCENT_TEXT, fontWeight: r.strong ? 600 : 400 }} className="truncate pr-3">{r.label}</span>
+                      <span style={{ fontSize:11.5, color:DARK, fontWeight: r.strong ? 700 : 500, flexShrink:0 }}>{r.value}</span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between pt-2 mt-1" style={{ borderTop:"1px solid rgba(200,169,126,0.4)" }}>
+                    <span style={{ fontSize:12.5, color:ACCENT_TEXT, fontWeight:700 }}>{isAccessoryOrder ? "Estimated total" : "Estimated range"}</span>
+                    <span style={{ fontSize:14, color:DARK, fontWeight:800 }}>{isAccessoryOrder ? inr(accessoryTotalAmt) : `${inr(low)} – ${inr(high)}`}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+        {/* Why the user can't proceed yet */}
+        {blockReason && (
+          <div className="flex items-center gap-1.5 mb-2.5 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
+            <AlertTriangle size={12} className="text-amber-600 flex-shrink-0"/>
+            <p className="text-xs" style={{ color:"#92400e" }}>{blockReason}</p>
+          </div>
+        )}
+
+        {/* Save as draft — only on the final Review step, sits above the submit row */}
+        {onSaveDraft && currentSubStepLabel === "Review" && (
+          <button onClick={() => onSaveDraft(buildDraftPayload())}
+            className="w-full flex items-center justify-center gap-2 mb-2.5 py-2.5 rounded-2xl"
+            style={{ background: "var(--card)", border: "1px solid var(--border)", color: DARK, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+            <FileText size={14} strokeWidth={2}/> Save as draft
           </button>
         )}
+
+        <div className="flex gap-3">
+          {/* Back button — always visible */}
+          <button
+            onClick={() => subStep > 1 ? setSubStep(s => s - 1) : setShowConfirmChange(true)}
+            className="w-12 h-12 rounded-2xl border border-border flex items-center justify-center bg-card flex-shrink-0">
+            <ChevronDown size={16} style={{ transform: "rotate(90deg)" }} className="text-foreground"/>
+          </button>
+
+          {/* Next, or jump back to Review after an edit, or Submit */}
+          {subStep < totalSubSteps ? (
+            visitedReview ? (
+              <button onClick={() => { if (!currentStepBlocked) setSubStep(totalSubSteps); }}
+                disabled={currentStepBlocked}
+                style={{ ...(currentStepBlocked ? btnPrimaryDisabled : btnPrimary), flex:1, width:"auto" }}>
+                <Check size={14} strokeWidth={2}/> Save &amp; back to review
+              </button>
+            ) : (
+              <button onClick={() => { if (!currentStepBlocked) setSubStep(s => s + 1); }}
+                disabled={currentStepBlocked}
+                style={{ ...(currentStepBlocked ? btnPrimaryDisabled : btnPrimary), flex:1, width:"auto" }}>
+                Next: {subStepLabels[subStep]} <ArrowRight size={14} strokeWidth={2}/>
+              </button>
+            )
+          ) : (
+            <button
+              onClick={() => { if (!currentStepBlocked) setShowConfirmSubmit(true); }}
+              disabled={currentStepBlocked}
+              style={{ ...(currentStepBlocked ? btnPrimaryDisabled : btnPrimary), flex:1, width:"auto" }}
+            >
+              {persona === "individual"
+                ? <>{`Pay ${inr(individualPayable)} & place order`}</>
+                : <><Send size={14}/> Submit my order</>}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Submit confirm modal */}
@@ -3085,11 +4255,13 @@ function PersonaOrderForm({
             <div className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center" style={{ background: ACCENT_BG }}>
               <Send size={20} style={{ color: ACCENT }}/>
             </div>
-            <p className="text-foreground mb-1.5" style={{ fontSize: 16, fontWeight: 700 }}>Submit for quotation?</p>
-            <p className="text-muted-foreground text-sm leading-relaxed mb-5">Your coordinator will review the order and send you a quote within 24 hours. You can still request changes after receiving the quote.</p>
+            <p className="text-foreground mb-1.5" style={{ fontSize: 16, fontWeight: 700 }}>{persona === "individual" ? `Pay ${inr(individualPayable)} & place order?` : "Submit my order?"}</p>
+            <p className="text-muted-foreground text-sm leading-relaxed mb-5">{persona === "individual"
+              ? <>You'll pay the fixed price of {inr(individualPayable)} by {payment === "upi" ? "UPI" : "card"} to place your order. Your coordinator confirms fit before production.</>
+              : <>Your coordinator will confirm the order details and share the final price &amp; next steps shortly. You can still request changes after submitting.</>}</p>
             <div className="flex flex-col gap-2">
-              <button onClick={() => { setShowConfirmSubmit(false); onSubmit(orgDetails ? buildSubmittedOrderSummary(orgDetails) : undefined); }} style={{ ...btnPrimary, padding:"12px 20px" }}>
-                <Check size={15}/> Yes, submit order
+              <button onClick={() => { setShowConfirmSubmit(false); onSubmit(buildFullSummary(), buildDraftPayload()); }} style={{ ...btnPrimary, padding:"12px 20px" }}>
+                <Check size={15}/> {persona === "individual" ? `Pay ${inr(individualPayable)} now` : "Yes, submit order"}
               </button>
               <button onClick={() => setShowConfirmSubmit(false)} style={{ ...btnSecondary, padding:"10px 20px" }}>Go back and review</button>
             </div>
@@ -3114,7 +4286,7 @@ function PersonaOrderForm({
   );
 }
 
-function CustomAudienceForm({ onContinue, onBack }: { onContinue: (d: CustomOrderDetails) => void; onBack: () => void }) {
+function CustomAudienceForm({ onContinue, onBack, onAccessories }: { onContinue: (d: CustomOrderDetails) => void; onBack: () => void; onAccessories?: () => void }) {
   const [audience, setAudience] = useState<CustomAudience>("kids");
   const options = [
     { id:"kids" as CustomAudience, label:"Kids", sub:"Age-based child sizing", cat:"school" as SizeCat, group:"kids" as GroupType, Icon: Users },
@@ -3145,11 +4317,11 @@ function CustomAudienceForm({ onContinue, onBack }: { onContinue: (d: CustomOrde
           <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: ACCENT_BG }}><Scissors size={18} strokeWidth={1.5} style={{ color:"#7c5419" }}/></div>
           <div className="flex-1">
             <p className="text-foreground" style={{ fontSize:17, fontWeight:600 }}>Custom order</p>
-            <p className="text-muted-foreground" style={{ fontSize:12 }}>Minimum 10 pcs · Material to reference flow</p>
+            <p className="text-muted-foreground" style={{ fontSize:12 }}>Minimum 1 pc · Material to reference flow</p>
           </div>
         </div>
 
-        <SizeInfoBanner minQty={10}/>
+        <SizeInfoBanner minQty={1}/>
 
         <Section title="Who needs this custom order?" icon={User}>
           <div className="flex flex-col gap-2">
@@ -3170,10 +4342,182 @@ function CustomAudienceForm({ onContinue, onBack }: { onContinue: (d: CustomOrde
             })}
           </div>
         </Section>
+
+        {/* Accessories — same catalog as organisation orders */}
+        {onAccessories && (
+          <Section title="Or order accessories" icon={Gift}>
+            <p className="text-muted-foreground mb-3" style={{ fontSize:12 }}>Bottles, bags, ID cards, awards & more — the same catalog organisations use.</p>
+            <button onClick={onAccessories}
+              className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left"
+              style={{ border:`1.5px solid var(--border)`, background:"var(--card)", cursor:"pointer" }}>
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: ACCENT_BG }}>
+                <Gift size={18} strokeWidth={1.5} style={{ color:"#7c5419" }}/>
+              </div>
+              <div className="flex-1">
+                <p className="text-foreground text-sm" style={{ fontWeight:600 }}>Browse accessories</p>
+                <p className="text-muted-foreground" style={{ fontSize:11 }}>Min {IND_ACCESSORY_MOQ} pcs per product</p>
+              </div>
+              <ChevronRight size={16} className="text-muted-foreground flex-shrink-0"/>
+            </button>
+          </Section>
+        )}
       </div>
       <div className="flex-shrink-0 px-5 py-3 border-t border-border bg-background" style={{ position:"sticky", bottom:0, zIndex:10 }}>
         <button onClick={continueCustom} style={btnPrimary}>
           Continue custom order <ArrowRight size={15} strokeWidth={2}/>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Individual Accessory Picker (same catalog & MOQ rules as organisation) ────
+function IndividualAccessoryPicker({ onContinue, onBack }: { onContinue: (qty: Record<string, number>) => void; onBack: () => void }) {
+  const ACCESSORY_MOQ = IND_ACCESSORY_MOQ, ACCESSORY_STEP = IND_ACCESSORY_STEP;
+  const [accessoryQty, setAccessoryQty] = useState<Record<string, number>>({});
+  const [view, setView] = useState<"categories" | "products">("categories");
+  const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
+
+  const accessorySelected = Object.entries(accessoryQty).filter(([, q]) => q > 0);
+  const accessoryBelowMoq = accessorySelected.some(([, q]) => q < ACCESSORY_MOQ);
+  const accessoryValid    = accessorySelected.length > 0 && !accessoryBelowMoq;
+  const accessoryTotal    = Object.values(accessoryQty).reduce((a, b) => a + b, 0);
+
+  function stepQty(key: string, delta: number) {
+    setAccessoryQty(prev => {
+      const cur = prev[key] ?? 0;
+      const next = delta > 0 ? (cur === 0 ? ACCESSORY_MOQ : cur + ACCESSORY_STEP) : (cur <= ACCESSORY_MOQ ? 0 : cur - ACCESSORY_STEP);
+      return { ...prev, [key]: next };
+    });
+  }
+  function clearAccessory(key: string) { setAccessoryQty(prev => ({ ...prev, [key]: 0 })); }
+
+  const activeCat = activeCategoryId ? universalAccessoryCategories.find(c => c.id === activeCategoryId) : null;
+
+  // ── Products page for a chosen category ──
+  if (view === "products" && activeCat) {
+    const catPcs   = countAccessoryQtyForCategory(activeCat.id, accessoryQty);
+    const catCount = activeCat.items.filter(it => (accessoryQty[`${activeCat.id}-${it}`] ?? 0) > 0).length;
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        <div className="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-border flex-shrink-0">
+          <button onClick={() => { setView("categories"); setActiveCategoryId(null); }} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0" style={{ border:"none", cursor:"pointer" }}>
+            <ChevronLeft size={16} strokeWidth={2}/>
+          </button>
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+            <div className="flex items-center justify-center flex-shrink-0" style={{ width:36, height:36, borderRadius:10, background:ACCENT, color:"#fff" }}>
+              <AccCatIcon id={activeCat.id} size={18}/>
+            </div>
+            <div className="min-w-0">
+              <p className="text-foreground" style={{ fontSize:15, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{activeCat.label}</p>
+              <p className="text-muted-foreground" style={{ fontSize:11 }}>{activeCat.items.length} products · min {ACCESSORY_MOQ} pcs each</p>
+            </div>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0" style={{ scrollbarWidth:"none" }}>
+          <div className="flex gap-2 px-3 py-2.5 rounded-xl mb-4" style={{ background:"#fff7ed", border:"1px solid #fed7aa" }}>
+            <Info size={13} style={{ color:"#c2410c", flexShrink:0, marginTop:1 }}/>
+            <p style={{ fontSize:11.5, color:"#9a3412", lineHeight:1.5 }}><strong>Minimum order: {ACCESSORY_MOQ} pcs per product.</strong> Tap + to add a product at {ACCESSORY_MOQ} pcs, then adjust in steps of {ACCESSORY_STEP}.</p>
+          </div>
+          <p className="text-muted-foreground mb-2" style={{ fontSize:12, fontWeight:500 }}>{activeCat.label} products</p>
+          <div className="flex flex-col gap-2">
+            {activeCat.items.map(item => {
+              const key = `${activeCat.id}-${item}`;
+              const q = accessoryQty[key] ?? 0;
+              const active = q > 0;
+              return (
+                <div key={key} className="flex items-center gap-3 rounded-xl pl-3.5 pr-2 py-2.5" style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, background: active ? ACCENT_BG : "var(--card)" }}>
+                  <div className="flex-1 min-w-0">
+                    <p style={{ fontSize:13, fontWeight: active ? 600 : 500, color: active ? "#7c5419" : DARK, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item}</p>
+                    <p style={{ fontSize:10.5, color: active ? ACCENT_TEXT : "#9ca3af", marginTop:1 }}>{inr(accessoryRatePerPc(activeCat.id, item))}/pc{active ? ` · ${q} pcs · ${inr(q * accessoryRatePerPc(activeCat.id, item))}` : ` · min ${ACCESSORY_MOQ}`}</p>
+                  </div>
+                  <div className="flex items-center flex-shrink-0" style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, borderRadius:9, overflow:"hidden", background:"var(--card)" }}>
+                    <button onClick={() => stepQty(key, -1)} disabled={q === 0} className="flex items-center justify-center" style={{ width:32, height:32, background:"transparent", border:"none", cursor: q === 0 ? "default" : "pointer", opacity: q === 0 ? 0.35 : 1 }}>
+                      <Minus size={14} style={{ color: active ? "#7c5419" : "#6b7280" }}/>
+                    </button>
+                    <span style={{ fontSize:13, fontWeight:700, minWidth:42, textAlign:"center", color: active ? "#7c5419" : "#9ca3af", borderLeft:`1px solid ${active ? ACCENT : "var(--border)"}`, borderRight:`1px solid ${active ? ACCENT : "var(--border)"}`, lineHeight:"32px" }}>{q}</span>
+                    <button onClick={() => stepQty(key, 1)} className="flex items-center justify-center" style={{ width:32, height:32, background: active ? ACCENT : DARK, border:"none", cursor:"pointer" }}>
+                      <Plus size={14} style={{ color:"#fff" }}/>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex-shrink-0 px-5 py-3 border-t border-border bg-background">
+          <div className="flex items-center justify-between mb-2.5">
+            <p className="text-muted-foreground" style={{ fontSize:12 }}>
+              {catPcs > 0 ? <><strong style={{ color:DARK }}>{catPcs} pcs</strong> · {catCount} product{catCount !== 1 ? "s" : ""}</> : "No products added yet"}
+            </p>
+            {catPcs > 0 && (
+              <button onClick={() => activeCat.items.forEach(it => clearAccessory(`${activeCat.id}-${it}`))} style={{ fontSize:11, fontWeight:600, color:"#dc2626", background:"none", border:"none", cursor:"pointer" }}>Clear category</button>
+            )}
+          </div>
+          <button onClick={() => { setView("categories"); setActiveCategoryId(null); }} style={btnPrimary}>
+            <Check size={15} strokeWidth={2}/> Done · back to categories
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Browse categories ──
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <div className="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-border flex-shrink-0">
+        <button onClick={onBack} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center flex-shrink-0" style={{ border:"none", cursor:"pointer" }}>
+          <ChevronLeft size={16} strokeWidth={2}/>
+        </button>
+        <div className="flex-1 min-w-0">
+          <p className="text-foreground" style={{ fontSize:15, fontWeight:600 }}>Browse accessories</p>
+          <p className="text-muted-foreground" style={{ fontSize:11 }}>Choose products · min {ACCESSORY_MOQ} pcs each</p>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0" style={{ scrollbarWidth:"none" }}>
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-4" style={{ background:"#fff7ed", border:"1px solid #fed7aa" }}>
+          <Info size={13} style={{ color:"#c2410c", flexShrink:0 }}/>
+          <p style={{ fontSize:11.5, color:"#9a3412" }}>Minimum order <strong>{ACCESSORY_MOQ} pcs per product</strong>. Tap a category to choose products.</p>
+        </div>
+        <div className="flex flex-col gap-2">
+          {universalAccessoryCategories.map(cat => {
+            const catQty = countAccessoryQtyForCategory(cat.id, accessoryQty);
+            const catItemCount = Object.entries(accessoryQty).filter(([key, q]) => q > 0 && parseAccessoryQtyKey(key).categoryId === cat.id).length;
+            return (
+              <button key={cat.id} onClick={() => { setActiveCategoryId(cat.id); setView("products"); }}
+                className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left"
+                style={{ border:`1.5px solid ${catQty > 0 ? ACCENT : "var(--border)"}`, background: catQty > 0 ? ACCENT_BG : "var(--card)", cursor:"pointer" }}>
+                <div className="flex items-center justify-center flex-shrink-0" style={{ width:38, height:38, borderRadius:11, background: catQty > 0 ? ACCENT : "var(--muted)", border:`1px solid ${catQty > 0 ? ACCENT : "var(--border)"}`, color: catQty > 0 ? "#fff" : "#6b7280" }}>
+                  <AccCatIcon id={cat.id} size={18}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p style={{ fontSize:13, fontWeight:600, color: catQty > 0 ? "#7c5419" : DARK }}>{cat.label}</p>
+                  {catQty > 0
+                    ? <p style={{ fontSize:11, color:ACCENT_TEXT, fontWeight:600, marginTop:1 }}>{catQty} pcs · {catItemCount} product{catItemCount !== 1 ? "s" : ""}</p>
+                    : <p style={{ fontSize:11, color:"#9ca3af", marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{cat.sub}</p>}
+                </div>
+                <ChevronRight size={16} style={{ color:"#9ca3af", flexShrink:0 }}/>
+              </button>
+            );
+          })}
+        </div>
+        {accessorySelected.length > 0 && (
+          <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-xl" style={{ background:"#ecfdf5", border:"1px solid #a7f3d0" }}>
+            <Check size={12} style={{ color:"#059669", flexShrink:0 }} strokeWidth={2.5}/>
+            <p style={{ fontSize:11, color:"#065f46", fontWeight:500 }}>{accessoryTotal} pcs across {accessorySelected.length} product{accessorySelected.length !== 1 ? "s" : ""} · {inr(accessoryOrderTotal(accessoryQty))} — ready to continue</p>
+          </div>
+        )}
+        {accessoryBelowMoq && (
+          <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200">
+            <AlertTriangle size={12} style={{ color:"#dc2626", flexShrink:0 }}/>
+            <p style={{ fontSize:11, color:"#dc2626" }}>Each product needs at least {ACCESSORY_MOQ} pcs.</p>
+          </div>
+        )}
+      </div>
+      <div className="flex-shrink-0 px-5 py-3 border-t border-border bg-background">
+        <button onClick={() => { if (accessoryValid) onContinue(accessoryQty); }} disabled={!accessoryValid}
+          style={{ ...(!accessoryValid ? btnPrimaryDisabled : btnPrimary), opacity: !accessoryValid ? 0.45 : 1 }}>
+          Continue · Specs & references <ArrowRight size={15} strokeWidth={2}/>
         </button>
       </div>
     </div>
@@ -3189,7 +4533,7 @@ function SuccessScreen({ onNavigate, onTrackOrder }: { onNavigate: (tab: string)
         <CheckCircle2 size={30} className="text-emerald-500" strokeWidth={1.5}/>
       </div>
       <p className="text-foreground mb-2" style={{ fontSize: 20, fontWeight: 600 }}>Order submitted!</p>
-      <p className="text-muted-foreground mb-1.5 text-sm leading-relaxed">Your coordinator will review and send you a quotation within 2–4 hours.</p>
+      <p className="text-muted-foreground mb-1.5 text-sm leading-relaxed">Your coordinator will confirm your order details and share the next steps shortly.</p>
       <p className="text-muted-foreground mb-8" style={{ fontSize: 11 }}>Reference: <span className="text-foreground" style={{ fontWeight: 500 }}>#FL-2046</span></p>
       <div className="w-full flex flex-col gap-2.5">
         <button onClick={onTrackOrder} className="w-full bg-foreground text-white rounded-2xl py-3.5 text-sm" style={{ fontWeight: 500 }}>Track your order</button>
@@ -3205,20 +4549,28 @@ type OrderStep =
   | { type: "org_details" }
   | { type: "custom_audience" }
   | { type: "custom_details" }
-  | { type: "org_step2"; org: OrgDetails }
-  | { type: "individual_step2"; custom: CustomOrderDetails }
+  | { type: "individual_accessories" }
+  | { type: "org_step2"; org: OrgDetails; resume?: ResumeState | null }
+  | { type: "individual_step2"; custom: CustomOrderDetails; resume?: ResumeState | null }
   | { type: "success" };
 
-export function NewOrderTab({ onNavigate, onTrackOrder, accountType }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation" }) {
+export function NewOrderTab({ onNavigate, onTrackOrder, accountType, onSaveDraft, resumeDraft }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null }) {
   const isPersonal = accountType === "personal";
-  const [step, setStep] = useState<OrderStep>(isPersonal ? { type: "custom_audience" } : { type: "org_details" });
+  const [step, setStep] = useState<OrderStep>(() => {
+    if (resumeDraft) {
+      if (resumeDraft.persona === "organisation" && resumeDraft.orgDetails) return { type: "org_step2", org: resumeDraft.orgDetails, resume: resumeDraft.resume };
+      if (resumeDraft.persona === "individual" && resumeDraft.customDetails) return { type: "individual_step2", custom: resumeDraft.customDetails, resume: resumeDraft.resume };
+    }
+    return isPersonal ? { type: "custom_audience" } : { type: "org_details" };
+  });
   const [showSwitchConfirm, setShowSwitchConfirm] = useState(false);
   const [submittedSummary, setSubmittedSummary] = useState<SubmittedOrderSummary | null>(null);
 
   const switchBanner = null;
 
-  function handleSuccess(summary?: SubmittedOrderSummary) {
-    setSubmittedSummary(summary ?? null);
+  function handleSuccess(summary?: SubmittedOrderSummary, editPayload?: DraftPayload) {
+    // Keep the editable snapshot on the summary so Track can reopen this order at Review.
+    setSubmittedSummary(summary ? { ...summary, editPayload } : null);
     setStep({ type: "success" });
   }
 
@@ -3243,6 +4595,17 @@ export function NewOrderTab({ onNavigate, onTrackOrder, accountType }: { onNavig
         <CustomAudienceForm
           onContinue={custom => setStep({ type:"individual_step2", custom })}
           onBack={() => isPersonal ? onNavigate("home") : setStep({ type:"org_details" })}
+          onAccessories={() => setStep({ type:"individual_accessories" })}
+        />
+      )}
+      {step.type === "individual_accessories" && (
+        <IndividualAccessoryPicker
+          onBack={() => setStep({ type:"custom_audience" })}
+          onContinue={accessoryQty => setStep({ type:"individual_step2", custom: {
+            garmentType: "tshirt", groupType: "personal", name: currentUser.name,
+            phone: currentUser.phone, email: currentUser.email, address: "", city: "", pin: "",
+            isAccessoryOrder: true, accessoryQty,
+          } })}
         />
       )}
       {step.type === "custom_details" && (
@@ -3255,16 +4618,20 @@ export function NewOrderTab({ onNavigate, onTrackOrder, accountType }: { onNavig
         <PersonaOrderForm
           persona="organisation"
           orgDetails={step.org}
+          resume={step.resume}
           onSubmit={handleSuccess}
           onChangePersona={() => setStep({ type:"org_details" })}
+          onSaveDraft={onSaveDraft}
         />
       )}
       {step.type === "individual_step2" && (
         <PersonaOrderForm
           persona="individual"
           customDetails={step.custom}
+          resume={step.resume}
           onSubmit={handleSuccess}
           onChangePersona={() => setStep({ type:"custom_audience" })}
+          onSaveDraft={onSaveDraft}
         />
       )}
       {step.type === "success" && (

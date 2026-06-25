@@ -13,6 +13,14 @@ const DARK        = "#0D0D0D";
 // Shared input class — consistent across all modules
 const INP = "w-full bg-card border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm outline-none";
 const fnt: React.CSSProperties = { fontFamily: "DM Sans, sans-serif" };
+
+// Format a canonical "+91XXXXXXXXXX" number for display as "+91 98765 43210"
+function fmtPhone(canonical: string): string {
+  const d = canonical.replace(/^\+91/, "").replace(/\D/g, "").slice(0, 10);
+  const a = d.slice(0, 5), b = d.slice(5, 10);
+  return "+91" + (a ? " " + a : "") + (b ? " " + b : "");
+}
+const phoneDigits = (v: string) => v.replace(/^\+91\s*/, "").replace(/\D/g, "");
 // Shared button styles
 const btnPrimary: React.CSSProperties = {
   width:"100%", background:DARK, color:"#fff",
@@ -66,7 +74,7 @@ function ProfileEdit({ profile, onBack, onSave }: {
 }) {
   const [name, setName]     = useState(profile.name);
   const [phone, setPhone]   = useState(profile.phone ?? "+91 98765 43210");
-  const [email, setEmail]   = useState(profile.email ?? "arjun@threadcraft.in");
+  const [email, setEmail]   = useState(profile.email ?? "");
   const [avatar, setAvatar] = useState<string | null>(profile.avatar);
   const fileRef             = useRef<HTMLInputElement>(null);
   const [saved, setSaved]   = useState(false);
@@ -102,15 +110,15 @@ function ProfileEdit({ profile, onBack, onSave }: {
       <div className="mb-3"/>
 
       <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Mobile number</p>
-      <input value={phone}
-        onChange={e => setPhone("+91" + e.target.value.replace(/^\+91\s*/, "").replace(/\D/g,"").slice(0,10))}
-        onKeyDown={e => { if ((e.key==="Backspace"||e.key==="Delete") && phone.length<=3) e.preventDefault(); }}
-        placeholder="+91 98765 43210" inputMode="tel" maxLength={13} className={INP + " block"} style={fnt}/>
-      {phone.replace(/^\+91/,"").length > 0 && !/^[6-9]\d{9}$/.test(phone.replace(/^\+91/,"")) && <p className="flex items-center gap-1 mt-1 mb-2" style={{ fontSize:10, color:"#dc2626" }}><AlertTriangle size={10}/>Enter 10 digits after +91 (start with 6-9)</p>}
+      <input value={fmtPhone(phone)}
+        onChange={e => setPhone("+91" + phoneDigits(e.target.value).slice(0,10))}
+        onKeyDown={e => { if ((e.key==="Backspace"||e.key==="Delete") && phoneDigits(phone).length===0) e.preventDefault(); }}
+        placeholder="+91 98765 43210" inputMode="tel" maxLength={16} className={INP + " block"} style={fnt}/>
+      {phoneDigits(phone).length > 0 && !/^[6-9]\d{9}$/.test(phoneDigits(phone)) && <p className="flex items-center gap-1 mt-1 mb-2" style={{ fontSize:10, color:"#dc2626" }}><AlertTriangle size={10}/>Enter 10 digits after +91 (start with 6-9)</p>}
       <div className="mb-3"/>
 
       <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Email address</p>
-      <input value={email} onChange={e => setEmail(e.target.value)} inputMode="email" className={INP + " block"} style={fnt}/>
+      <input value={email} onChange={e => setEmail(e.target.value)} inputMode="email" placeholder="you@example.com" className={INP + " block"} style={fnt}/>
       {email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()) && <p className="flex items-center gap-1 mt-1 mb-2" style={{ fontSize:10, color:"#dc2626" }}><AlertTriangle size={10}/>Enter a valid email address</p>}
       <div className="mb-4"/>
 
@@ -137,7 +145,7 @@ const orgTypeDefs = [
   { id:"ngo",          Icon: Users,        label:"NGO / Trust"   },
 ];
 
-interface BizData { orgType:string; name:string; reg:string; addr1:string; addr2:string; landmark:string; location:string; city:string; pin:string; gstn:string }
+interface BizData { orgType:string; name:string; reg:string; addr1:string; addr2:string; landmark:string; location:string; city:string; pin:string }
 
 // Custom org-type dropdown with per-option icons (native <select> can't render icons)
 function OrgTypeSelect({ value, onChange }: { value:string; onChange:(v:string)=>void }) {
@@ -179,11 +187,11 @@ function OrgTypeSelect({ value, onChange }: { value:string; onChange:(v:string)=
 }
 
 // ─── Payment & Billing ────────────────────────────────────────────────────────
-type UpiProvider = "gpay" | "phonepe" | "paytm" | "bhim";
+export type UpiProvider = "gpay" | "phonepe" | "paytm" | "bhim";
 interface UpiMethod  { id:number; provider:UpiProvider; address:string; default:boolean }
 interface SavedCard  { id:number; type:"credit"|"debit"; network:"visa"|"mastercard"|"rupay"; last4:string; name:string; expiry:string; default:boolean }
 
-const upiProviderDefs: Record<UpiProvider, { label:string }> = {
+export const upiProviderDefs: Record<UpiProvider, { label:string }> = {
   gpay:    { label:"Google Pay" },
   phonepe: { label:"PhonePe"    },
   paytm:   { label:"Paytm"      },
@@ -191,7 +199,7 @@ const upiProviderDefs: Record<UpiProvider, { label:string }> = {
 };
 
 // ─── Branded payment marks (self-contained SVG, no external assets) ────────────
-function UpiLogo({ provider, size=32 }: { provider:UpiProvider; size?:number }) {
+export function UpiLogo({ provider, size=32 }: { provider:UpiProvider; size?:number }) {
   const tile = (bg:string, border?:string): React.CSSProperties => ({
     width:size, height:size, borderRadius:size*0.26, background:bg,
     display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0,
@@ -629,11 +637,10 @@ function BusinessDetails({ onBack }: { onBack: () => void }) {
   const [location, setLocation] = useState("");
   const [city, setCity]     = useState("");
   const [pin, setPin]       = useState("");
-  const [gstn, setGstn]     = useState("");
   const [saved, setSaved]   = useState<BizData | null>(null);
 
   function save() {
-    const d = { orgType, name, reg, addr1, addr2, landmark, location, city, pin, gstn };
+    const d = { orgType, name, reg, addr1, addr2, landmark, location, city, pin };
     setSaved(d); setMode("view");
   }
 
@@ -671,12 +678,6 @@ function BusinessDetails({ onBack }: { onBack: () => void }) {
               {saved.landmark && <p className="text-muted-foreground" style={{ fontSize:12 }}>Near {saved.landmark}</p>}
               {saved.location && <p className="text-muted-foreground" style={{ fontSize:12 }}>{saved.location}</p>}
               {saved.city     && <p className="text-foreground text-sm">{saved.city}{saved.pin ? ` — ${saved.pin}` : ""}</p>}
-            </div>
-          )}
-          {saved.gstn && (
-            <div className="bg-card border border-border rounded-2xl p-4">
-              <p className="text-muted-foreground text-xs mb-1" style={{ fontWeight:500, textTransform:"uppercase", letterSpacing:"0.06em" }}>GST Number</p>
-              <p className="text-foreground text-sm" style={{ fontFamily:"monospace" }}>{saved.gstn}</p>
             </div>
           )}
         </div>
@@ -720,9 +721,6 @@ function BusinessDetails({ onBack }: { onBack: () => void }) {
               {pin && !/^\d{6}$/.test(pin) && <p className="flex items-center gap-1 mt-1" style={{ fontSize:10, color:"#dc2626" }}><AlertTriangle size={10}/>Must be 6 digits</p>}
             </div>
           </div>
-          <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>GST number (optional)</p>
-          <input value={gstn} onChange={e => setGstn(e.target.value.toUpperCase())} placeholder="e.g. 29ABCDE1234F1Z5" className={INP + " block"} style={{ ...fnt, textTransform:"uppercase" }}/>
-          {gstn && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstn) && <p className="flex items-center gap-1 mt-1 mb-4" style={{ fontSize:10, color:"#dc2626" }}><AlertTriangle size={10}/>Invalid GST format (e.g. 29ABCDE1234F1Z5)</p>}
           <div className="mb-4"/>
           <button onClick={save} style={btnPrimary}>
             Save business details
@@ -939,10 +937,10 @@ function TwoFASetup({ onBack, onComplete }: { onBack: () => void; onComplete: ()
             <p className="text-foreground mb-1" style={{ fontSize:18, fontWeight:700 }}>Verify your number</p>
             <p className="text-muted-foreground text-sm mb-6 leading-relaxed">We'll send a 6-digit OTP to confirm your number is reachable.</p>
             <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Mobile number</p>
-            <input value={phone}
-              onChange={e => setPhone("+91" + e.target.value.replace(/^\+91\s*/, "").replace(/\D/g,"").slice(0,10))}
-              onKeyDown={e => { if ((e.key==="Backspace"||e.key==="Delete") && phone.length<=3) e.preventDefault(); }}
-              placeholder="+91 98765 43210" inputMode="tel" maxLength={13} className={INP + " mb-4 block"} style={fnt}/>
+            <input value={fmtPhone(phone)}
+              onChange={e => setPhone("+91" + phoneDigits(e.target.value).slice(0,10))}
+              onKeyDown={e => { if ((e.key==="Backspace"||e.key==="Delete") && phoneDigits(phone).length===0) e.preventDefault(); }}
+              placeholder="+91 98765 43210" inputMode="tel" maxLength={16} className={INP + " mb-4 block"} style={fnt}/>
             <button onClick={() => setStep("otp")} style={btnPrimary}>Send OTP</button>
           </div>
         )}
@@ -1108,36 +1106,36 @@ function OrderHistory({ onBack, onReorder }: { onBack: () => void; onReorder: (i
   );
 }
 
-function HelpSupportScreen({ onBack }: { onBack: () => void }) {
+function HelpSupportScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: boolean }) {
   const [subject, setSubject] = useState("");
   const [details, setDetails] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const queryTypes = isOrg
+    ? ["Order status & tracking", "Payment or invoice", "Sample pickup / swatch box", "Quality issue", "Business or account details"]
+    : ["Order status & tracking", "Payment or refund", "Sizing or fit help", "Quality issue", "Account details"];
   return (
-    <SubScreen title="Help & support" sub="Raise a ticket or contact support" onBack={onBack}>
+    <SubScreen title="Help & support" sub="Raise a ticket or reach your coordinator" onBack={onBack}>
       <div className="bg-card border border-border rounded-2xl p-4 mb-3">
-        <p className="text-foreground text-sm mb-3" style={{ fontWeight:600 }}>Create support ticket</p>
-        <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Query type</p>
+        <p className="text-foreground text-sm mb-3" style={{ fontWeight:600 }}>Create a support ticket</p>
+        <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>What do you need help with?</p>
         <div className="relative mb-3">
           <select className={INP + " appearance-none pr-10"} style={{ ...fnt, cursor:"pointer" }}>
-            <option>Quote or order status</option>
-            <option>Payment or invoice</option>
-            <option>Sample pickup / swatch box</option>
-            <option>Quality issue</option>
-            <option>Account details</option>
+            {queryTypes.map(t => <option key={t}>{t}</option>)}
           </select>
           <ChevronDown size={15} strokeWidth={1.8} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:"#6b7280", pointerEvents:"none" }}/>
         </div>
         <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Subject</p>
-        <input value={subject} onChange={e => setSubject(e.target.value)} placeholder="Short title" className={INP + " mb-3 block"} style={fnt}/>
+        <input value={subject} onChange={e => setSubject(e.target.value)} placeholder="e.g. Change delivery address on order #FL-2046" className={INP + " mb-3 block"} style={fnt}/>
         <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Details</p>
-        <textarea value={details} onChange={e => setDetails(e.target.value)} placeholder="Tell us what happened" className={INP + " mb-4 block"} style={{ ...fnt, resize:"none", height:90 }}/>
+        <textarea value={details} onChange={e => setDetails(e.target.value)} placeholder="Tell us what happened, and your order number if you have one" className={INP + " mb-4 block"} style={{ ...fnt, resize:"none", height:90 }}/>
         <button onClick={() => setSubmitted(true)} disabled={!subject.trim() || !details.trim()}
           style={subject.trim() && details.trim() ? btnPrimary : { ...btnPrimary, background:"#e5e7eb", color:"#9ca3af", cursor:"not-allowed" }}>
           {submitted ? "Ticket raised · FL-SUP-1042" : "Raise ticket"}
         </button>
       </div>
+      <p className="text-muted-foreground mb-2" style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em" }}>Reach us directly</p>
       <div className="grid grid-cols-2 gap-2">
-        {["Call coordinator", "WhatsApp support", "Email support", "Track ticket"].map(item => (
+        {["Call coordinator", "WhatsApp support", "Email support", "Track my tickets"].map(item => (
           <button key={item} className="rounded-2xl bg-card border border-border py-3 text-sm text-foreground" style={{ fontWeight:500 }}>{item}</button>
         ))}
       </div>
@@ -1145,21 +1143,31 @@ function HelpSupportScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function FAQScreen({ onBack }: { onBack: () => void }) {
-  const faqs = [
-    ["How fast will I receive a quote?", "Most complete requests are reviewed within 2-4 hours during business time."],
-    ["What is the minimum bulk quantity?", "Minimum quantity depends on organisation type and product. Custom orders start from 10 pcs."],
-    ["Can I order uniforms and accessories together?", "Yes. Select multiple categories in Organisation type, such as uniforms, sports dress, and accessories."],
-    ["Can FabricLink match my existing sample?", "Yes. Use References to upload photos or request sample pickup."],
-    ["Where do I add GST details?", "Use Account > Business details for organisation information. Bank and delivery address have separate sections."],
-    ["Can I change contact details for one order?", "Yes. Review the final Organisation screen and tap Change before submission."],
-    ["What happens after quote approval?", "Your manager confirms advance payment, production timeline, QA, and dispatch."],
-    ["How do I know the correct size?", "Use the size banner and allocate quantities by kids, men, or women sizing."],
-    ["Can I request a fabric swatch?", "Yes. Use the swatch option in Home or References."],
-    ["How do I raise an issue?", "Open Help & support from Account and create a ticket."],
+function FAQScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: boolean }) {
+  const orgFaqs: [string, string][] = [
+    ["What's the minimum order?", "Organisation orders start at 100 pieces. Accessories start at 100 pieces per product."],
+    ["What happens after I submit an order?", "Your coordinator confirms the specs, final price and timeline, then production begins. You can still request changes after submitting."],
+    ["Can I order uniforms and accessories together?", "Place them as separate orders — each keeps its own fabric, colour and size specs."],
+    ["Can you match our existing uniform?", "Yes. In References, choose 'Match my existing uniform' and we'll identify the fabric and GSM from your sample."],
+    ["Where do I manage our organisation details?", "Account › Business details holds your organisation name, type and address."],
+    ["Can I save an order and finish later?", "Yes. On the review step tap 'Save as draft', then reopen it anytime from Drafts on the home screen."],
+    ["How is delivery handled?", "Add your delivery address on the review step, or tap 'Use current location' to auto-fill it."],
+    ["How do I pay?", "Your coordinator shares payment details — UPI, card or bank transfer — after confirming your order."],
+    ["How do I raise an issue?", "Open Help & support from Account and create a ticket with your order number."],
   ];
+  const indFaqs: [string, string][] = [
+    ["What's the minimum order?", "Custom orders start at 3 pieces. Accessories start at just 1 piece per product."],
+    ["What happens after I submit my order?", "Your coordinator confirms the details, fit and final price, then shares payment details. You can still request changes after submitting."],
+    ["Can I choose my own colours and sizes?", "Yes. Pick your colours, then set how many pieces you need per size."],
+    ["How do I pay?", "Choose UPI or Card on the review step. Nothing is charged until your coordinator confirms the order."],
+    ["Can you match a style I like?", "Yes. In References, upload a photo or share a style screenshot and we'll work from it."],
+    ["Can I save an order and finish later?", "Yes. On the review step tap 'Save as draft', then reopen it from Drafts on the home screen."],
+    ["Where do I set my delivery address?", "On the review step — type it in, or tap 'Use current location' to auto-fill it."],
+    ["How do I raise an issue?", "Open Help & support from Account and create a ticket with your order number."],
+  ];
+  const faqs = isOrg ? orgFaqs : indFaqs;
   return (
-    <SubScreen title="FAQ" sub="Helpful answers for bulk and custom orders" onBack={onBack}>
+    <SubScreen title="FAQ" sub={isOrg ? "Answers for organisation orders" : "Answers for your custom orders"} onBack={onBack}>
       {faqs.map(([q, a], i) => (
         <div key={q} className="bg-card border border-border rounded-2xl p-4 mb-3">
           <p className="text-foreground text-sm" style={{ fontWeight:600 }}>{i + 1}. {q}</p>
@@ -1170,36 +1178,47 @@ function FAQScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function PolicyScreen({ kind, onBack }: { kind: "terms" | "payment_gateway" | "privacy"; onBack: () => void }) {
+function PolicyScreen({ kind, onBack, isOrg }: { kind: "terms" | "payment_gateway" | "privacy"; onBack: () => void; isOrg?: boolean }) {
   const content = {
     terms: {
       title:"Terms & conditions",
-      sub:"Prototype terms for managed procurement",
+      sub:"How orders work on FabricLink",
       rows:[
-        ["Quotes", "All prices are estimates until fabric availability, GST, logistics, and final specs are confirmed."],
-        ["Production", "Production starts only after quote approval, required advance payment, and final sample/spec confirmation."],
-        ["Changes", "Changes after production start may affect cost, timeline, and feasibility."],
+        ["Orders", "Prices shown are indicative until your coordinator confirms fabric, finishing and delivery for your order."],
+        ["Production", isOrg
+          ? "Production begins after your coordinator confirms the specs and any agreed advance payment."
+          : "Production begins after your coordinator confirms the details and your payment."],
+        ["Changes", "You can request changes after submitting. Changes once production has started may affect cost and timeline."],
         ["Quality", "QA photos and inspection notes are shared before dispatch wherever applicable."],
       ],
     },
     payment_gateway: {
-      title:"Payment gateway",
-      sub:"Payment, invoice and refund handling",
-      rows:[
-        ["Milestones", "Bulk orders may use advance, production, and final settlement milestones."],
-        ["Methods", "UPI, card, bank transfer, and approved offline methods can be recorded against the order."],
-        ["Receipts", "Payment receipts and invoices appear in the document vault after confirmation."],
-        ["Refunds", "Refunds depend on payment status, material purchase, production stage, and gateway settlement timelines."],
-      ],
+      title:"Payments",
+      sub:"How payment, receipts and refunds work",
+      rows: isOrg
+        ? [
+            ["Methods", "Pay by UPI, card or bank transfer. Your coordinator shares payment details after confirming the order."],
+            ["Milestones", "Bulk orders may use an advance and a balance payment against production stages."],
+            ["Receipts", "Invoices and receipts are shared once payment is confirmed."],
+            ["Refunds", "Refunds depend on the order stage and any material already purchased or cut."],
+          ]
+        : [
+            ["Methods", "Pay securely by UPI or card. Nothing is charged until your coordinator confirms the order."],
+            ["Receipts", "Your receipt is shared in the app once payment is confirmed."],
+            ["Refunds", "Refunds depend on the order stage and whether the fabric has been cut."],
+            ["Security", "Payments are processed over a secure, encrypted connection."],
+          ],
     },
     privacy: {
       title:"Privacy policy",
-      sub:"Data usage and account protection",
+      sub:"How we use and protect your data",
       rows:[
-        ["Account data", "Contact, organisation, delivery and payment details are used to process quotes and orders."],
-        ["Documents", "Uploaded logos, samples, references and invoices are used only for order fulfilment and support."],
-        ["Security", "OTP login and 2FA protect account access. Sensitive fields should be shared only inside the app."],
-        ["Control", "Users can update profile, delivery, billing, and organisation details from Account."],
+        ["Your data", isOrg
+          ? "Your organisation, contact, delivery and payment details are used only to process your orders."
+          : "Your name, contact, delivery and payment details are used only to process your orders."],
+        ["Uploads", "Logos, photos and references you upload are used only to make your order."],
+        ["Security", "OTP login and optional 2FA protect your account. Share sensitive details only inside the app."],
+        ["Your control", "Update your profile, delivery and payment details anytime from Account."],
       ],
     },
   }[kind];
@@ -1242,11 +1261,11 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
   if (screen === "notifications_settings") return <NotificationsSettings onBack={() => setScreen("main")}/>;
   if (screen === "order_history")         return <OrderHistory onBack={() => setScreen("main")} onReorder={handleReorder}/>;
   if (screen === "payment")               return <PaymentBillingScreen onBack={() => setScreen("main")}/>;
-  if (screen === "help_support")          return <HelpSupportScreen onBack={() => setScreen("main")}/>;
-  if (screen === "faq")                   return <FAQScreen onBack={() => setScreen("main")}/>;
-  if (screen === "terms")                 return <PolicyScreen kind="terms" onBack={() => setScreen("main")}/>;
-  if (screen === "payment_gateway")       return <PolicyScreen kind="payment_gateway" onBack={() => setScreen("main")}/>;
-  if (screen === "privacy")               return <PolicyScreen kind="privacy" onBack={() => setScreen("main")}/>;
+  if (screen === "help_support")          return <HelpSupportScreen isOrg={isOrg} onBack={() => setScreen("main")}/>;
+  if (screen === "faq")                   return <FAQScreen isOrg={isOrg} onBack={() => setScreen("main")}/>;
+  if (screen === "terms")                 return <PolicyScreen kind="terms" isOrg={isOrg} onBack={() => setScreen("main")}/>;
+  if (screen === "payment_gateway")       return <PolicyScreen kind="payment_gateway" isOrg={isOrg} onBack={() => setScreen("main")}/>;
+  if (screen === "privacy")               return <PolicyScreen kind="privacy" isOrg={isOrg} onBack={() => setScreen("main")}/>;
   if (screen === "tech_packs") return (
     <SubScreen title="My tech packs" sub="Saved garment specifications" onBack={() => setScreen("main")}>
       <div className="text-center py-10">
@@ -1263,7 +1282,7 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
       { icon:<Edit3     size={16} strokeWidth={1.5}/>, label:"Edit profile",         s:"profile"               as Screen },
       ...(isOrg ? [{ icon:<Building2 size={16} strokeWidth={1.5}/>, label:"Business details",     s:"business"              as Screen }] : []),
       ...(!isOrg ? [{ icon:<MapPin size={16} strokeWidth={1.5}/>, label:"Delivery addresses", s:"delivery" as Screen }] : []),
-      { icon:<CreditCard size={16} strokeWidth={1.5}/>,label:"Payment & billing",    s:"payment"               as Screen },
+      { icon:<CreditCard size={16} strokeWidth={1.5}/>,label:"Payment details",       s:"payment"               as Screen },
     ],
     [
       { icon:<Clock     size={16} strokeWidth={1.5}/>, label:"Order history",        s:"order_history"         as Screen, badge:`${historyOrders.length} orders`,  bc:"text-amber-600" },
@@ -1295,7 +1314,7 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
         </div>
         <div className="flex-1">
           <p className="text-white text-sm" style={{ fontWeight:600 }}>{displayName}</p>
-          <p className="text-white/50" style={{ fontSize:12 }}>{profile?.email ?? "arjun@threadcraft.in"}</p>
+          <p className="text-white/50" style={{ fontSize:12 }}>{profile?.email ? profile.email : "Add your email"}</p>
         </div>
         <Edit3 size={15} color="rgba(255,255,255,0.45)" strokeWidth={1.5}/>
       </button>

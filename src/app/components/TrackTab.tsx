@@ -3,7 +3,8 @@ import {
   ChevronDown, ChevronUp, Check, Scissors, Microscope, Truck, Package, MessageSquare,
   RotateCcw, Star, Wallet, ReceiptText, ClipboardCheck, Phone, Mail, Palette, FileText,
 } from "lucide-react";
-import type { SubmittedOrderSummary } from "./NewOrderTab";
+import type { SubmittedOrderSummary, OrderPrice, DraftPayload } from "./NewOrderTab";
+import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const ACCENT      = "#C8A97E";
@@ -42,16 +43,31 @@ interface OrderTrack {
   accessoryItems?: { name: string; qty: number }[];
   fabric?: string; qty?: string; gsm?: string; colors?: string;
   stitching?: string; packaging?: string; total?: string;
+  price?: OrderPrice;
+  editPayload?: DraftPayload;
   paymentMode?: string; paymentDate?: string; paymentReference?: string;
+  // ── Rich detail for orders submitted in-app (from SubmittedOrderSummary) ──
+  isUniform?: boolean;
+  orderForLabel?: string;
+  fabricSource?: string;
+  weave?: string;
+  colorList?: { hex: string; label: string }[];
+  colorDesc?: string;
+  sizeCatLabel?: string;
+  sizeBreakdown?: { size: string; qty: number }[];
+  referenceMethod?: string;
+  referenceFiles?: number;
+  delivery?: { name: string; phone: string; email?: string; address: string; city: string; pin: string };
+  accessorySpecs?: { name: string; qty: number; fields: { label: string; value: string }[]; notes: string }[];
 }
 
 // ─── Orders data ──────────────────────────────────────────────────────────────
 const allOrders: OrderTrack[] = [
   {
-    id: "#FL-2041", name: "300m Cotton Twill — Navy",
+    id: "#FL-2041", name: "Cotton Twill — Navy",
     statusLabel: "In production", statusColor: "text-emerald-700 bg-emerald-50",
     etaDate: "14 July 2025", defaultOpen: true,
-    fabric: "100% Cotton Pique", qty: "300 pcs", gsm: "GSM 220",
+    fabric: "100% Cotton Twill", qty: "300 pcs", gsm: "GSM 220",
     colors: "Navy Blue (PMS 289C)", stitching: "Single needle",
     packaging: "Individual poly bag", total: "₹28,500",
     steps: [
@@ -168,6 +184,27 @@ function buildNewSubmittedOrder(summary?: SubmittedOrderSummary | null): OrderTr
     isAccessoryOrder: summary.isAccessoryOrder,
     accessoryItems: summary.accessoryItems,
     total: summary.totalPcs ? `${summary.totalPcs} pcs` : undefined,
+    // Rich detail captured at submit — drives the real Order Details card
+    isUniform: summary.isUniform,
+    orderForLabel: summary.orderForLabel,
+    fabricSource: summary.fabricSource,
+    fabric: summary.fabric,
+    gsm: summary.gsm,
+    weave: summary.weave,
+    colorList: summary.colors,
+    colorDesc: summary.colorDesc,
+    qty: summary.qty != null ? `${summary.qty} pcs` : undefined,
+    sizeCatLabel: summary.sizeCatLabel,
+    sizeBreakdown: summary.sizeBreakdown,
+    stitching: summary.stitching,
+    packaging: summary.packaging,
+    price: summary.price,
+    editPayload: summary.editPayload,
+    referenceMethod: summary.referenceMethod,
+    referenceFiles: summary.referenceFiles,
+    paymentMode: summary.paymentMethod,
+    delivery: summary.delivery,
+    accessorySpecs: summary.accessorySpecs,
     steps,
   };
 }
@@ -222,15 +259,37 @@ function DetailRow({ label, value, accent }: { label: string; value: React.React
 }
 
 // ─── Payment Method Card ──────────────────────────────────────────────────────
-function PaymentMethodCard({ order }: { order: OrderTrack }) {
-  const paid = order.statusLabel !== "Quote pending" && order.statusLabel !== "Order placed";
+function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid }: { order: OrderTrack; accountType?: "personal" | "organisation"; paidOverride?: boolean; onMarkPaid?: () => void }) {
+  const statusPaid = order.statusLabel !== "Quote pending" && order.statusLabel !== "Order placed";
+  const [showPay, setShowPay]     = useState(false);
+  const [method, setMethod]       = useState<"upi" | "card">("upi");
+  const [upiApp, setUpiApp]       = useState<UpiProvider>("gpay");
+  const [upiId, setUpiId]         = useState("");
+  const [card, setCard]           = useState({ number: "", expiry: "", cvv: "", name: "" });
+  // Individuals pay the fixed price at checkout, so they're always "Paid" and just track.
+  // Organisations can pay/change the method until payment is done, then it's locked.
+  // paidOverride is held in App (by order id) so it survives this card collapsing/remounting.
+  const isOrg = accountType !== "personal";
+  const paid  = isOrg ? (statusPaid || !!paidOverride) : true;
+
+  const fmtCard   = (v: string) => v.replace(/\D/g, "").slice(0, 16).replace(/(.{4})/g, "$1 ").trim();
+  const fmtExpiry = (v: string) => { const d = v.replace(/\D/g, "").slice(0, 4); return d.length >= 3 ? d.slice(0, 2) + "/" + d.slice(2) : d; };
+  const upiOk  = /^[\w.\-]+@[\w]+$/.test(upiId.trim());
+  const cardOk = card.number.replace(/\D/g, "").length >= 13 && /^\d{2}\/\d{2}$/.test(card.expiry) && card.cvv.length >= 3 && card.name.trim().length > 0;
+  const canPay = method === "upi" ? upiOk : cardOk;
+  const inputStyle: React.CSSProperties = { border: "1px solid var(--border)", background: "var(--card)", outline: "none", color: DARK, fontSize: 13 };
+
   return (
     <Panel title="Payment method">
       <div className="flex items-center justify-between gap-3 mb-2">
-        <p className="text-foreground" style={{ fontSize: 13 }}>Payment method: *****@upi</p>
-        <button style={{ fontSize: 12, color: ACCENT, fontWeight: 600, background: "none", border: "none", cursor: "pointer" }}>
-          Change
-        </button>
+        <p className="text-foreground" style={{ fontSize: 13 }}>Payment method: {paid ? "*****@upi" : "Not selected"}</p>
+        {isOrg && (paid ? (
+          <span style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }} title="Already paid">Change</span>
+        ) : (
+          <button onClick={() => setShowPay(v => !v)} style={{ fontSize: 12, color: ACCENT, fontWeight: 600, background: "none", border: "none", cursor: "pointer" }}>
+            Change
+          </button>
+        ))}
       </div>
       <p className="text-foreground" style={{ fontSize: 13 }}>
         Payment status:{" "}
@@ -238,82 +297,244 @@ function PaymentMethodCard({ order }: { order: OrderTrack }) {
           {paid ? "Paid" : "Pending"}
         </span>
       </p>
+
+      {isOrg && !paid && showPay && (
+        <div className="mt-3 rounded-xl border border-border p-3">
+          <p style={{ fontSize: 12, fontWeight: 600, color: DARK, marginBottom: 8 }}>Choose a payment method</p>
+          {([["upi", "UPI", "Google Pay, PhonePe, Paytm & more"], ["card", "Card", "Credit or debit card"]] as const).map(([id, lbl, sub]) => {
+            const sel = method === id;
+            return (
+              <button key={id} onClick={() => setMethod(id)} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl mb-2 text-left"
+                style={{ border: `1.5px solid ${sel ? DARK : "var(--border)"}`, background: sel ? "rgba(13,13,13,0.03)" : "var(--card)", cursor: "pointer" }}>
+                <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ border: `2px solid ${sel ? DARK : "#d1d5db"}`, background: sel ? DARK : "var(--card)" }}>
+                  {sel && <div className="w-1.5 h-1.5 rounded-full bg-white"/>}
+                </div>
+                <div><p className="text-foreground" style={{ fontSize: 13, fontWeight: sel ? 600 : 400 }}>{lbl}</p><p className="text-muted-foreground" style={{ fontSize: 11 }}>{sub}</p></div>
+              </button>
+            );
+          })}
+
+          {/* ── UPI details ── */}
+          {method === "upi" && (
+            <div className="mb-1">
+              <p style={{ fontSize: 11, fontWeight: 600, color: DARK, margin: "4px 0 6px" }}>Pay using</p>
+              <div className="grid grid-cols-4 gap-2 mb-2.5">
+                {(Object.keys(upiProviderDefs) as UpiProvider[]).map(key => {
+                  const sel = upiApp === key;
+                  return (
+                    <button key={key} onClick={() => setUpiApp(key)} className="flex flex-col items-center gap-1 py-2 rounded-xl"
+                      style={{ background: sel ? "rgba(13,13,13,0.03)" : "var(--card)", border: `1.5px solid ${sel ? DARK : "var(--border)"}`, cursor: "pointer" }}>
+                      <UpiLogo provider={key} size={26}/>
+                      <span style={{ fontSize: 9, fontWeight: sel ? 600 : 500, color: "var(--foreground)" }}>{upiProviderDefs[key].label.split(" ")[0]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <input value={upiId} onChange={e => setUpiId(e.target.value)} placeholder="yourname@bank"
+                autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                className="w-full rounded-lg px-3 py-2" style={inputStyle}/>
+              {upiId.length > 0 && !upiOk && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 4 }}>Enter a valid UPI ID (e.g. name@okicici)</p>}
+            </div>
+          )}
+
+          {/* ── Card details ── */}
+          {method === "card" && (
+            <div className="mb-1">
+              <p style={{ fontSize: 11, fontWeight: 600, color: DARK, margin: "4px 0 6px" }}>Card number</p>
+              <input value={card.number} onChange={e => setCard(c => ({ ...c, number: fmtCard(e.target.value) }))}
+                inputMode="numeric" placeholder="1234 5678 9012 3456" className="w-full rounded-lg px-3 py-2" style={{ ...inputStyle, letterSpacing: 1 }}/>
+              <div className="flex gap-2 mt-2">
+                <div className="flex-1 min-w-0">
+                  <p style={{ fontSize: 11, fontWeight: 600, color: DARK, margin: "0 0 6px" }}>Expiry</p>
+                  <input value={card.expiry} onChange={e => setCard(c => ({ ...c, expiry: fmtExpiry(e.target.value) }))}
+                    inputMode="numeric" placeholder="MM/YY" maxLength={5} className="w-full rounded-lg px-3 py-2" style={inputStyle}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p style={{ fontSize: 11, fontWeight: 600, color: DARK, margin: "0 0 6px" }}>CVV</p>
+                  <input value={card.cvv} onChange={e => setCard(c => ({ ...c, cvv: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                    type="password" inputMode="numeric" placeholder="•••" maxLength={4} className="w-full rounded-lg px-3 py-2" style={inputStyle}/>
+                </div>
+              </div>
+              <p style={{ fontSize: 11, fontWeight: 600, color: DARK, margin: "8px 0 6px" }}>Name on card</p>
+              <input value={card.name} onChange={e => setCard(c => ({ ...c, name: e.target.value }))}
+                placeholder="As printed on card" className="w-full rounded-lg px-3 py-2" style={inputStyle}/>
+            </div>
+          )}
+
+          <button onClick={() => { if (canPay) { onMarkPaid?.(); setShowPay(false); } }} disabled={!canPay}
+            className="w-full mt-2.5 py-2.5 rounded-xl" style={{ background: canPay ? DARK : "#E5E7EB", color: canPay ? "#fff" : "#9CA3AF", fontWeight: 600, fontSize: 13, border: "none", cursor: canPay ? "pointer" : "not-allowed" }}>
+            Pay {order.price?.totalValue ?? "now"} by {method === "upi" ? "UPI" : "card"}
+          </button>
+          <p style={{ fontSize: 10, color: "#9ca3af", marginTop: 6, lineHeight: 1.5 }}>Demo checkout — no real charge is made. CVV is never stored.</p>
+        </div>
+      )}
     </Panel>
   );
 }
 
 // ─── Order Details Card ───────────────────────────────────────────────────────
-function OrderDetailsCard({ order, canChange, onChange }: {
-  order: OrderTrack; canChange?: boolean; onChange?: () => void;
+function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
+  order: OrderTrack; canChange?: boolean; accountType?: "personal" | "organisation"; onEdit?: () => void;
 }) {
-  const changeAction = canChange ? (
-    <button onClick={onChange}
+  // Change is only for organisations, only before production starts, and only when the
+  // order carries an editable snapshot (so seed orders don't open a blank order).
+  const changeAction = (accountType !== "personal" && canChange && !!order.editPayload) ? (
+    <button onClick={onEdit}
       style={{ fontSize: 12, color: ACCENT, fontWeight: 600, background: "none", border: "none", cursor: "pointer" }}>
       Change
     </button>
   ) : undefined;
 
-  if (order.isAccessoryOrder && order.accessoryItems?.length) {
-    const totalPcs = order.accessoryItems.reduce((a, b) => a + b.qty, 0);
+  const sec = (t: string) => (
+    <p className="text-muted-foreground" style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", fontWeight: 500 }}>{t}</p>
+  );
+  const divider = <div className="border-t border-border my-1"/>;
+  const deliveryBlock = order.delivery ? (
+    <>
+      <div className="border-t border-border my-1"/>
+      {sec("Delivery & contact")}
+      <DetailRow label="Name" value={order.delivery.name}/>
+      <DetailRow label="Phone" value={order.delivery.phone}/>
+      {order.delivery.email && <DetailRow label="Email" value={order.delivery.email}/>}
+      <DetailRow label="Address" value={`${order.delivery.address}, ${order.delivery.city} ${order.delivery.pin}`}/>
+    </>
+  ) : null;
+
+  // ── Accessories ──
+  if (order.isAccessoryOrder && (order.accessorySpecs?.length || order.accessoryItems?.length)) {
+    const specs = order.accessorySpecs;
+    const items = order.accessoryItems ?? [];
+    const totalPcs = specs?.length ? specs.reduce((a, b) => a + b.qty, 0) : items.reduce((a, b) => a + b.qty, 0);
     return (
       <Panel title="Order details" action={changeAction}>
         <div className="flex flex-col gap-2">
           <DetailRow label="Order type" value="Accessories & promo items"/>
           <DetailRow label="Total quantity" value={`${totalPcs} pcs`}/>
-          <div className="border-t border-border my-1"/>
-          <p className="text-muted-foreground" style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", fontWeight: 500 }}>Items ordered</p>
-          {order.accessoryItems.map(item => (
-            <DetailRow key={item.name} label={item.name} value={`${item.qty} pcs`}/>
-          ))}
-          <div className="border-t border-border my-1"/>
-          <p className="text-muted-foreground" style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", fontWeight: 500 }}>Reference</p>
-          {[["Logo / Design", "Attachment"], ["Style photo", "Attachment"]].map(([k, v]) => (
-            <div key={k} className="flex items-center justify-between">
-              <span className="text-muted-foreground" style={{ fontSize: 12 }}>{k}</span>
-              <button style={{ fontSize: 12, fontWeight: 500, color: ACCENT, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>{v}</button>
-            </div>
-          ))}
+          {divider}
+          {sec("Items & specifications")}
+          {specs?.length
+            ? specs.map(it => (
+                <div key={it.name} className="rounded-xl border border-border overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2" style={{ background: "var(--muted)" }}>
+                    <span className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{it.name}</span>
+                    <span className="text-foreground" style={{ fontSize: 12, fontWeight: 700 }}>{it.qty} pcs</span>
+                  </div>
+                  {(it.fields.length > 0 || it.notes) && (
+                    <div className="px-3 py-2 flex flex-col gap-1.5">
+                      {it.fields.map(f => <DetailRow key={f.label} label={f.label} value={f.value}/>)}
+                      {it.notes && <DetailRow label="Notes" value={`“${it.notes}”`}/>}
+                    </div>
+                  )}
+                </div>
+              ))
+            : items.map(item => <DetailRow key={item.name} label={item.name} value={`${item.qty} pcs`}/>)}
+          {order.referenceMethod && (<>{divider}{sec("Reference")}<DetailRow label="Method" value={order.referenceMethod}/>{order.referenceFiles ? <DetailRow label="Files attached" value={`${order.referenceFiles}`}/> : null}</>)}
+          {order.price && (
+            <>
+              {divider}{sec("Price details")}
+              <DetailRow label="Items" value={order.price.rateLine}/>
+              <DetailRow label={order.price.totalLabel} value={order.price.totalValue} accent/>
+              {order.price.note && (
+                <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.5, marginTop: 1 }}>{order.price.note}</p>
+              )}
+            </>
+          )}
+          {deliveryBlock}
         </div>
       </Panel>
     );
   }
 
-  const fabricType = order.fabric ?? "Soft 100% Cotton";
-  const gsm = order.gsm ?? "140–160 GSM (lightweight)";
-  const colors = order.colors ?? "Forest Green";
+  // ── Apparel / custom ──
+  const hasMaterials = !order.isUniform && (order.fabricSource || order.fabric || order.gsm || order.weave);
+  const hasColors = (order.colorList?.length ?? 0) > 0 || order.colors || order.colorDesc;
+  const hasSize = order.sizeCatLabel || (order.sizeBreakdown?.length ?? 0) > 0 || order.qty;
 
   return (
     <Panel title="Order details" action={changeAction}>
       <div className="flex flex-col gap-2">
-        <DetailRow label="Order for" value="Kids"/>
-        <div className="border-t border-border my-1"/>
-        <p className="text-muted-foreground" style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", fontWeight: 500 }}>Materials</p>
-        <DetailRow label="Fabric source" value="Fresh fabric"/>
-        <DetailRow label="Fabric type"   value={fabricType}/>
-        <DetailRow label="GSM weight"    value={gsm}/>
-        <DetailRow label="Weave"         value="Plain"/>
-        <div className="border-t border-border my-1"/>
-        <p className="text-muted-foreground" style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", fontWeight: 500 }}>Colors</p>
-        <DetailRow label="Confirm colors" value={colors}/>
-        <DetailRow label="Description"   value="Minimalist style"/>
-        <div className="border-t border-border my-1"/>
-        <p className="text-muted-foreground" style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", fontWeight: 500 }}>Size</p>
-        <DetailRow label="Garment for" value="Kids"/>
-        <div className="flex items-start justify-between">
-          <span className="text-muted-foreground" style={{ fontSize: 12 }}>Qty per size</span>
-          <span className="text-foreground text-right" style={{ fontSize: 12, fontWeight: 500 }}>
-            3-4Y · 5-6Y · 7-8Y<br/>
-            <span className="text-muted-foreground" style={{ fontWeight: 400 }}>10 pcs each</span>
-          </span>
-        </div>
-        <div className="border-t border-border my-1"/>
-        <p className="text-muted-foreground" style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", fontWeight: 500 }}>Reference</p>
-        {[["Logo / Design", "Attachment"], ["Style photo", "Attachment"]].map(([k, v]) => (
-          <div key={k} className="flex items-center justify-between">
-            <span className="text-muted-foreground" style={{ fontSize: 12 }}>{k}</span>
-            <button style={{ fontSize: 12, fontWeight: 500, color: ACCENT, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>{v}</button>
+        {order.orderForLabel && <DetailRow label="Order for" value={order.orderForLabel}/>}
+
+        {order.isUniform && (
+          <div className="flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: "var(--success-bg)", border: "0.5px solid var(--success-border)" }}>
+            <Check size={12} style={{ color: "#059669", flexShrink: 0, marginTop: 1 }}/>
+            <p style={{ fontSize: 11, color: "#065f46", lineHeight: 1.5 }}>Fabric, GSM, colours &amp; stitching are taken from your school/college record.</p>
           </div>
-        ))}
+        )}
+
+        {hasMaterials && (
+          <>
+            {divider}{sec("Materials")}
+            {order.fabricSource && <DetailRow label="Fabric source" value={order.fabricSource}/>}
+            {order.fabric && <DetailRow label="Fabric type" value={order.fabric}/>}
+            {order.gsm && <DetailRow label="GSM weight" value={order.gsm}/>}
+            {order.weave && <DetailRow label="Weave" value={order.weave}/>}
+          </>
+        )}
+
+        {hasColors && (
+          <>
+            {divider}{sec("Colours")}
+            {(order.colorList?.length ?? 0) > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {order.colorList!.map((c, i) => (
+                  <div key={c.hex + i} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border" style={{ background: "var(--muted)" }}>
+                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: c.hex, border: "1px solid rgba(0,0,0,0.12)" }}/>
+                    <span style={{ fontSize: 11, fontWeight: 500 }}>{c.label}</span>
+                  </div>
+                ))}
+              </div>
+            ) : order.colors ? <DetailRow label="Confirm colours" value={order.colors}/> : null}
+            {order.colorDesc && <DetailRow label="Description" value={order.colorDesc}/>}
+          </>
+        )}
+
+        {hasSize && (
+          <>
+            {divider}{sec("Size & quantity")}
+            {order.sizeCatLabel && <DetailRow label="Sizing" value={order.sizeCatLabel}/>}
+            {order.qty && <DetailRow label="Total pieces" value={order.qty}/>}
+            {(order.sizeBreakdown?.length ?? 0) > 0 && (
+              <div className="flex flex-wrap gap-1.5 justify-end">
+                {order.sizeBreakdown!.map(s => (
+                  <span key={s.size} className="px-2 py-0.5 rounded-lg" style={{ background: "var(--muted)", border: "1px solid var(--border)", fontSize: 11, fontWeight: 500 }}>{s.size}: {s.qty}</span>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {(order.stitching || order.packaging) && (
+          <>
+            {divider}{sec("Finishing")}
+            {order.stitching && <DetailRow label="Stitching" value={order.stitching}/>}
+            {order.packaging && <DetailRow label="Packaging" value={order.packaging}/>}
+          </>
+        )}
+
+        {order.referenceMethod && (
+          <>
+            {divider}{sec("Reference")}
+            <DetailRow label="Method" value={order.referenceMethod}/>
+            {order.referenceFiles ? <DetailRow label="Files attached" value={`${order.referenceFiles}`}/> : null}
+          </>
+        )}
+
+        {order.price && (
+          <>
+            {divider}{sec("Price details")}
+            <DetailRow label="Rate" value={order.price.rateLine}/>
+            {order.price.addOnLine && <DetailRow label="Stitching & packaging" value={order.price.addOnLine}/>}
+            <DetailRow label={order.price.totalLabel} value={order.price.totalValue} accent/>
+            {order.price.note && (
+              <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.5, marginTop: 1 }}>{order.price.note}</p>
+            )}
+          </>
+        )}
+
+        {order.total && (<>{divider}<DetailRow label="Order total" value={order.total}/></>)}
+
+        {deliveryBlock}
       </div>
     </Panel>
   );
@@ -591,9 +812,10 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
 }
 
 // ─── Order Card ───────────────────────────────────────────────────────────────
-function OrderCard({ order, accountType, onMessage, onReorder, forceOpen, onDeliveredOpen }: {
+function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen }: {
   order: OrderTrack; accountType?: "personal" | "organisation";
-  onMessage?: () => void; onReorder?: () => void; forceOpen?: boolean;
+  onMessage?: () => void; onReorder?: () => void; onEditOrder?: (payload?: DraftPayload) => void;
+  paidOverride?: boolean; onMarkPaid?: () => void; forceOpen?: boolean;
   onDeliveredOpen?: () => void;
 }) {
   const [open, setOpen] = useState(order.defaultOpen || forceOpen);
@@ -703,8 +925,8 @@ function OrderCard({ order, accountType, onMessage, onReorder, forceOpen, onDeli
               {/* Sub-cards */}
               <div className="mt-3 flex flex-col gap-3">
                 <CoordinatorCard onMessage={onMessage}/>
-                <PaymentMethodCard order={order}/>
-                <OrderDetailsCard order={order} canChange={canChange} onChange={onMessage}/>
+                <PaymentMethodCard order={order} accountType={accountType} paidOverride={paidOverride} onMarkPaid={onMarkPaid}/>
+                <OrderDetailsCard order={order} canChange={canChange} accountType={accountType} onEdit={() => onEditOrder?.(order.editPayload)}/>
                 {accountType !== "personal" && CHANGEABLE_STATUSES.includes(order.statusLabel) && !order.isAccessoryOrder && <SampleApprovalCard/>}
                 <DocumentVault order={order}/>
               </div>
@@ -717,12 +939,15 @@ function OrderCard({ order, accountType, onMessage, onReorder, forceOpen, onDeli
 }
 
 // ─── TrackTab export ──────────────────────────────────────────────────────────
-export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoordinator, onReorder, targetOrderId, onOrderDelivered }: {
+export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoordinator, onReorder, onEditOrder, paidOrderIds, onMarkOrderPaid, targetOrderId, onOrderDelivered }: {
   showNew?: boolean;
   newOrderSummary?: SubmittedOrderSummary | null;
   accountType?: "personal" | "organisation";
   onMessageCoordinator?: () => void;
   onReorder?: () => void;
+  onEditOrder?: (payload?: DraftPayload) => void;
+  paidOrderIds?: string[];
+  onMarkOrderPaid?: (id: string) => void;
   targetOrderId?: string | null;
   onOrderDelivered?: () => void;
 }) {
@@ -787,6 +1012,9 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
               accountType={accountType}
               onMessage={onMessageCoordinator}
               onReorder={onReorder}
+              onEditOrder={onEditOrder}
+              paidOverride={paidOrderIds?.includes(order.id)}
+              onMarkPaid={() => onMarkOrderPaid?.(order.id)}
               forceOpen={order.id === targetOrderId}
               onDeliveredOpen={PAST_STATUSES.includes(order.statusLabel) ? onOrderDelivered : undefined}
             />

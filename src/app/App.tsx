@@ -3,9 +3,9 @@ import {
   Bell, User, Home, PlusCircle, MapPin,
   ChevronRight, TrendingUp, Clock, CheckCircle2, ArrowRight, Box, Package,
   Mail, Smartphone, ShieldCheck, Building2, UserCircle, ChevronLeft, Phone,
-  MapPinned, Headphones, Star, Check, Navigation,
+  MapPinned, Headphones, Star, Check, Navigation, FileText, Trash2,
 } from "lucide-react";
-import { NewOrderTab, type SubmittedOrderSummary } from "./components/NewOrderTab";
+import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPayload } from "./components/NewOrderTab";
 import { TrackTab } from "./components/TrackTab";
 import { AccountTab, type UserProfile } from "./components/AccountTab";
 import { NotificationsScreen } from "./components/NotificationsScreen";
@@ -59,6 +59,13 @@ function StatusBadge({ label, cls }: { label: string; cls: string }) {
       {label}
     </span>
   );
+}
+
+// Format a canonical "+91XXXXXXXXXX" number for display as "+91 98765 43210"
+function fmtPhone(canonical: string): string {
+  const d = canonical.replace(/^\+91/, "").replace(/\D/g, "").slice(0, 10);
+  const a = d.slice(0, 5), b = d.slice(5, 10);
+  return "+91" + (a ? " " + a : "") + (b ? " " + b : "");
 }
 
 // ─── Fabrics data ─────────────────────────────────────────────────────────────
@@ -171,15 +178,17 @@ function StatusBar() {
 
 // ─── Orders data ───────────────────────────────────────────────────────────────
 const orders = [
-  { id: "#FL-2041", name: "300m Cotton Twill",  shade: "Navy",         qty: "500 pcs",  gsm: "GSM 220", eta: "ETA Jul 14", status: "In production", statusCls: "text-emerald-700 bg-emerald-50", pct: 55,  quoteReady: false },
+  { id: "#FL-2041", name: "Cotton Twill",       shade: "Navy",         qty: "300 pcs",  gsm: "GSM 220", eta: "ETA Jul 14", status: "In production", statusCls: "text-emerald-700 bg-emerald-50", pct: 55,  quoteReady: false },
   { id: "#FL-2038", name: "Linen Blend Fabric", shade: "Ivory",        qty: "200 pcs",  gsm: "GSM 160", eta: "ETA Jul 8",  status: "Quality check",  statusCls: "text-amber-700 bg-amber-50",   pct: 78,  quoteReady: false },
-  { id: "#FL-2045", name: "Heavy Denim",        shade: "Washed Black", qty: "1000 pcs", gsm: "GSM 360", eta: "Awaiting",   status: "Quote pending",  statusCls: "text-stone-600 bg-stone-100",  pct: 15,  quoteReady: true  },
+  { id: "#FL-2045", name: "Heavy Denim",        shade: "Washed Black", qty: "1000 pcs", gsm: "GSM 360", eta: "Awaiting",   status: "Quote ready",    statusCls: "text-emerald-700 bg-emerald-50", pct: 15,  quoteReady: true  },
 ];
 
 // ─── Home Tab ─────────────────────────────────────────────────────────────────
-function HomeTab({ onNavigate, onBell, profile }: {
+function HomeTab({ onNavigate, onBell, onDrafts, draftCount = 0, profile }: {
   onNavigate: (t: Tab, orderId?: string) => void;
   onBell: () => void;
+  onDrafts: () => void;
+  draftCount?: number;
   profile?: UserProfile;
 }) {
   const [showSwatch, setShowSwatch] = useState(false);
@@ -187,7 +196,7 @@ function HomeTab({ onNavigate, onBell, profile }: {
   // Active order drives the horizontal progress tracker
   const trackStages = ["Review", "Quote", "Approve", "Production", "QA", "Shipped", "Delivered"];
   const statusToStage: Record<string, number> = {
-    "Order placed": 0, "Quote pending": 1, "In production": 3,
+    "Order placed": 0, "Quote pending": 1, "Quote ready": 2, "In production": 3,
     "Quality check": 4, "Shipped": 5, "Delivered": 6, "Completed": 6,
   };
   const activeOrder = orders.find(o => !["Delivered", "Completed"].includes(o.status)) ?? orders[0];
@@ -205,6 +214,16 @@ function HomeTab({ onNavigate, onBell, profile }: {
           </h2>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={onDrafts}
+            className="w-9 h-9 rounded-full bg-card flex items-center justify-center border border-border relative"
+            style={{ boxShadow: "var(--shadow-sm)" }}
+            title="Drafts">
+            <FileText size={16} strokeWidth={1.5}/>
+            {draftCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center"
+                style={{ background: ACCENT, color: "#fff", fontSize: 9, fontWeight: 700 }}>{draftCount}</span>
+            )}
+          </button>
           <button onClick={onBell}
             className="w-9 h-9 rounded-full bg-card flex items-center justify-center border border-border relative"
             style={{ boxShadow: "var(--shadow-sm)" }}>
@@ -232,11 +251,11 @@ function HomeTab({ onNavigate, onBell, profile }: {
           Managed textile<br/><span style={{ color: ACCENT }}>sourcing for teams</span>
         </h1>
         <p className="text-white/50 mb-5" style={{ fontSize: 12 }}>
-          Requirements, quotes, QA and delivery in one place
+          Requirements, orders, QA and delivery in one place
         </p>
         <button onClick={() => onNavigate("order")}
           className="w-full bg-white text-foreground rounded-xl py-3 flex items-center justify-center gap-2 text-sm font-medium">
-          <PlusCircle size={15} strokeWidth={2}/> Request a quote
+          <PlusCircle size={15} strokeWidth={2}/> Start an order
         </button>
       </div>
 
@@ -244,7 +263,7 @@ function HomeTab({ onNavigate, onBell, profile }: {
       <div className="mx-5 mb-5 grid grid-cols-3 gap-2.5">
         {[
           { label: "Requests",  value: "3",   icon: <Clock        size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
-          { label: "Delivered", value: "12",  icon: <CheckCircle2 size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
+          { label: "Delivered", value: "4",   icon: <CheckCircle2 size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
           { label: "On-time",   value: "97%", icon: <TrendingUp   size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
         ].map(s => (
           <div key={s.label} style={card} className="p-3.5">
@@ -440,6 +459,8 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const phoneOk = mode === "phone" && /^[6-9]\d{9}$/.test(mobileDigits);
   const emailOk = mode === "email" && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(identity.trim());
   const identityOk = mode === "phone" ? phoneOk : emailOk;
+  // Only flag an error once the user has actually entered something (not for the bare "+91" prefix)
+  const identityHasInput = mode === "phone" ? mobileDigits.length > 0 : identity.trim().length > 0;
 
   function switchMode(next: "phone" | "email") {
     setMode(next); setIdentity(next === "phone" ? "+91" : ""); setOtp(""); setStep("identity"); setResendSecs(0);
@@ -507,7 +528,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
             {mode === "phone" ? "Mobile number" : "Email address"}
           </p>
           <input
-            value={identity}
+            value={mode === "phone" ? fmtPhone(identity) : identity}
             onChange={e => {
               if (mode === "phone") {
                 // Keep +91 prefix locked, only allow digits after it (max 10)
@@ -519,22 +540,22 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
             }}
             onKeyDown={e => {
               // Prevent deleting the +91 prefix
-              if (mode === "phone" && (e.key === "Backspace" || e.key === "Delete") && identity.length <= 3) {
+              if (mode === "phone" && (e.key === "Backspace" || e.key === "Delete") && mobileDigits.length === 0) {
                 e.preventDefault();
               }
               if (e.key === "Enter") sendCode();
             }}
             placeholder={mode === "phone" ? "+91 98765 43210" : "you@example.com"}
             inputMode={mode === "phone" ? "tel" : "email"}
-            maxLength={mode === "phone" ? 13 : undefined}
+            maxLength={mode === "phone" ? 16 : undefined}
             style={{ ...inputStyle, marginBottom: 4 }}
           />
-          {identity.length > 0 && !identityOk && (
+          {identityHasInput && !identityOk && (
             <p style={{ fontSize: 11, color: "var(--error)", marginBottom: 12, marginTop: 4 }}>
               {mode === "phone" ? "Enter 10-digit number after +91 (must start with 6, 7, 8 or 9)" : "Enter a valid email address"}
             </p>
           )}
-          {(identity.length === 0 || identityOk) && <div style={{ marginBottom: 12 }}/>}
+          {(!identityHasInput || identityOk) && <div style={{ marginBottom: 12 }}/>}
           <button
             onClick={sendCode}
             disabled={!identityOk || step === "sending"}
@@ -741,7 +762,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) =
               </div>
               <div>
                 <p className="text-foreground text-sm font-semibold mb-0.5">For my organisation</p>
-                <p className="text-muted-foreground" style={{ fontSize: 12 }}>Schools, hospitals, businesses — bulk procurement with GST</p>
+                <p className="text-muted-foreground" style={{ fontSize: 12 }}>Schools, hospitals, businesses — bulk procurement & invoicing</p>
               </div>
             </button>
             {/* Personal option */}
@@ -896,12 +917,109 @@ function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) =
   );
 }
 
+// ─── Drafts Screen ─────────────────────────────────────────────────────────────
+// Lists saved (not-yet-submitted) orders. Tap one to reopen it at the Review step.
+function DraftsScreen({ drafts, onClose, onCancelDraft, onResumeDraft }: {
+  drafts: OrderDraft[];
+  onClose: () => void;
+  onCancelDraft: (id: string) => void;
+  onResumeDraft: (d: OrderDraft) => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState<OrderDraft | null>(null);
+
+  function timeAgo(ts: number) {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hr${hrs > 1 ? "s" : ""} ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days} day${days > 1 ? "s" : ""} ago`;
+  }
+
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col" style={{ background: "var(--background)", borderRadius: 44, overflow: "hidden" }}>
+      {/* Header */}
+      <div className="px-5 pt-2 pb-4 flex items-center gap-3 border-b border-border flex-shrink-0">
+        <button onClick={onClose} className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center border border-border">
+          <ChevronLeft size={18} strokeWidth={2}/>
+        </button>
+        <div className="flex-1">
+          <p className="text-foreground" style={{ fontSize: 16, fontWeight: 700 }}>Drafts</p>
+          <p className="text-muted-foreground" style={{ fontSize: 11 }}>{drafts.length} saved order{drafts.length !== 1 ? "s" : ""}</p>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0" style={{ scrollbarWidth: "none" }}>
+        {drafts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center mt-20">
+            <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-3 border border-border">
+              <FileText size={24} strokeWidth={1.5} className="text-muted-foreground"/>
+            </div>
+            <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>No drafts yet</p>
+            <p className="text-muted-foreground mt-1" style={{ fontSize: 12, lineHeight: 1.5, maxWidth: 240 }}>
+              Tap “Save as draft” on the review step and your order waits here until you're ready to finish it.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {drafts.map(d => (
+              <div key={d.id} style={{ ...card, borderRadius: 16 }} className="overflow-hidden flex items-center">
+                <button onClick={() => onResumeDraft(d)} className="flex-1 min-w-0 text-left p-4 flex items-center gap-3" style={{ background: "transparent", border: "none", cursor: "pointer" }}>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: d.persona === "organisation" ? "#E0F0FF" : ACCENT_BG }}>
+                    {d.persona === "organisation"
+                      ? <Building2 size={18} strokeWidth={1.5} style={{ color: "#1a4a8a" }}/>
+                      : <User size={18} strokeWidth={1.5} style={{ color: ACCENT_TEXT }}/>}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>{d.title}</p>
+                    <p className="text-muted-foreground" style={{ fontSize: 12 }}>{d.subtitle}</p>
+                    <p className="text-muted-foreground" style={{ fontSize: 10.5, marginTop: 2 }}>Saved {timeAgo(d.createdAt)} · Tap to resume</p>
+                  </div>
+                  <ChevronRight size={16} className="text-muted-foreground flex-shrink-0"/>
+                </button>
+                <button onClick={() => setConfirmDelete(d)} className="flex-shrink-0 w-10 h-10 mr-2 rounded-xl flex items-center justify-center" style={{ background: "#fef2f2", border: "1px solid #fecaca", cursor: "pointer" }} title="Remove draft">
+                  <Trash2 size={15} style={{ color: "#dc2626" }}/>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Remove-draft confirmation */}
+      {confirmDelete && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center px-6" style={{ background: "rgba(0,0,0,0.5)" }} onClick={() => setConfirmDelete(null)}>
+          <div className="w-full rounded-2xl p-5 text-center" style={{ background: "var(--background)", maxWidth: 300 }} onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center" style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
+              <Trash2 size={20} style={{ color: "#dc2626" }}/>
+            </div>
+            <p className="text-foreground mb-1.5" style={{ fontSize: 16, fontWeight: 700 }}>Remove this draft?</p>
+            <p className="text-muted-foreground text-sm leading-relaxed mb-5">
+              “{confirmDelete.title}” will be removed from your drafts. This can't be undone.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => { onCancelDraft(confirmDelete.id); setConfirmDelete(null); }}
+                style={{ ...btnPrimary, background: "#dc2626", padding: "12px 20px" }}>
+                <Trash2 size={15}/> Yes, remove draft
+              </button>
+              <button onClick={() => setConfirmDelete(null)} style={{ ...btnSecondary, padding: "10px 20px" }}>Keep draft</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Help & Support Screen ─────────────────────────────────────────────────────
 function HelpSupportScreen({ onBack }: { onBack: () => void }) {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
   const faqs = [
-    { q: "How do I place a bulk order?",          a: "Go to the Quote tab and fill in your material requirements. Our team will get back with a quote within 24 hours." },
-    { q: "What is the minimum order quantity?",   a: "Minimum order is 50 metres or 100 pieces depending on fabric type. Contact our team for exceptions." },
+    { q: "How do I place a bulk order?",          a: "Go to the Quote tab and fill in your material requirements. Our coordinator will confirm your order details and share the next steps within 2–4 hours during business hours." },
+    { q: "What is the minimum order quantity?",   a: "Organisation orders start at 100 pieces and accessories at 100 pieces per product. Individual custom orders start at 3 pieces, and individual accessories at just 1 piece per product." },
     { q: "How long does delivery take?",          a: "Standard orders take 7–14 business days. Expedited delivery is available at extra cost." },
     { q: "Can I track my order?",                 a: "Yes! Use the Requests tab to see live production status, QA reports, and delivery tracking." },
     { q: "What payment methods are accepted?",    a: "We accept bank transfer (NEFT/RTGS), UPI, and credit cards through our secure payment gateway." },
@@ -969,7 +1087,7 @@ const tabItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "account", label: "Account",  icon: <User      size={20} strokeWidth={1.5}/> },
 ];
 const tabTitleMap: Record<Tab, string> = {
-  home: "", order: "Request Quote", track: "My Requests", account: "Account",
+  home: "", order: "New Order", track: "My Requests", account: "Account",
 };
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -986,20 +1104,60 @@ export default function App() {
   const [targetOrderId, setTargetOrderId]     = useState<string | null>(null);
   const [userProfile, setUserProfile]         = useState<UserProfile>({ name: "", avatar: null, accountType: "personal" });
   const [showHelp, setShowHelp]               = useState(false);
+  const [showDrafts, setShowDrafts]           = useState(false);
+  const [resumeDraft, setResumeDraft]         = useState<OrderDraft | null>(null);
+  const [paidOrderIds, setPaidOrderIds]       = useState<string[]>([]);
+  const [drafts, setDrafts]                   = useState<OrderDraft[]>(() => {
+    try { return JSON.parse(localStorage.getItem("fl_drafts") || "[]"); } catch { return []; }
+  });
+
+  function persistDrafts(next: OrderDraft[]) {
+    setDrafts(next);
+    try { localStorage.setItem("fl_drafts", JSON.stringify(next)); } catch { /* ignore */ }
+  }
+  function handleSaveDraft(payload: DraftPayload) {
+    const draft: OrderDraft = { ...payload, id: `draft-${Date.now()}`, createdAt: Date.now() };
+    persistDrafts([draft, ...drafts]);
+    setResumeDraft(null);
+    setActiveTab("home");
+  }
+  function handleCancelDraft(id: string) {
+    persistDrafts(drafts.filter(d => d.id !== id));
+  }
+  // Reopen a draft in the editor at the Review step.
+  function handleResumeDraft(d: OrderDraft) {
+    persistDrafts(drafts.filter(x => x.id !== d.id));
+    setResumeDraft(d);
+    setShowDrafts(false);
+    setActiveTab("order");
+  }
 
   function handleNavigate(tab: Tab, orderId?: string) {
+    setResumeDraft(null);
     setActiveTab(tab);
     setTargetOrderId(orderId ?? null);
   }
   function handleOrderSubmitted(summary?: SubmittedOrderSummary) {
     setNewOrderSummary(summary ?? null);
     setShowNewOrder(true);
+    setResumeDraft(null); // editing finished — don't silently reopen this edit in the New order tab
     setActiveTab("track");
     // ⚠️ Do NOT show rating popup here — only show after order is delivered
+  }
+  // Org payment "Paid" must survive card collapse/remount, so it lives here (by order id).
+  function handleMarkOrderPaid(id: string) {
+    setPaidOrderIds(prev => prev.includes(id) ? prev : [...prev, id]);
   }
   function handleOrderDelivered() {
     // Called by TrackTab when user opens a delivered order
     if (!ratingDone) setShowRatingPopup(true);
+  }
+  // Reopen a submitted order (org, before production) in the editor at the Review step.
+  function handleEditOrder(payload?: DraftPayload) {
+    if (payload) setResumeDraft({ ...payload, id: `edit-${Date.now()}`, createdAt: Date.now() });
+    else setResumeDraft(null);
+    setShowNewOrder(false);
+    setActiveTab("order");
   }
   function handleNotifNavigate(tab: string, orderId?: string) {
     setShowNotifications(false);
@@ -1013,6 +1171,8 @@ export default function App() {
     setAuthStep("login");
     setActiveTab("home");
     setShowNotifications(false);
+    setShowDrafts(false);
+    setResumeDraft(null);
     setShowNewOrder(false);
     setNewOrderSummary(null);
     setShowRatingPopup(false);
@@ -1053,11 +1213,21 @@ export default function App() {
             <span className="text-border">·</span>
             <span className="text-foreground text-sm font-semibold">{tabTitleMap[activeTab]}</span>
           </div>
-          <button onClick={() => setShowNotifications(true)}
-            className="w-8 h-8 rounded-full bg-card flex items-center justify-center border border-border relative">
-            <Bell size={14} strokeWidth={1.5}/>
-            <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full" style={{ background: ACCENT }}/>
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowDrafts(true)}
+              className="w-8 h-8 rounded-full bg-card flex items-center justify-center border border-border relative" title="Drafts">
+              <FileText size={14} strokeWidth={1.5}/>
+              {drafts.length > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full flex items-center justify-center"
+                  style={{ background: ACCENT, color: "#fff", fontSize: 8.5, fontWeight: 700 }}>{drafts.length}</span>
+              )}
+            </button>
+            <button onClick={() => setShowNotifications(true)}
+              className="w-8 h-8 rounded-full bg-card flex items-center justify-center border border-border relative">
+              <Bell size={14} strokeWidth={1.5}/>
+              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full" style={{ background: ACCENT }}/>
+            </button>
+          </div>
         </div>
       )}
 
@@ -1067,8 +1237,8 @@ export default function App() {
           <HelpSupportScreen onBack={() => setShowHelp(false)}/>
         ) : (
           <>
-            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} profile={userProfile}/>}
-            {activeTab === "order"   && <NewOrderTab onNavigate={handleNavigate} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType}/>}
+            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} draftCount={drafts.length} profile={userProfile}/>}
+            {activeTab === "order"   && <NewOrderTab key={resumeDraft?.id ?? "new"} onNavigate={handleNavigate} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>}
             {activeTab === "track"   && (
               <TrackTab
                 showNew={showNewOrder}
@@ -1077,6 +1247,9 @@ export default function App() {
                 accountType={userProfile.accountType}
                 onMessageCoordinator={handleContactAdmin}
                 onReorder={() => setActiveTab("order")}
+                onEditOrder={handleEditOrder}
+                paidOrderIds={paidOrderIds}
+                onMarkOrderPaid={handleMarkOrderPaid}
                 onOrderDelivered={handleOrderDelivered}
               />
             )}
@@ -1103,7 +1276,7 @@ export default function App() {
           const active = activeTab === tab.id && !showHelp;
           return (
             <button key={tab.id}
-              onClick={() => { setShowHelp(false); setActiveTab(tab.id); }}
+              onClick={() => { setShowHelp(false); setResumeDraft(null); setActiveTab(tab.id); }}
               className="flex-1 flex flex-col items-center gap-0.5 py-1">
               <span className={active ? "text-foreground" : "text-muted-foreground"}>{tab.icon}</span>
               <span className={active ? "text-foreground" : "text-muted-foreground"}
@@ -1123,6 +1296,16 @@ export default function App() {
       {/* Notifications overlay */}
       {showNotifications && (
         <NotificationsScreen onClose={() => setShowNotifications(false)} onNavigate={handleNotifNavigate}/>
+      )}
+
+      {/* Drafts overlay */}
+      {showDrafts && (
+        <DraftsScreen
+          drafts={drafts}
+          onClose={() => setShowDrafts(false)}
+          onCancelDraft={handleCancelDraft}
+          onResumeDraft={handleResumeDraft}
+        />
       )}
 
       {/* Rating popup */}
