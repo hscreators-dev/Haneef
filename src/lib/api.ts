@@ -104,6 +104,15 @@ export const quotes = {
   reject:  (id: string, note?: string) => post<{ quote: Quote }>(`/quotes/${id}/reject`, { note }),
 };
 
+// ─── Virtual try-on ("live picture") ──────────────────────────────────────────
+
+export const tryon = {
+  generate: (body: {
+    selfie: string; garment: string; colour?: string; colourHex?: string;
+    material?: string; designUrl?: string; notes?: string; audience?: string; placement?: string;
+  }) => post<{ imageUrl: string }>("/tryon", body),
+};
+
 // ─── Track ────────────────────────────────────────────────────────────────────
 
 export const track = {

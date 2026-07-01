@@ -354,6 +354,9 @@ function StatusBadge({ label, cls }: { label: string; cls: string }) {
   );
 }
 
+// City names in India are alphabetic — strip digits and stray symbols as the user types.
+const sanitizeCity = (v: string) => v.replace(/[^A-Za-z\s.'-]/g, "");
+
 // Format a canonical "+91XXXXXXXXXX" number for display as "+91 98765 43210"
 function fmtPhone(canonical: string): string {
   const d = canonical.replace(/^\+91/, "").replace(/\D/g, "").slice(0, 10);
@@ -555,7 +558,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, draftCount = 0, profile }: {
       {/* ── Stats row ── */}
       <div className="mx-5 mb-5 grid grid-cols-3 gap-2.5">
         {[
-          { label: "Requests",  value: "3",   icon: <Clock        size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
+          { label: "Active",    value: "3",   icon: <Clock        size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
           { label: "Delivered", value: "4",   icon: <CheckCircle2 size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
           { label: "On-time",   value: "97%", icon: <TrendingUp   size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
         ].map(s => (
@@ -1346,7 +1349,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) =
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>City *</p>
-                <input value={city} onChange={e => setCity(e.target.value)} placeholder="City" style={inputStyle}/>
+                <input value={city} onChange={e => setCity(sanitizeCity(e.target.value))} placeholder="City" style={inputStyle}/>
               </div>
               <div>
                 <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>PIN code *</p>
@@ -1469,10 +1472,10 @@ function DraftsScreen({ drafts, onClose, onCancelDraft, onResumeDraft }: {
 function HelpSupportScreen({ onBack }: { onBack: () => void }) {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
   const faqs = [
-    { q: "How do I place a bulk order?",          a: "Go to the Quote tab and fill in your material requirements. Our coordinator will confirm your order details and share the next steps within 2–4 hours during business hours." },
+    { q: "How do I place a bulk order?",          a: "Go to the Order tab and fill in your material requirements. Our coordinator will confirm your order details and share the next steps within 2–4 hours during business hours." },
     { q: "What is the minimum order quantity?",   a: "Organisation orders start at 100 pieces and accessories at 100 pieces per product. Individual custom orders start at 3 pieces, and individual accessories at just 1 piece per product." },
     { q: "How long does delivery take?",          a: "Standard orders take 7–14 business days. Expedited delivery is available at extra cost." },
-    { q: "Can I track my order?",                 a: "Yes! Use the Requests tab to see live production status, QA reports, and delivery tracking." },
+    { q: "Can I track my order?",                 a: "Yes! Use the Track tab to see live production status, QA reports, and delivery tracking." },
     { q: "What payment methods are accepted?",    a: "We accept bank transfer (NEFT/RTGS), UPI, and credit cards through our secure payment gateway." },
   ];
 
@@ -1533,12 +1536,12 @@ function HelpSupportScreen({ onBack }: { onBack: () => void }) {
 // ─── Tab items ────────────────────────────────────────────────────────────────
 const tabItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "home",    label: "Home",     icon: <Home      size={20} strokeWidth={1.5}/> },
-  { id: "order",   label: "Quote",    icon: <PlusCircle size={20} strokeWidth={1.5}/> },
-  { id: "track",   label: "Requests", icon: <MapPin    size={20} strokeWidth={1.5}/> },
+  { id: "order",   label: "Order",    icon: <PlusCircle size={20} strokeWidth={1.5}/> },
+  { id: "track",   label: "Track",    icon: <MapPin    size={20} strokeWidth={1.5}/> },
   { id: "account", label: "Account",  icon: <User      size={20} strokeWidth={1.5}/> },
 ];
 const tabTitleMap: Record<Tab, string> = {
-  home: "", order: "New Order", track: "My Requests", account: "Account",
+  home: "", order: "New Order", track: "My Orders", account: "Account",
 };
 
 // ─── App ──────────────────────────────────────────────────────────────────────

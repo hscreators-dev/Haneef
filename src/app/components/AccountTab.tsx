@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
   ChevronRight, ChevronDown, Building2, MapPin, CreditCard, Clock, FileText,
-  Bell, ShieldCheck, LogOut, ArrowLeft, Camera, Check, Eye, EyeOff,
+  Bell, ShieldCheck, LogOut, ArrowLeft, Camera, Check,
   Navigation, Plus, Trash2, Shield, Smartphone, Key, Edit3, Pencil,
   RotateCcw, Package, BookOpen, GraduationCap, Heart, Factory,
   Utensils, Trophy, Landmark, Users, AlertTriangle,
@@ -13,6 +13,8 @@ const DARK        = "#0D0D0D";
 // Shared input class — consistent across all modules
 const INP = "w-full bg-card border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm outline-none";
 const fnt: React.CSSProperties = { fontFamily: "DM Sans, sans-serif" };
+// City names in India are alphabetic — strip digits and stray symbols as the user types.
+const sanitizeCity = (v: string) => v.replace(/[^A-Za-z\s.'-]/g, "");
 
 // Format a canonical "+91XXXXXXXXXX" number for display as "+91 98765 43210"
 function fmtPhone(canonical: string): string {
@@ -713,7 +715,7 @@ function BusinessDetails({ onBack }: { onBack: () => void }) {
           <div className="grid grid-cols-2 gap-2 mb-3">
             <div>
               <p className="text-muted-foreground mb-1" style={{ fontSize:11 }}>City *</p>
-              <input value={city} onChange={e => setCity(e.target.value)} placeholder="City" className={INP} style={fnt}/>
+              <input value={city} onChange={e => setCity(sanitizeCity(e.target.value))} placeholder="City" className={INP} style={fnt}/>
             </div>
             <div>
               <p className="text-muted-foreground mb-1" style={{ fontSize:11 }}>Pincode *</p>
@@ -797,7 +799,7 @@ function DeliveryAddresses({ onBack }: { onBack: () => void }) {
           <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Street address *</p>
           <input value={newLine1} onChange={e => setNewLine1(e.target.value)} placeholder="Building, street, area" className={INP + " mb-3 block"} style={fnt}/>
           <div className="grid grid-cols-2 gap-2 mb-3">
-            <div><p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>City *</p><input value={newCity} onChange={e => setNewCity(e.target.value)} placeholder="City" className={INP} style={fnt}/></div>
+            <div><p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>City *</p><input value={newCity} onChange={e => setNewCity(sanitizeCity(e.target.value))} placeholder="City" className={INP} style={fnt}/></div>
             <div><p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>PIN code</p><input value={newPin} onChange={e => setNewPin(e.target.value)} placeholder="6-digit PIN" inputMode="numeric" maxLength={6} className={INP} style={fnt}/></div>
           </div>
           <button onClick={saveNew} style={btnPrimary}>Save address</button>
@@ -811,8 +813,6 @@ function DeliveryAddresses({ onBack }: { onBack: () => void }) {
 function SecurityScreen({ onBack, on2FASetup, twoFAEnabled, onDisable2FA }: {
   onBack: () => void; on2FASetup: () => void; twoFAEnabled: boolean; onDisable2FA: () => void;
 }) {
-  const [showPass, setShowPass] = useState(false);
-
   return (
     <SubScreen title="Security" sub="Account protection settings" onBack={onBack}>
       {/* 2FA */}
@@ -841,25 +841,6 @@ function SecurityScreen({ onBack, on2FASetup, twoFAEnabled, onDisable2FA }: {
             <p className="flex items-center gap-1" style={{ fontSize:11, color:"#dc2626" }}><AlertTriangle size={10}/>Enable 2FA to protect your orders and payment details.</p>
           </div>
         )}
-      </div>
-
-      {/* Change password */}
-      <div className="bg-card border border-border rounded-2xl p-4 mb-3">
-        <p className="text-foreground text-sm mb-3" style={{ fontWeight:600 }}>Change password</p>
-        {["Current password","New password","Confirm new password"].map((lbl, i) => (
-          <div key={i} className="mb-3">
-            <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>{lbl}</p>
-            <div className="relative">
-              <input type={showPass && i===0 ? "text" : "password"} placeholder="••••••••" className={INP} style={fnt}/>
-              {i===0 && (
-                <button onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                  {showPass ? <EyeOff size={14} strokeWidth={1.5}/> : <Eye size={14} strokeWidth={1.5}/>}
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-        <button style={{ ...btnPrimary, borderRadius:12, padding:"10px 20px" }}>Update password</button>
       </div>
 
       {/* Sessions */}

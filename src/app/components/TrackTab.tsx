@@ -3,7 +3,7 @@ import {
   ChevronDown, ChevronUp, Check, Scissors, Microscope, Truck, Package, MessageSquare,
   RotateCcw, Star, Wallet, ReceiptText, ClipboardCheck, Phone, Mail, Palette, FileText,
 } from "lucide-react";
-import type { SubmittedOrderSummary, OrderPrice, DraftPayload } from "./NewOrderTab";
+import type { SubmittedOrderSummary, OrderPrice, DraftPayload, OrderGarmentLine } from "./NewOrderTab";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -49,9 +49,11 @@ interface OrderTrack {
   // ── Rich detail for orders submitted in-app (from SubmittedOrderSummary) ──
   isUniform?: boolean;
   orderForLabel?: string;
+  garmentLabel?: string;
+  garmentLines?: OrderGarmentLine[];
   fabricSource?: string;
   weave?: string;
-  colorList?: { hex: string; label: string }[];
+  colorList?: { hex: string; label: string; qty?: number }[];
   colorDesc?: string;
   sizeCatLabel?: string;
   sizeBreakdown?: { size: string; qty: number }[];
@@ -187,6 +189,8 @@ function buildNewSubmittedOrder(summary?: SubmittedOrderSummary | null): OrderTr
     // Rich detail captured at submit — drives the real Order Details card
     isUniform: summary.isUniform,
     orderForLabel: summary.orderForLabel,
+    garmentLabel: summary.garmentLabel,
+    garmentLines: summary.garmentLines,
     fabricSource: summary.fabricSource,
     fabric: summary.fabric,
     gsm: summary.gsm,
@@ -446,6 +450,7 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
   }
 
   // ── Apparel / custom ──
+  const hasLines = (order.garmentLines?.length ?? 0) > 0;
   const hasMaterials = !order.isUniform && (order.fabricSource || order.fabric || order.gsm || order.weave);
   const hasColors = (order.colorList?.length ?? 0) > 0 || order.colors || order.colorDesc;
   const hasSize = order.sizeCatLabel || (order.sizeBreakdown?.length ?? 0) > 0 || order.qty;
@@ -454,6 +459,44 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
     <Panel title="Order details" action={changeAction}>
       <div className="flex flex-col gap-2">
         {order.orderForLabel && <DetailRow label="Order for" value={order.orderForLabel}/>}
+
+        {hasLines ? (
+          /* Full per-garment breakdown — mirrors the Review step for multi-garment orders. */
+          <>
+            {divider}{sec("Garments")}
+            <div className="flex flex-col gap-2">
+              {order.garmentLines!.map((g, i) => (
+                <div key={i} className="rounded-xl border border-border overflow-hidden">
+                  <div className="flex items-center justify-between gap-2 px-3 py-2" style={{ background: "var(--muted)" }}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ background: g.colorHex, border: "1px solid rgba(0,0,0,0.18)" }}/>
+                      <span style={{ fontSize: 12.5, fontWeight: 700 }}>{g.name}{g.audience ? ` · ${g.audience}` : g.gender ? ` (${g.gender === "boy" ? "Boys" : "Girls"})` : ""}</span>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{g.qty} pcs</span>
+                  </div>
+                  <div className="px-3 py-2 flex flex-col gap-1">
+                    {g.style && <DetailRow label="Style" value={g.style}/>}
+                    <DetailRow label="Colour" value={g.colorLabel}/>
+                    {(g.fabric || g.gsm || g.weave) && <DetailRow label="Fabric" value={[g.fabric, g.gsm, g.weave].filter(Boolean).join(" · ")}/>}
+                    {g.sizes.length > 0
+                      ? (
+                        <div className="flex flex-wrap gap-1.5 justify-end">
+                          {g.sizes.map(s => (
+                            <span key={s.size} className="px-2 py-0.5 rounded-lg" style={{ background: "var(--muted)", border: "1px solid var(--border)", fontSize: 11, fontWeight: 500 }}>{s.size}: {s.qty}</span>
+                          ))}
+                        </div>
+                      )
+                      : <DetailRow label="Sizes" value="To be confirmed"/>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {order.qty && <DetailRow label="Total pieces" value={order.qty}/>}
+            {order.colorDesc && <DetailRow label="Design note" value={order.colorDesc}/>}
+          </>
+        ) : (
+        <>
+        {order.garmentLabel && <DetailRow label="Garment" value={order.garmentLabel}/>}
 
         {order.isUniform && (
           <div className="flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: "var(--success-bg)", border: "0.5px solid var(--success-border)" }}>
@@ -480,7 +523,7 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
                 {order.colorList!.map((c, i) => (
                   <div key={c.hex + i} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border" style={{ background: "var(--muted)" }}>
                     <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: c.hex, border: "1px solid rgba(0,0,0,0.12)" }}/>
-                    <span style={{ fontSize: 11, fontWeight: 500 }}>{c.label}</span>
+                    <span style={{ fontSize: 11, fontWeight: 500 }}>{c.label}{typeof c.qty === "number" ? ` × ${c.qty}` : ""}</span>
                   </div>
                 ))}
               </div>
@@ -502,6 +545,8 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
               </div>
             )}
           </>
+        )}
+        </>
         )}
 
         {(order.stitching || order.packaging) && (

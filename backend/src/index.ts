@@ -13,6 +13,7 @@ import ordersRouter  from "./routes/orders";
 import accountRouter from "./routes/account";
 import quotesRouter  from "./routes/quotes";
 import trackRouter   from "./routes/track";
+import tryonRouter   from "./routes/tryon";
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,9 @@ app.use(cors({
   credentials: true,
 }));
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+// Try-on selfies are larger than normal payloads — parse them with a higher limit
+// before the global 1mb parser runs.
+app.use("/api/tryon", express.json({ limit: "12mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -59,6 +63,7 @@ app.use("/api/orders",  ordersRouter);
 app.use("/api/account", accountRouter);
 app.use("/api/quotes",  quotesRouter);
 app.use("/api/track",   trackRouter);
+app.use("/api/tryon",   tryonRouter);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 
