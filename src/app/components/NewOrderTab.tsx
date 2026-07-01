@@ -7,7 +7,7 @@ import {
   Hash, Percent, ChevronRight, GraduationCap, BookOpen, Factory,
   Landmark, Trophy, Utensils, Heart, Shirt, Dumbbell, Users, Briefcase,
   Award, Smartphone, Gift, Star, Navigation, Loader2, ChevronLeft, FileText,
-  Wallet, ReceiptText, ShieldCheck, Mars, Venus,
+  Wallet, ReceiptText, ShieldCheck, Mars, Venus, Lightbulb,
 } from "lucide-react";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 import { tryon as tryonApi } from "../../lib/api";
@@ -83,6 +83,125 @@ function isPhoneValid(v: string): boolean {
 
 /** City names in India are alphabetic — strip digits and stray symbols as the user types. */
 const sanitizeCity = (v: string) => v.replace(/[^A-Za-z\s.'-]/g, "");
+
+// Quantity fields pre-fill a minimum (e.g. "100") and the user is expected to replace it
+// by typing a new number. `.select()` on type="number" inputs is unreliable on some mobile
+// browsers (it silently no-ops), which is what causes "100" + typed "200" to become
+// "100200" instead of replacing. Deferring the select to the next frame, and pairing this
+// with type="text" + inputMode="numeric" on the field, fixes it reliably everywhere.
+function selectAllOnFocus(e: React.FocusEvent<HTMLInputElement> | React.MouseEvent<HTMLInputElement>) {
+  const el = e.currentTarget;
+  requestAnimationFrame(() => el.select());
+}
+// The real reason the deferred .select() above still got undone: the native "mouseup"
+// that follows the same tap/click which focused the input fires its own default action
+// right after — repositioning/collapsing the selection to the click point. That happens
+// after our rAF-deferred select() runs, so it silently wins and leaves the caret in place
+// instead of a full selection, and the next keystroke inserts instead of replacing.
+// Pair with onMouseUp={preventSelectionCollapse} on every quantity input to stop that
+// default action from undoing the selection.
+function preventSelectionCollapse(e: React.MouseEvent<HTMLInputElement>) {
+  e.preventDefault();
+}
+/** Keep only digits as the user types a quantity — used with type="text" quantity inputs. */
+const digitsOnly = (v: string) => v.replace(/\D/g, "");
+
+// A small, dismissible contextual tip for a specific step. Persisted in localStorage
+// by key so once someone's read it and closed it, it doesn't nag them again on every
+// visit to that step — but it's easy to re-surface (e.g. from Help & Support) since
+// it's driven by data, not a one-time flag baked into the flow itself.
+function TipBanner({ tipKey, children }: { tipKey: string; children: React.ReactNode }) {
+  const storageKey = `fl_tip_dismissed_${tipKey}`;
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem(storageKey) === "1"; } catch { return false; }
+  });
+  if (dismissed) return null;
+  function dismiss() {
+    setDismissed(true);
+    try { localStorage.setItem(storageKey, "1"); } catch { /* ignore */ }
+  }
+  return (
+    <div className="flex items-start gap-2.5 mb-4 px-3.5 py-3 rounded-xl" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>
+      <Lightbulb size={15} strokeWidth={1.75} style={{ color: "#B45309", flexShrink: 0, marginTop: 1 }}/>
+      <p style={{ fontSize: 12, lineHeight: 1.5, color: "#92400E", flex: 1 }}>{children}</p>
+      <button onClick={dismiss} aria-label="Dismiss tip" style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#B45309", flexShrink: 0 }}>
+        <X size={14}/>
+      </button>
+    </div>
+  );
+}
+
+// ─── First-login coach-mark spotlight ──────────────────────────────────────────
+// One-shot "tap here, this is next" pointer at a real control, shown only the very
+// first time someone reaches this step (tracked by a one-time localStorage flag,
+// never reset). Polls continuously (not just once on mount) via rAF so it reliably
+// finds its target even if this step is still finishing its first render.
+function Coachmark({ storageKey, targetId, title, body, placement }: {
+  storageKey: string; targetId: string; title: string; body: string; placement?: "above" | "below";
+}) {
+  const [done, setDone] = useState(() => {
+    try { return localStorage.getItem(storageKey) === "1"; } catch { return false; }
+  });
+  const [frame, setFrame] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [rect, setRect]   = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    if (done) return;
+    let raf = 0;
+    const tick = () => {
+      const frameEl  = document.getElementById("garm-phone-frame");
+      const targetEl = document.getElementById(targetId);
+      if (frameEl && targetEl) {
+        const f = frameEl.getBoundingClientRect();
+        const t = targetEl.getBoundingClientRect();
+        setFrame({ top: f.top, left: f.left, width: f.width, height: f.height });
+        setRect({ top: t.top - f.top, left: t.left - f.left, width: t.width, height: t.height });
+      } else {
+        setRect(null);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [done, targetId]);
+
+  if (done || !rect || !frame) return null;
+
+  function dismiss() {
+    setDone(true);
+    try { localStorage.setItem(storageKey, "1"); } catch { /* ignore */ }
+  }
+
+  const pad = 6;
+  const hole = { top: rect.top - pad, left: rect.left - pad, width: rect.width + pad * 2, height: rect.height + pad * 2 };
+  const placeBelow = placement ? placement === "below" : hole.top < frame.height * 0.55;
+  const bubbleTop = placeBelow ? Math.min(hole.top + hole.height + 12, frame.height - 140) : undefined;
+  const bubbleBottom = !placeBelow ? Math.max(frame.height - hole.top + 12, 12) : undefined;
+
+  return (
+    <div style={{ position: "fixed", top: frame.top, left: frame.left, width: frame.width, height: frame.height, zIndex: 9999, overflow: "hidden", borderRadius: 44, pointerEvents: "none" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: Math.max(0, hole.top), background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top + hole.height, left: 0, right: 0, bottom: 0, background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top, left: 0, width: Math.max(0, hole.left), height: hole.height, background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top, left: hole.left + hole.width, right: 0, height: hole.height, background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top, left: hole.left, width: hole.width, height: hole.height, borderRadius: 16, border: `2px solid ${ACCENT}`, boxShadow: "0 0 0 3px rgba(200,169,126,0.25)" }}/>
+      <div style={{
+          position: "absolute", top: bubbleTop, bottom: bubbleBottom, left: 20, right: 20,
+          background: "var(--background)", borderRadius: 16, padding: 16,
+          boxShadow: "0 12px 28px rgba(0,0,0,0.22)", border: "1px solid var(--border)",
+          pointerEvents: "auto",
+        }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: DARK, marginBottom: 4 }}>{title}</p>
+        <p className="text-muted-foreground mb-3" style={{ fontSize: 12, lineHeight: 1.5 }}>{body}</p>
+        <div className="flex justify-end">
+          <button onClick={dismiss} className="flex items-center gap-1 px-3.5 py-2 rounded-xl" style={{ background: DARK, color: "#fff", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            Got it <ArrowRight size={13} strokeWidth={2}/>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const VALIDATORS = {
   email:    (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()) ? "" : "Enter a valid email address",
@@ -227,7 +346,10 @@ type DigiStatus = "pending" | "processing" | "done";
 interface ColorEntry { id: number; hex: string; pantone: string; label: string; position: string }
 interface RefImg { id: number; url: string; name: string; size: number; caption: string; tag: string; digiStatus?: DigiStatus; needsDigi?: boolean }
 
-const currentUser = {
+// Fallback demo profile — overwritten with the real onboarding profile (name, org
+// name/type, phone, email) at the top of NewOrderTab() on every mount, so the rest of
+// this file can keep reading `currentUser.X` as a simple, always-in-scope default.
+let currentUser = {
   name: "Arjun Kumar", org: "Sri Vidya Mandir School",
   accountType: "institution" as "institution" | "individual",
   orgType: "school" as OrgType,
@@ -458,6 +580,23 @@ const orgCfg: Record<OrgType, { minQty: number; defaultQty: number; qtyStep: num
   sports:      { minQty: 100, defaultQty: 100, qtyStep: 20, defaultSizeCat: "college",fabricLabel: "Sports fabric",  fabricOptions: ["Dri-fit Polyester (jerseys)","Mesh knit (ventilated kits)","Compression spandex blend","Fleece (tracksuits)"], gsmOptions: ["100–130 GSM (jerseys & singlets)","160–180 GSM (training wear)","280–320 GSM (tracksuits)"], weaveOptions: ["Knit (jersey)","Mesh","Interlock","Fleece"],   nameLabel: "Club / Team name",           namePlaceholder: "e.g. Chennai Super Kings, ABC FC",  regLabel: "Sport / League",                             regPlaceholder: "e.g. Cricket, Football, Basketball" },
   government:  { minQty: 100, defaultQty: 500, qtyStep: 100, defaultSizeCat: "mens",   fabricLabel: "Fabric type",    fabricOptions: ["Heavy Cotton Twill (uniforms)","Poly-Cotton Blend (formal)","100% Cotton (summer wear)","Wool Blend (winter formal)"], gsmOptions: ["180–220 GSM (standard uniform)","240–280 GSM (formal & ceremonial)","300–340 GSM (winter)"], weaveOptions: ["Twill","Plain","Serge","Oxford"],            nameLabel: "Department / Organisation name", namePlaceholder: "e.g. Tamil Nadu Police, TNEB",  regLabel: "Department code / Ministry",                 regPlaceholder: "e.g. Home Dept., Ministry of Health" },
   ngo:         { minQty: 100, defaultQty: 100, qtyStep: 20, defaultSizeCat: "college",fabricLabel: "Fabric type",    fabricOptions: ["100% Cotton (tees & polos)","Organic Cotton (eco-friendly)","Cotton-Poly Blend","Recycled Polyester","Bamboo Blend"], gsmOptions: ["140–160 GSM (lightweight tees)","180–200 GSM (standard)","220–240 GSM (polo & jackets)"], weaveOptions: ["Plain","Pique","Jersey knit"],              nameLabel: "NGO / Trust name",           namePlaceholder: "e.g. Teach For India, HelpAge India", regLabel: "Registration number (optional)",              regPlaceholder: "e.g. 80G / FCRA no." },
+};
+
+// One practical, org-type-specific tip shown at the start of an organisation's order —
+// replaces what used to just restate the org type back at the user (already shown at
+// onboarding and editable from Account → Business details, so repeating it here added
+// nothing).
+const orderStartTipByOrgType: Record<string, string> = {
+  school:      "You can order uniforms and accessories — like ID cards or bags — together. Sizes are entered per age group in the next step, so one order covers the whole school.",
+  college:     "Ordering for a fest, fresher's kit or club? Combine T-shirts, hoodies and accessories in a single order — sizes are set per garment.",
+  corporate:   "Add your logo placement under \"Reference & sample\" for each garment once it's picked — our team applies it exactly where you specify.",
+  hospital:    "Scrubs, lab coats and patient gowns can all go in one order, each with its own fabric and GSM — no need to place separate orders per department.",
+  industry:    "Workwear orders qualify for better per-piece pricing above 500 pcs — quantities across sizes and colours all count toward that total.",
+  hospitality: "Ordering for multiple departments (kitchen, service, housekeeping)? Add each as a separate garment — every one gets its own fit and fabric.",
+  sports:      "Add player names or numbers under \"Reference & sample\" once you've picked your jersey or kit.",
+  government:  "Set up seasonal or ceremonial variants as separate garments in the next step — each can have a different fabric and finish.",
+  ngo:         "Branded T-shirts or kits for volunteers? Add your logo under \"Reference & sample\" once the garment is picked.",
+  default:     "You can mix garments and accessories — like T-shirts, ID cards and water bottles — in a single order, and we'll consolidate delivery.",
 };
 
 const sizeSets: Record<SizeCat, { label: string; hint: string }[]> = {
@@ -752,10 +891,12 @@ function GarmentIcon({ name, size = 26, color = DARK, strokeWidth = 1.4 }: { nam
     default: return svg(tee);
   }
 }
-// Category marker icon (Men's / Women's / Kids) — reuses the same glyph set.
+// Category marker icon (Men's / Women's / Kids) — matches the same Kids/Men/Women
+// icon set used for the individual "Who needs this?" picker (Users/User/Heart), so the
+// two flows read consistently instead of switching to garment-silhouette glyphs here.
 function GarmentCategoryIcon({ id, size = 22, color = DARK }: { id: GarmentCategoryId; size?: number; color?: string }) {
-  const name = id === "womens" ? "Dress" : id === "kids" ? "T-Shirt" : "Shirt";
-  return <GarmentIcon name={name} size={size} color={color}/>;
+  const Icon = id === "womens" ? Heart : id === "kids" ? Users : User;
+  return <Icon size={size} strokeWidth={1.5} style={{ color }}/>;
 }
 
 // ─── Garment product photos (front / back / left / right) ─────────────────────
@@ -1305,8 +1446,9 @@ function IndividualColorSection({ onStateChange, initial, paletteOnly }: { onSta
                 <span className="flex-1" style={{ fontSize: 12.5, fontWeight: 500 }}>{c?.label ?? h}</span>
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => setQtyFor(h, q - 1)} className="w-6 h-6 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Minus size={11}/></button>
-                  <input type="number" value={q} min={1}
-                    onChange={e => setQtyFor(h, parseInt(e.target.value) || 1)}
+                  <input type="text" inputMode="numeric" pattern="[0-9]*" value={q}
+                    onChange={e => setQtyFor(h, parseInt(digitsOnly(e.target.value)) || 1)}
+                    onFocus={selectAllOnFocus} onClick={selectAllOnFocus} onMouseUp={preventSelectionCollapse}
                     className="text-center bg-card border border-border rounded-lg" style={{ width: 46, fontSize: 13, fontWeight: 600, outline:"none", padding:"3px 4px" }}/>
                   <button onClick={() => setQtyFor(h, q + 1)} className="w-6 h-6 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Plus size={11}/></button>
                   <button onClick={() => toggle(h)} className="ml-0.5" style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af" }}><X size={13}/></button>
@@ -1394,7 +1536,7 @@ function GarmentCatalog({ selected, onSelect, lockedCategory, allowedCategories,
               style={{ border:`1.5px solid ${isSel ? DARK : "var(--border)"}`, background: isSel ? "rgba(13,13,13,0.04)" : "var(--card)", cursor:"pointer" }}>
               <div className="flex-1 min-w-0">
                 <p style={{ fontSize: 13, fontWeight: isSel ? 700 : 500, color: isSel ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
-                <p style={{ fontSize: 11, color: isSel ? "#1a4a8a" : "#9ca3af", fontWeight: isSel ? 600 : 400 }}>from {inr(it.basePrice)}/pc</p>
+                <p style={{ fontSize: 11, color: isSel ? "#1a4a8a" : "#9ca3af", fontWeight: isSel ? 600 : 400 }}>{inr(it.basePrice)}/pc starting price · fabric picked next sets the final rate</p>
               </div>
               <div className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border:`2px solid ${isSel ? DARK : "#d1d5db"}`, background: isSel ? DARK : "var(--card)" }}>
                 {isSel && <Check size={12} strokeWidth={3} color="#fff"/>}
@@ -1545,7 +1687,7 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                     <p style={{ fontSize: 13, fontWeight: added ? 700 : 500, color: added ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
                     {added && openItem !== it.name
                       ? <p style={{ fontSize: 11, color:"#1a4a8a", fontWeight: 600 }}>{lines[0]?.style ? `${lines[0].style} · ` : ""}{lines.length} colour{lines.length !== 1 ? "s" : ""} · {lines.reduce((s, l) => s + l.qty, 0)} pcs</p>
-                      : <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>from {inr(it.basePrice)}/pc</p>}
+                      : <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>{inr(it.basePrice)}/pc starting price · fabric picked next sets the final rate</p>}
                   </div>
                   {added && (
                     <div className="flex items-center gap-1 flex-shrink-0">
@@ -1584,8 +1726,9 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                         <span className="flex-1" style={{ fontSize: 12, fontWeight: 600, color: DARK }}>{line.colorLabel}</span>
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           <button onClick={() => setLineQty(it.name, line.colorHex, line.qty - 1)} className="w-6 h-6 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Minus size={11}/></button>
-                          <input type="number" value={line.qty} min={1}
-                            onChange={e => setLineQty(it.name, line.colorHex, parseInt(e.target.value) || 0)}
+                          <input type="text" inputMode="numeric" pattern="[0-9]*" value={line.qty}
+                            onChange={e => setLineQty(it.name, line.colorHex, parseInt(digitsOnly(e.target.value)) || 0)}
+                            onFocus={selectAllOnFocus} onClick={selectAllOnFocus} onMouseUp={preventSelectionCollapse}
                             className="text-center bg-card border border-border rounded-lg" style={{ width: 40, fontSize: 12, fontWeight: 600, outline:"none", padding:"2px 3px" }}/>
                           <button onClick={() => setLineQty(it.name, line.colorHex, line.qty + 1)} className="w-6 h-6 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Plus size={11}/></button>
                           <button onClick={() => removeLine(it.name, line.colorHex)} className="ml-0.5" style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af" }}><X size={13}/></button>
@@ -1888,12 +2031,12 @@ function SizeSection({ totalQty, defaultCat = "school", step = 1, onAllocationCh
                       <div className="text-center text-foreground" style={{ width: 50, fontSize: 12, fontWeight: 500 }}>{pct}%</div>
                     ) : (
                       <input
-                        type="number"
+                        type="text" inputMode="numeric" pattern="[0-9]*"
                         value={q === 0 ? "" : q}
-                        onChange={e => setQtyFor(s.label, Math.max(0, parseInt(e.target.value) || 0))}
+                        onChange={e => setQtyFor(s.label, Math.max(0, parseInt(digitsOnly(e.target.value)) || 0))}
+                        onFocus={selectAllOnFocus} onClick={selectAllOnFocus} onMouseUp={preventSelectionCollapse}
                         className="text-center text-foreground bg-card border border-border rounded"
                         style={{ width: 46, fontSize: 12, fontWeight: 500, outline:"none", padding:"2px 4px" }}
-                        min={0}
                         placeholder="0"
                       />
                     )}
@@ -2019,6 +2162,12 @@ export interface OrgGarmentLine {
   qty: number;
   sizeCat: SizeCat;
   sizes: Record<string, number>;
+  // Stitching/packaging and reference & sample are set per garment — each product
+  // can need different finishing and a different logo/sample.
+  packaging: { stitch: string; packing: string };
+  refChosen: RefOption | null;
+  refLogoNames: string[];
+  refInspNames: string[];
 }
 
 function orgSizeCatFor(categoryId: GarmentCategoryId): SizeCat {
@@ -2032,20 +2181,23 @@ function orgAudienceLabel(categoryId: GarmentCategoryId, gender?: "boy" | "girl"
 }
 const orgLineAllocated = (l: OrgGarmentLine) => Object.values(l.sizes ?? {}).reduce((a, b) => a + b, 0);
 
-function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhotos }: {
+function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhotos, view, onViewChange }: {
   cart: OrgGarmentLine[];
   onChange: (next: OrgGarmentLine[]) => void;
   orgType?: OrgType;
   allowedCategories?: GarmentCategoryId[];
   onViewPhotos?: (name: string) => void;
+  // Two pages: "add" = pick garments; "list" = configure each garment (its own page
+  // so the order doesn't become one long confusing scroll). Lifted to the parent
+  // so the always-visible "Next" CTA can live in the true sticky footer instead of
+  // being buried inside this scrollable card.
+  view: "add" | "list";
+  onViewChange: (v: "add" | "list") => void;
 }) {
   const cats = garmentCatalog.filter(c => !allowedCategories || allowedCategories.includes(c.id));
   const [cat, setCat] = useState<GarmentCategoryId>(cats[0]?.id ?? "mens");
   const [kidGender, setKidGender] = useState<"boy" | "girl">("boy");
   const [openId, setOpenId] = useState<number | null>(null);
-  // Two pages: "add" = pick garments; "list" = configure each garment (its own page
-  // so the order doesn't become one long confusing scroll). Start on whichever fits.
-  const [view, setView] = useState<"add" | "list">(cart.length > 0 ? "list" : "add");
   useEffect(() => { if (!cats.some(c => c.id === cat)) setCat(cats[0]?.id ?? "mens"); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [allowedCategories]);
   const active = garmentCatalog.find(c => c.id === cat)!;
   const lineGender = cat === "kids" ? kidGender : undefined;
@@ -2069,6 +2221,10 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
       qty: ORG_GARMENT_MOQ,
       sizeCat: orgSizeCatFor(cat),
       sizes: {},
+      packaging: { stitch: stitchingOpts[0].id, packing: packagingOpts[0].id },
+      refChosen: null,
+      refLogoNames: [],
+      refInspNames: [],
     };
     onChange([...cart, line]);
     setOpenId(line.id);
@@ -2092,6 +2248,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
       <div>
         <p className="text-muted-foreground mb-3" style={{ fontSize: 12, lineHeight: 1.5 }}>
           Add each garment you need — across Men's, Women's and Kids. You'll set fabric, colours, quantity and sizes for each on the next page. <strong>Minimum {ORG_GARMENT_MOQ} pcs per garment.</strong>
+          {cart.length > 0 && " Ready? Use the button in the footer below to continue."}
         </p>
 
         {/* Category tabs (filtered to what this org type orders) */}
@@ -2131,7 +2288,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                 <GarmentThumb name={it.name} size={40} onOpen={n => onViewPhotos?.(n)}/>
                 <div className="flex-1 min-w-0">
                   <p style={{ fontSize: 13, fontWeight: added ? 700 : 500, color: added ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
-                  <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>from {inr(it.basePrice)}/pc</p>
+                  <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>{inr(it.basePrice)}/pc starting price · fabric picked next sets the final rate</p>
                 </div>
                 {added
                   ? <span className="flex items-center gap-1 px-2.5 py-1 rounded-full flex-shrink-0" style={{ background:"#EFF6FF", color:"#1a4a8a", fontSize:11, fontWeight:600 }}><Check size={12}/> Added</span>
@@ -2140,13 +2297,6 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
             );
           })}
         </div>
-
-        {/* Go to the configure page */}
-        {cart.length > 0 && (
-          <button onClick={() => setView("list")} className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-xl" style={{ background: DARK, color:"#fff", border:"none", cursor:"pointer", fontSize:13, fontWeight:600 }}>
-            Next: set up your {cart.length} garment{cart.length !== 1 ? "s" : ""} <ArrowRight size={15} strokeWidth={2}/>
-          </button>
-        )}
       </div>
     );
   }
@@ -2156,7 +2306,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
     <div>
       <div className="flex items-center justify-between mb-3">
         <p className="text-foreground" style={{ fontSize: 13, fontWeight: 700 }}>Your garments ({cart.length})</p>
-        <button onClick={() => setView("add")} className="flex items-center gap-1 px-3 py-1.5 rounded-full" style={{ border:`1px solid ${DARK}`, background:"var(--card)", color:DARK, cursor:"pointer", fontSize:12, fontWeight:600 }}>
+        <button onClick={() => onViewChange("add")} className="flex items-center gap-1 px-3 py-1.5 rounded-full" style={{ border:`1px solid ${DARK}`, background:"var(--card)", color:DARK, cursor:"pointer", fontSize:12, fontWeight:600 }}>
           <Plus size={13}/> Add more
         </button>
       </div>
@@ -2231,8 +2381,9 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                     <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5, fontWeight: 500 }}>Quantity · min {ORG_GARMENT_MOQ}</p>
                     <div className="flex items-center gap-2">
                       <button onClick={() => setLineQty(l.id, l.qty - ORG_GARMENT_STEP)} className="w-8 h-8 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Minus size={13}/></button>
-                      <input type="number" value={l.qty} min={ORG_GARMENT_MOQ} step={ORG_GARMENT_STEP}
-                        onChange={e => setLineQty(l.id, parseInt(e.target.value) || ORG_GARMENT_MOQ)}
+                      <input type="text" inputMode="numeric" pattern="[0-9]*" value={l.qty}
+                        onChange={e => setLineQty(l.id, parseInt(digitsOnly(e.target.value)) || ORG_GARMENT_MOQ)}
+                        onFocus={selectAllOnFocus} onClick={selectAllOnFocus} onMouseUp={preventSelectionCollapse}
                         className="text-center bg-card border border-border rounded-lg" style={{ width: 72, fontSize: 13, fontWeight: 700, outline:"none", padding:"6px 4px" }}/>
                       <button onClick={() => setLineQty(l.id, l.qty + ORG_GARMENT_STEP)} className="w-8 h-8 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Plus size={13}/></button>
                       <span className="text-muted-foreground" style={{ fontSize: 11 }}>pcs</span>
@@ -2248,6 +2399,25 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                     <p className="mt-1" style={{ fontSize: 11, fontWeight: 600, color: sizeDone ? "#059669" : "#dc2626" }}>
                       {allocated} of {l.qty} pcs assigned{sizeDone ? " ✓" : ""}
                     </p>
+                  </div>
+
+                  {/* Stitching & packaging — set per garment, right below its size split */}
+                  <div className="pt-1 border-t border-border">
+                    <p className="text-foreground mt-2 mb-1.5 flex items-center gap-1.5" style={{ fontSize: 12, fontWeight: 700 }}>
+                      <Package size={13} style={{ color: ACCENT }}/> Stitching & packaging for this {l.name}
+                    </p>
+                    <PackagingSection key={`pack-${l.id}`} initial={l.packaging}
+                      onStateChange={s => updateLine(l.id, { packaging: s })}/>
+                  </div>
+
+                  {/* Reference & sample — also per garment, so it's obvious which logo/sample goes with which product */}
+                  <div className="pt-1 border-t border-border">
+                    <p className="text-foreground mt-2 mb-1.5 flex items-center gap-1.5" style={{ fontSize: 12, fontWeight: 700 }}>
+                      <ImageIcon size={13} style={{ color: ACCENT }}/> Reference & sample for this {l.name}
+                    </p>
+                    <RefImagesSection key={`ref-${l.id}`} persona="organisation"
+                      initialChosen={l.refChosen} previewMaterial={l.material.fabric}
+                      onStateChange={s => updateLine(l.id, { refChosen: s.chosen, refLogoNames: s.logoNames, refInspNames: s.inspNames })}/>
                   </div>
                 </div>
               )}
@@ -2753,6 +2923,11 @@ export interface OrderGarmentLine {
   gsm?: string;
   weave?: string;
   sizes: { size: string; qty: number }[];
+  // Per-garment finishing & reference, for organisation orders (each product can differ).
+  stitching?: string;
+  packaging?: string;
+  referenceMethod?: string;
+  referenceFiles?: number;
 }
 
 // Display-ready price details, computed at submit so Track can render both flows cleanly:
@@ -2914,10 +3089,12 @@ function OrgTypeSelect({ value, onChange }: { value: OrgType; onChange: (v: OrgT
   );
 }
 
-function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { onContinue: (d: OrgDetails) => void; onBack?: () => void; onCustomOrder?: () => void; switchBanner?: React.ReactNode }) {
+function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initialOrgType }: { onContinue: (d: OrgDetails) => void; onBack?: () => void; onCustomOrder?: () => void; switchBanner?: React.ReactNode; initialOrgType?: OrgType }) {
   const ACCESSORY_MOQ = ORG_ACCESSORY_MOQ, ACCESSORY_STEP = ORG_ACCESSORY_STEP;
-  const [orgType, setOrgType]       = useState<OrgType>(currentUser.orgType);
-  const [service, setService]       = useState<OrgService>(orgServiceOptions[currentUser.orgType][0].id);
+  // Organisation type is chosen once, during onboarding — it isn't re-asked or
+  // switchable here. Falls back to the demo profile's org type if none was set.
+  const [orgType]       = useState<OrgType>(initialOrgType ?? currentUser.orgType);
+  const [service, setService]       = useState<OrgService>(orgServiceOptions[initialOrgType ?? currentUser.orgType][0].id);
   const [accessoryQty, setAccessoryQty] = useState<Record<string, number>>({});
   const [accessoryView, setAccessoryView] = useState<"categories"|"products">("categories");
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
@@ -2938,17 +3115,6 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
   const selectedOpt = activeServiceOptions.find(o => o.id === service)!;
   const isAccessoryOrder = service === "accessories";
   const accessoryTotal = Object.values(accessoryQty).reduce((a, b) => a + b, 0);
-
-  function switchOrgType(next: OrgType) {
-    setOrgType(next);
-    setName(currentUser.org);
-    setBoard("");
-    setService(orgServiceOptions[next][0].id);
-    setAccessoryQty({});
-    setAccessoryView("categories");
-    setActiveCategoryId(null);
-    setFormStep("select");
-  }
 
   function selectService(id: OrgService) {
     setService(id);
@@ -3085,7 +3251,6 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
             <p className="text-foreground" style={{ fontSize:15, fontWeight:600 }}>Browse categories</p>
             <p className="text-muted-foreground" style={{ fontSize:11 }}>Choose products · min {ACCESSORY_MOQ} pcs each</p>
           </div>
-          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold flex-shrink-0" style={{ background: ACCENT_BG, color:"#7c5419" }}>Step 2 of 3</span>
         </div>
 
         {/* Body */}
@@ -3159,9 +3324,8 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
           <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center"><Building2 size={18} style={{ color:"#1d4ed8" }} strokeWidth={1.5}/></div>
           <div className="flex-1">
             <p className="text-foreground" style={{ fontSize: 17, fontWeight: 600 }}>Organisation order</p>
-            <p className="text-muted-foreground" style={{ fontSize: 12 }}>Select your org type and what you want to order</p>
+            <p className="text-muted-foreground" style={{ fontSize: 12 }}>Choose what you'd like to order</p>
           </div>
-          <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: ACCENT_BG, color:"#7c5419" }}>Step 1 · Setup</span>
         </div>
 
         {errors.length > 0 && (
@@ -3170,19 +3334,12 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
           </div>
         )}
 
-        <Section title="Organisation type" icon={Building2}>
-          {/* Icon dropdown — all 9 types, each with its own icon */}
-          <div className="mb-3">
-            <OrgTypeSelect value={orgType} onChange={switchOrgType}/>
-          </div>
-          {/* Selected org description */}
-          <div className="flex gap-2 px-2.5 py-2 rounded-xl bg-blue-50 border border-blue-100">
-            {(() => { const t = orgTypeDefs.find(x => x.id === orgType); return t ? <t.Icon size={14} strokeWidth={1.5} style={{ color:"#1a4a8a", flexShrink:0, marginTop:1 }}/> : null; })()}
-            <p style={{ fontSize: 11, color:"#1a4a8a", lineHeight: 1.5 }}>
-              <strong>{orgTypeDefs.find(t => t.id === orgType)?.label}</strong> — {orgTypeDefs.find(t => t.id === orgType)?.sub}
-            </p>
-          </div>
-        </Section>
+        {/* Organisation type is already known from onboarding (edit it from Account →
+            Business details, not mid-order) — so instead of just repeating it back,
+            this spot gives a useful, org-type-aware tip for this step. */}
+        <TipBanner tipKey={`org-order-start-${orgType}`}>
+          {orderStartTipByOrgType[orgType] ?? orderStartTipByOrgType.default}
+        </TipBanner>
 
         <Section title="What would you like to order?" icon={Scissors}>
           <p className="text-muted-foreground mb-3" style={{ fontSize:12 }}>Pick items from <strong>any categories</strong> — bottles, ID cards, bags and more can go in one order.</p>
@@ -3252,11 +3409,14 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner }: { o
 
       <div className="flex-shrink-0 px-5 py-3 border-t border-border bg-background" style={{ position:"sticky", bottom:0, zIndex:10 }}>
         <button
+          id="coachmark-org-continue"
           onClick={() => { if (isAccessoryOrder) { setErrors([]); setFormStep("browse"); } else handleContinue(); }}
           style={btnPrimary}>
           {isAccessoryOrder ? "Continue · Choose products" : "Continue · Step 2: Order details"} <ArrowRight size={15} strokeWidth={2}/>
         </button>
       </div>
+      <Coachmark storageKey="fl_coach_org_continue_done" targetId="coachmark-org-continue"
+        title="Ready to continue" body="Pick what you're ordering above, then tap here to move to the next step — garments, quantities and details."/>
     </div>
   );
 }
@@ -3686,6 +3846,10 @@ function CustomOrderForm({ onContinue, onBack }: { onContinue: (d: CustomOrderDe
           <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: ACCENT_BG, color:"#7c5419" }}>Step 1 · Setup</span>
         </div>
 
+        <TipBanner tipKey="individual-custom-order-start">
+          Ordering for a family, friend group or a few students? Pick who it's for below — you can set a different size for each person in one order.
+        </TipBanner>
+
         <Section title="What would you like?" icon={Scissors}>
           <div className="grid grid-cols-4 gap-2">
             {garmentTypes.map(g => (
@@ -3928,13 +4092,13 @@ function CustomOrderForm({ onContinue, onBack }: { onContinue: (d: CustomOrderDe
                 <button onClick={() => setQty(q => Math.max(1, q-1))} className="w-8 h-8 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Minus size={15}/></button>
                 <div className="flex-1 flex items-center justify-center gap-1.5">
                   <input
-                    type="number"
+                    type="text" inputMode="numeric" pattern="[0-9]*"
                     value={qty}
-                    onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))}
-                    onBlur={e => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+                    onChange={e => setQty(Math.max(1, parseInt(digitsOnly(e.target.value)) || 1))}
+                    onBlur={e => setQty(Math.max(1, parseInt(digitsOnly(e.target.value)) || 1))}
+                    onFocus={selectAllOnFocus} onClick={selectAllOnFocus} onMouseUp={preventSelectionCollapse}
                     className="text-center bg-card border border-border rounded-xl text-foreground"
                     style={{ width: 70, fontSize: 16, fontWeight: 600, outline:"none", padding:"6px 8px" }}
-                    min={1}
                   />
                   <span className="text-muted-foreground" style={{ fontSize: 13 }}>pcs</span>
                 </div>
@@ -4073,10 +4237,22 @@ function PersonaOrderForm({
 
   // ── Organisation multi-garment cart (org flow only, separate from individual) ──
   const [orgCart, setOrgCart] = useState<OrgGarmentLine[]>(resume?.orgCart ?? []);
+  // Which "page" of the org garment picker is showing — lifted up from OrgGarmentCart
+  // so the always-visible "Next: set up your N garments" CTA can live in the true
+  // sticky footer instead of being buried inside the scrollable card.
+  const [orgGarmentView, setOrgGarmentView] = useState<"add" | "list">(orgCart.length > 0 ? "list" : "add");
   const orgCartQty = orgCart.reduce((s, l) => s + l.qty, 0);
-  const orgCartComplete = orgCart.length > 0 && orgCart.every(l => l.qty >= ORG_GARMENT_MOQ && orgLineAllocated(l) === l.qty);
+  // A garment line isn't ready until it also has at least one colour picked — quantity
+  // and size distribution alone used to be enough to "complete" a line, which let
+  // someone reach Review having never chosen a colour.
+  const orgCartComplete = orgCart.length > 0 && orgCart.every(l => l.qty >= ORG_GARMENT_MOQ && orgLineAllocated(l) === l.qty && l.colors.length > 0);
   const orgCartRate = (l: OrgGarmentLine) => garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice }, l.material.fabric, l.material.weave);
   const orgCartSubtotal = orgCart.reduce((s, l) => s + orgCartRate(l) * l.qty, 0);
+  // Stitching/packaging is chosen per garment now, so the finishing add-on is
+  // totalled up per line (each garment can have a different finishing cost).
+  const orgLineFinishingPerPc = (l: OrgGarmentLine) => perPcCost(stitchingOpts.find(s => s.id === l.packaging?.stitch)?.cost)
+    + perPcCost(packagingOpts.find(p => p.id === l.packaging?.packing)?.cost);
+  const orgFinishingTotal = orgCart.reduce((s, l) => s + orgLineFinishingPerPc(l) * l.qty, 0);
   // Which garment's photo gallery is open (front/back/left/right), if any.
   const [galleryName, setGalleryName] = useState<string | null>(null);
 
@@ -4289,16 +4465,22 @@ function PersonaOrderForm({
   // Build sub-step label arrays based on persona/isUniformOrder/isAccessoryOrgOrder.
   // Every flow ends with a "Review" step that previews the order before submission.
   // Organisation contact/delivery is captured inside Review (no separate step).
+  // Organisations: stitching/packaging and references now live inside the single
+  // "Garment" step (right under each garment's size distribution) instead of as
+  // separate steps, so there's one place to set everything up per garment.
   const subStepLabels = isAccessoryOrgOrder
     ? ["Specs", "References", "Review"]
     : !isUniformOrder
       ? persona === "individual"
         ? ["Garment", "Material", "Sizes", "References", "Review"]
-        : ["Garment", "Packaging", "References", "Review"]
+        : ["Garment", "Review"]
       : ["References", "Review"];
 
   const totalSubSteps = subStepLabels.length;
   const currentSubStepLabel = subStepLabels[subStep - 1];
+  // True while an organisation is still on the "pick garments" page (as opposed to the
+  // "configure each garment" page) of the Garment step — drives the footer CTA below.
+  const onGarmentAddView = persona === "organisation" && currentSubStepLabel === "Garment" && orgGarmentView === "add";
 
   // True whenever org contact/address data is incomplete (independent of which step is showing)
   const orgDataIncomplete = !!orgDetails && (
@@ -4323,7 +4505,8 @@ function PersonaOrderForm({
   // Allocated-so-far count to surface in messages (per-colour sum for individuals).
   const sizeAllocShown = persona === "individual" ? indivSizesAllocated : orgSizeAllocated;
   // Org: which garment lines still need work (missing colours or an unfinished size split).
-  const orgLineIssue = orgCart.find(l => l.qty < ORG_GARMENT_MOQ || orgLineAllocated(l) !== l.qty);
+  const orgLineIssue = orgCart.find(l => l.qty < ORG_GARMENT_MOQ || orgLineAllocated(l) !== l.qty || l.colors.length === 0);
+  const orgLineMissingColor = orgCart.find(l => l.qty >= ORG_GARMENT_MOQ && orgLineAllocated(l) === l.qty && l.colors.length === 0);
   // Can't leave the Garment step until it's complete. Individuals: ≥1 garment. Orgs: every
   // garment line ≥100 pcs with its sizes fully distributed (material/colours/size all live here).
   const garmentStepIncomplete = currentSubStepLabel === "Garment"
@@ -4339,6 +4522,7 @@ function PersonaOrderForm({
 
   const blockReason = (garmentStepIncomplete && persona === "organisation")
     ? (orgCart.length === 0 ? "Add at least one garment to continue"
+        : orgLineMissingColor ? `Pick at least one colour for “${orgLineMissingColor.name}” to continue`
         : orgLineIssue ? `Finish “${orgLineIssue.name}” — min ${ORG_GARMENT_MOQ} pcs with all sizes distributed`
         : "Complete each garment's colours, quantity and sizes")
     : garmentStepIncomplete
@@ -4450,9 +4634,11 @@ function PersonaOrderForm({
       price = {
         kind: "estimate",
         rateLine: `${qty} pieces · ${orgCart.length || 1} garment${(orgCart.length || 1) !== 1 ? "s" : ""}`,
-        addOnLine: finishingPerPc > 0 ? `+${inr(finishingPerPc)}/pc finishing` : undefined,
+        // Each garment can have its own stitching & packaging now, so this is a
+        // lump total across all garments rather than a single per-piece rate.
+        addOnLine: orgFinishingTotal > 0 ? `+${inr(orgFinishingTotal)} total finishing (stitching & packaging)` : undefined,
         totalLabel: "Estimated total",
-        totalValue: `${inr(orgBase * 0.9 + qty * finishingPerPc)} – ${inr(orgBase * 1.1 + qty * finishingPerPc)}`,
+        totalValue: `${inr(orgBase * 0.9 + orgFinishingTotal)} – ${inr(orgBase * 1.1 + orgFinishingTotal)}`,
         note: "Indicative — your coordinator confirms the final price before production.",
       };
     }
@@ -4501,6 +4687,11 @@ function PersonaOrderForm({
                 gsm: l.material.gsm,
                 weave: l.material.weave,
                 sizes: Object.entries(l.sizes ?? {}).filter(([, q]) => q > 0).map(([size, q]) => ({ size, qty: q })),
+                // Each garment carries its own stitching/packaging & reference choice.
+                stitching: stitchingOpts.find(s => s.id === l.packaging?.stitch)?.label,
+                packaging: packagingOpts.find(p => p.id === l.packaging?.packing)?.label,
+                referenceMethod: l.refChosen ? refOptDefs.find(o => o.id === l.refChosen)?.label : undefined,
+                referenceFiles: (l.refLogoNames?.length ?? 0) + (l.refInspNames?.length ?? 0),
               }))
             : undefined,
       fabricSource: isAccessoryOrder || isUniformOrder ? undefined : (fabricSource === "surplus" ? "Surplus (mill stock)" : "New fabric"),
@@ -4512,10 +4703,15 @@ function PersonaOrderForm({
       qty: isAccessoryOrder ? undefined : qty,
       sizeCatLabel: isAccessoryOrder || isUniformOrder ? undefined : sizeCats.find(c => c.id === sizeState.cat)?.label,
       sizeBreakdown: isAccessoryOrder ? undefined : sizeBreakdown,
-      stitching: isAccessoryOrder ? undefined : stitchingOpts.find(s => s.id === packaging.stitch)?.label,
-      packaging: isAccessoryOrder ? undefined : packagingOpts.find(p => p.id === packaging.packing)?.label,
-      referenceMethod: refDef?.label,
-      referenceFiles: refState.logoNames.length + refState.inspNames.length,
+      // Organisations now set stitching/packaging per garment (see garmentLines above),
+      // so this top-level pair is only meaningful for individuals (accessory orders never
+      // had stitching/packaging at all — unchanged from before).
+      stitching: (isAccessoryOrder || persona === "organisation") ? undefined : stitchingOpts.find(s => s.id === packaging.stitch)?.label,
+      packaging: (isAccessoryOrder || persona === "organisation") ? undefined : packagingOpts.find(p => p.id === packaging.packing)?.label,
+      // References are also per garment for organisations (except accessory orders,
+      // which have no garment cart and still use the single global choice).
+      referenceMethod: (persona === "organisation" && !isAccessoryOrder) ? undefined : refDef?.label,
+      referenceFiles: (persona === "organisation" && !isAccessoryOrder) ? undefined : refState.logoNames.length + refState.inspNames.length,
       paymentMethod: persona === "individual"
         ? (payment === "upi"
             ? (selectedUpi ? `UPI · ${selectedUpi}` : "UPI")
@@ -4560,7 +4756,12 @@ function PersonaOrderForm({
     // standalone Colours card is redundant for them — same now for orgs.
     const showColors    = !isUniformOrder && !isAccessory && persona !== "individual" && !orgMulti;
     const showSizes     = !isUniformOrder && !isAccessory && !orgMulti;
-    const showPackaging = persona === "organisation" && !isUniformOrder && !isAccessory;
+    // Organisations now choose stitching/packaging & references per garment (shown inside
+    // the per-garment breakdown below), so the old single-choice cards are for individuals
+    // and org accessory orders only (neither of which has a per-garment cart).
+    const showPackaging = persona === "organisation" && !isUniformOrder && !isAccessory && !orgMulti;
+    const showReferences = !orgMulti;
+    const referencesBackTo = "References";
 
     const colorChips: { hex: string; label: string; qty?: number }[] = persona === "individual"
       ? indivColors.selected.map(hex => ({ hex, label: individualColorPresets.find(c => c.hex === hex)?.label ?? hex, qty: indivColors.qtys?.[hex] }))
@@ -4684,6 +4885,10 @@ function PersonaOrderForm({
                           </div>
                         </div>
                       )}
+                      {/* Per-garment stitching, packaging & reference — each product can differ */}
+                      {line("Stitching", stitchingOpts.find(s => s.id === l.packaging?.stitch)?.label ?? "—")}
+                      {line("Packaging", packagingOpts.find(p => p.id === l.packaging?.packing)?.label ?? "—")}
+                      {line("Reference", l.refChosen ? (refOptDefs.find(o => o.id === l.refChosen)?.label ?? "—") : "Not added — coordinator will follow up")}
                     </div>
                   </div>
                 );
@@ -4839,7 +5044,7 @@ function PersonaOrderForm({
         {/* Packaging */}
         {showPackaging && (
           <div className={card}>
-            {header("Stitching & packaging", "Packaging", "packaging")}
+            {header("Stitching & packaging", "Garment", "packaging")}
             <div className="px-3.5 py-3">
               {line("Stitching", stitchLabel)}
               {line("Packaging", packLabel)}
@@ -4847,15 +5052,18 @@ function PersonaOrderForm({
           </div>
         )}
 
-        {/* References */}
-        <div className={card}>
-          {header("References & samples", "References", "references")}
-          <div className="px-3.5 py-3">
-            {refDef
-              ? <>{line("Method", refDef.label)}{refFileCount > 0 && line("Files attached", `${refFileCount} file${refFileCount > 1 ? "s" : ""}`)}</>
-              : <p className="text-muted-foreground" style={{ fontSize: 12 }}>No reference added — your coordinator will reach out for design details.</p>}
+        {/* References — organisations see this per garment instead (below), since each
+            product can have its own logo/sample. */}
+        {showReferences && (
+          <div className={card}>
+            {header("References & samples", referencesBackTo, "references")}
+            <div className="px-3.5 py-3">
+              {refDef
+                ? <>{line("Method", refDef.label)}{refFileCount > 0 && line("Files attached", `${refFileCount} file${refFileCount > 1 ? "s" : ""}`)}</>
+                : <p className="text-muted-foreground" style={{ fontSize: 12 }}>No reference added — your coordinator will reach out for design details.</p>}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Organisation contact & delivery — editable inline (no separate step) */}
         {persona === "organisation" && orgDetails && (
@@ -5308,10 +5516,19 @@ function PersonaOrderForm({
           : undefined;
       return (
         <div className="flex flex-col gap-4">
+          {persona === "individual" ? (
+            <TipBanner tipKey="individual-garment-step">
+              Pick a fabric and colour per garment — each one gets its own Size distribution, Stitching &amp; packaging and Reference &amp; sample right inside its card.
+            </TipBanner>
+          ) : (
+            <TipBanner tipKey="org-garment-step">
+              Add every garment you need first, then tap into each one to set its fabric, quantity and sizes — you don't have to finish one before adding the next.
+            </TipBanner>
+          )}
           <Section title="Choose your garments" icon={Shirt}>
             {persona === "individual"
               ? <GarmentCart cart={garmentCart} onChange={setGarmentCart} lockedCategory={lockedCat} onViewPhotos={setGalleryName}/>
-              : <OrgGarmentCart cart={orgCart} onChange={setOrgCart} orgType={orgDetails?.type} allowedCategories={orgAllowedCats} onViewPhotos={setGalleryName}/>}
+              : <OrgGarmentCart cart={orgCart} onChange={setOrgCart} orgType={orgDetails?.type} allowedCategories={orgAllowedCats} onViewPhotos={setGalleryName} view={orgGarmentView} onViewChange={setOrgGarmentView}/>}
           </Section>
         </div>
       );
@@ -5456,16 +5673,16 @@ function PersonaOrderForm({
                 <button onClick={() => setQty(q => Math.max(cfg.minQty, q - cfg.qtyStep))} className="w-8 h-8 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Minus size={15}/></button>
                 <div className="flex-1 flex items-center justify-center gap-1.5">
                   <input
-                    type="number"
+                    type="text" inputMode="numeric" pattern="[0-9]*"
                     value={qty}
                     onChange={e => {
-                      const v = parseInt(e.target.value) || cfg.minQty;
+                      const v = parseInt(digitsOnly(e.target.value)) || cfg.minQty;
                       setQty(Math.max(cfg.minQty, v));
                     }}
-                    onBlur={e => { const v = parseInt(e.target.value) || cfg.minQty; setQty(Math.max(cfg.minQty, v)); }}
+                    onBlur={e => { const v = parseInt(digitsOnly(e.target.value)) || cfg.minQty; setQty(Math.max(cfg.minQty, v)); }}
+                    onFocus={selectAllOnFocus} onClick={selectAllOnFocus} onMouseUp={preventSelectionCollapse}
                     className="text-center bg-card border border-border rounded-xl text-foreground"
                     style={{ width: 80, fontSize: 16, fontWeight: 600, outline:"none", padding:"6px 8px" }}
-                    min={cfg.minQty}
                   />
                   <span className="text-muted-foreground" style={{ fontSize: 13 }}>pcs</span>
                 </div>
@@ -5491,7 +5708,7 @@ function PersonaOrderForm({
               );
             }
             const orgBase = orgCartSubtotal > 0 ? orgCartSubtotal : qty * garmentRate;
-            const low = orgBase * 0.9 + qty * finishingPerPc, high = orgBase * 1.1 + qty * finishingPerPc;
+            const low = orgBase * 0.9 + orgFinishingTotal, high = orgBase * 1.1 + orgFinishingTotal;
             return (
               <div className="rounded-xl px-3.5 py-3 mb-1" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
                 <div className="flex items-center justify-between">
@@ -5592,10 +5809,7 @@ function PersonaOrderForm({
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>
-              {currentSubStepLabel === "Packaging" ? "Stitching & Packaging" : currentSubStepLabel === "Garment" ? (persona === "individual" ? "Garments & colours" : "Choose garment") : currentSubStepLabel === "Material" ? "Fabric & material" : currentSubStepLabel}
-            </p>
-            <p className="text-muted-foreground" style={{ fontSize: 11 }}>
-              Step 2 · {subStep} of {totalSubSteps}
+              {currentSubStepLabel === "Packaging" ? "Stitching & Packaging" : currentSubStepLabel === "Garment" ? (persona === "individual" ? "Garments & colours" : "Garments, stitching & references") : currentSubStepLabel === "Material" ? "Fabric & material" : currentSubStepLabel}
             </p>
           </div>
           {/* Progress dots */}
@@ -5610,19 +5824,19 @@ function PersonaOrderForm({
           </div>
         </div>
 
-        {/* Persona pill */}
-        <div className="flex items-center justify-between mb-4 px-3 py-2.5 rounded-xl" style={{ background: accentBg }}>
-          <div className="flex items-center gap-2">
-            {persona === "organisation"
-              ? <Building2 size={16} strokeWidth={1.5} style={{ color: accentC }}/>
-              : <User size={16} strokeWidth={1.5} style={{ color: accentC }}/>}
+        {/* Persona pill — removed for organisations entirely (was just re-showing the
+            org type with a stale "Change" affordance; org type is fixed at onboarding
+            and already shown in Step 1, so this had no use once you're past it). Kept
+            for individuals, where it still surfaces the audience/sizing profile. */}
+        {persona === "individual" && (
+          <div className="flex items-center gap-2 mb-4 px-3 py-2.5 rounded-xl" style={{ background: accentBg }}>
+            <User size={16} strokeWidth={1.5} style={{ color: accentC }}/>
             <div>
               <p style={{ fontSize: 13, fontWeight: 600, color: accentC }}>{subLabel}</p>
-              <p className="text-muted-foreground" style={{ fontSize: 11 }}>{subName ?? (persona === "organisation" ? "Bulk order · Custom specs" : "Personalised order")}</p>
+              <p className="text-muted-foreground" style={{ fontSize: 11 }}>{subName ?? "Personalised order"}</p>
             </div>
           </div>
-          <button onClick={() => setShowConfirmChange(true)} className="text-xs px-2.5 py-1 rounded-xl bg-card border border-border text-foreground" style={{ cursor:"pointer" }}>Change</button>
-        </div>
+        )}
 
         {/* Sub-step content */}
         {getSubStepContent()}
@@ -5669,14 +5883,18 @@ function PersonaOrderForm({
                   const r = orgCartRate(l);
                   return { label: `${l.name}${l.gender ? ` (${l.gender === "boy" ? "Boys" : "Girls"})` : ""} · ${l.qty} × ${inr(r)}`, value: inr(l.qty * r) };
                 }),
-                { label: `Stitching · ${stitchOpt?.label ?? "Standard"}`, value: stitchCost > 0 ? `+${inr(stitchCost)}/pc` : "included" },
-                { label: `Packaging · ${packOpt?.label ?? "Standard"}`, value: packCost > 0 ? `+${inr(packCost)}/pc` : "included" },
-                { label: "Finishing", value: qty * finishingPerPc > 0 ? inr(qty * finishingPerPc) : "included" },
+                // Each garment has its own stitching & packaging now, so break it out per garment.
+                ...orgCart.map(l => {
+                  const sOpt = stitchingOpts.find(s => s.id === l.packaging?.stitch);
+                  const pOpt = packagingOpts.find(p => p.id === l.packaging?.packing);
+                  const fin = orgLineFinishingPerPc(l) * l.qty;
+                  return { label: `${l.name} finishing · ${sOpt?.label ?? "Standard"} + ${pOpt?.label ?? "Standard"}`, value: fin > 0 ? inr(fin) : "included" };
+                }),
                 { label: "Total pieces", value: `${qty} pcs`, strong: true },
               ];
 
           const orgBase = orgCartSubtotal > 0 ? orgCartSubtotal : qty * garmentRate;
-          const low = orgBase * 0.9 + qty * finishingPerPc, high = orgBase * 1.1 + qty * finishingPerPc;
+          const low = orgBase * 0.9 + orgFinishingTotal, high = orgBase * 1.1 + orgFinishingTotal;
 
           if (persona === "individual") {
             return (
@@ -5771,7 +5989,7 @@ function PersonaOrderForm({
           </button>
         )}
 
-        <div className="flex gap-3">
+        <div className="flex gap-3" id="coachmark-order-footer">
           {/* Back button — always visible */}
           <button
             onClick={() => subStep > 1 ? setSubStep(s => s - 1) : setShowConfirmChange(true)}
@@ -5779,8 +5997,16 @@ function PersonaOrderForm({
             <ChevronDown size={16} style={{ transform: "rotate(90deg)" }} className="text-foreground"/>
           </button>
 
-          {/* Next, or jump back to Review after an edit, or Submit */}
-          {subStep < totalSubSteps ? (
+          {/* Organisations picking garments (before configuring them) get a dedicated,
+              always-visible footer CTA to move on — instead of a button buried at the
+              bottom of a potentially long catalog list. */}
+          {onGarmentAddView ? (
+            <button onClick={() => { if (orgCart.length > 0) setOrgGarmentView("list"); }}
+              disabled={orgCart.length === 0}
+              style={{ ...(orgCart.length === 0 ? btnPrimaryDisabled : btnPrimary), flex:1, width:"auto" }}>
+              Next: set up your {orgCart.length} garment{orgCart.length !== 1 ? "s" : ""} <ArrowRight size={14} strokeWidth={2}/>
+            </button>
+          ) : subStep < totalSubSteps ? (
             visitedReview ? (
               <button onClick={() => { if (!currentStepBlocked) setSubStep(totalSubSteps); }}
                 disabled={currentStepBlocked}
@@ -5807,6 +6033,8 @@ function PersonaOrderForm({
           )}
         </div>
       </div>
+      <Coachmark storageKey="fl_coach_order_footer_done" targetId="coachmark-order-footer" placement="above"
+        title="Next step's down here" body="Use Back to revisit a step, or the button on the right to move forward — right through to submitting your order."/>
 
       {/* Garment photo gallery (front/back/left/right) */}
       {galleryName && <GarmentGallery name={galleryName} onClose={() => setGalleryName(null)}/>}
@@ -5926,10 +6154,12 @@ function CustomAudienceForm({ onContinue, onBack, onAccessories }: { onContinue:
         )}
       </div>
       <div className="flex-shrink-0 px-5 py-3 border-t border-border bg-background" style={{ position:"sticky", bottom:0, zIndex:10 }}>
-        <button onClick={continueCustom} style={btnPrimary}>
+        <button id="coachmark-ind-continue" onClick={continueCustom} style={btnPrimary}>
           Continue custom order <ArrowRight size={15} strokeWidth={2}/>
         </button>
       </div>
+      <Coachmark storageKey="fl_coach_ind_continue_done" targetId="coachmark-ind-continue"
+        title="Ready to continue" body="Fill in your details above, then tap here to move on to garments, sizes and quantities."/>
     </div>
   );
 }
@@ -6117,8 +6347,20 @@ type OrderStep =
   | { type: "individual_step2"; custom: CustomOrderDetails; resume?: ResumeState | null }
   | { type: "success" };
 
-export function NewOrderTab({ onNavigate, onTrackOrder, accountType, onSaveDraft, resumeDraft }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null }) {
+export function NewOrderTab({ onNavigate, onTrackOrder, accountType, orgType, orgName, name, phone, email, onSaveDraft, resumeDraft }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null }) {
   const isPersonal = accountType === "personal";
+  // Carry the real onboarding profile (org name/type, contact name, phone, email) into
+  // the shared `currentUser` default that the rest of this file reads from, so the
+  // "Organisation, contact & delivery" step and the order's contact details are the
+  // person's actual details instead of the hardcoded demo values.
+  currentUser = {
+    name: name || currentUser.name,
+    org: orgName || currentUser.org,
+    accountType: currentUser.accountType,
+    orgType: (orgTypeDefs.some(t => t.id === orgType) ? (orgType as OrgType) : currentUser.orgType),
+    email: email || currentUser.email,
+    phone: phone || currentUser.phone,
+  };
   const [step, setStep] = useState<OrderStep>(() => {
     if (resumeDraft) {
       if (resumeDraft.persona === "organisation" && resumeDraft.orgDetails) return { type: "org_step2", org: resumeDraft.orgDetails, resume: resumeDraft.resume };
@@ -6149,6 +6391,7 @@ export function NewOrderTab({ onNavigate, onTrackOrder, accountType, onSaveDraft
           )}
           <OrgDetailsForm
             switchBanner={switchBanner}
+            initialOrgType={orgTypeDefs.some(t => t.id === orgType) ? (orgType as OrgType) : undefined}
             onContinue={org => setStep({ type:"org_step2", org })}
             onCustomOrder={() => setStep({ type:"custom_audience" })}
           />

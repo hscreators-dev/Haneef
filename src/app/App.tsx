@@ -4,11 +4,12 @@ import {
   ChevronRight, TrendingUp, Clock, CheckCircle2, ArrowRight, Box, Package,
   Mail, Smartphone, ShieldCheck, Building2, UserCircle, ChevronLeft, Phone,
   MapPinned, Headphones, Star, Check, Navigation, FileText, Trash2,
+  HelpCircle, X, Shirt, Wallet, Truck, RotateCcw,
 } from "lucide-react";
 import certArt from "@/assets/undraw_certification_garm.svg";
 import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPayload } from "./components/NewOrderTab";
 import { TrackTab } from "./components/TrackTab";
-import { AccountTab, type UserProfile } from "./components/AccountTab";
+import { AccountTab, type UserProfile, orgTypeDefs, OrgTypeSelect } from "./components/AccountTab";
 import { NotificationsScreen } from "./components/NotificationsScreen";
 
 export type Tab = "home" | "order" | "track" | "account";
@@ -364,6 +365,28 @@ function fmtPhone(canonical: string): string {
   return "+91" + (a ? " " + a : "") + (b ? " " + b : "");
 }
 
+// ─── Identity → account registry ───────────────────────────────────────────────
+// A phone number or email is registered as ONE account type (personal or
+// organisation) the first time someone completes onboarding with it. Signing out
+// and back in with that same number/email should restore that exact account —
+// not let them pick a different account type the second time round.
+type IdentityBits = { phone?: string; email?: string };
+function identityKey(id: IdentityBits): string | null {
+  if (id.phone) return "phone:" + id.phone.replace(/\D/g, "");
+  if (id.email) return "email:" + id.email.trim().toLowerCase();
+  return null;
+}
+function loadIdentityRegistry(): Record<string, UserProfile> {
+  try { return JSON.parse(localStorage.getItem("fl_identity_registry") || "{}"); } catch { return {}; }
+}
+function rememberIdentity(id: IdentityBits, profile: UserProfile) {
+  const key = identityKey(id);
+  if (!key) return;
+  const registry = loadIdentityRegistry();
+  registry[key] = profile;
+  try { localStorage.setItem("fl_identity_registry", JSON.stringify(registry)); } catch { /* ignore */ }
+}
+
 // ─── Fabrics data ─────────────────────────────────────────────────────────────
 const fabrics = [
   { id: "A", name: "Premium Shirt Fabric",  desc: "100% Cotton Pique · 220 GSM", bg: "#e8e0d0" },
@@ -448,29 +471,9 @@ function SwatchBoxModal({ onClose }: { onClose: () => void }) {
 }
 
 // ─── Status Bar ────────────────────────────────────────────────────────────────
-function StatusBar() {
-  return (
-    <div className="flex items-center justify-between px-5 pt-3 pb-1 flex-shrink-0">
-      <span style={{ fontWeight: 600, fontSize: 15 }}>9:41</span>
-      <div className="flex items-center gap-1.5">
-        <svg width="17" height="12" viewBox="0 0 17 12" fill="none">
-          <rect x="0"    y="3" width="3" height="9"  rx="1" fill="#0D0D0D" opacity="0.3"/>
-          <rect x="4.5"  y="2" width="3" height="10" rx="1" fill="#0D0D0D" opacity="0.5"/>
-          <rect x="9"    y="0" width="3" height="12" rx="1" fill="#0D0D0D" opacity="0.8"/>
-          <rect x="13.5" y="0" width="3" height="12" rx="1" fill="#0D0D0D"/>
-        </svg>
-        <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
-          <path d="M8 2.5C10.2 2.5 12.2 3.4 13.6 4.9L15 3.4C13.2 1.5 10.7 0.5 8 0.5C5.3 0.5 2.8 1.5 1 3.4L2.4 4.9C3.8 3.4 5.8 2.5 8 2.5Z" fill="#0D0D0D" opacity="0.4"/>
-          <path d="M8 5.5C9.5 5.5 10.8 6.1 11.8 7L13.2 5.5C11.8 4.2 10 3.5 8 3.5C6 3.5 4.2 4.2 2.8 5.5L4.2 7C5.2 6.1 6.5 5.5 8 5.5Z" fill="#0D0D0D" opacity="0.7"/>
-          <circle cx="8" cy="10" r="1.5" fill="#0D0D0D"/>
-        </svg>
-        <div className="w-6 h-3 rounded-sm border border-black/30 p-px flex">
-          <div className="w-4/5 h-full bg-black/80 rounded-xs"/>
-        </div>
-      </div>
-    </div>
-  );
-}
+// Note: the mock status bar (clock/signal/wifi/battery) that used to render here has
+// been removed — it was just a static design-preview icon with no function, and on a
+// real device the OS already draws its own status bar, so this was redundant chrome.
 
 // ─── Orders data ───────────────────────────────────────────────────────────────
 const orders = [
@@ -480,10 +483,11 @@ const orders = [
 ];
 
 // ─── Home Tab ─────────────────────────────────────────────────────────────────
-function HomeTab({ onNavigate, onBell, onDrafts, draftCount = 0, profile }: {
+function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile }: {
   onNavigate: (t: Tab, orderId?: string) => void;
   onBell: () => void;
   onDrafts: () => void;
+  onHelp?: () => void;
   draftCount?: number;
   profile?: UserProfile;
 }) {
@@ -510,6 +514,15 @@ function HomeTab({ onNavigate, onBell, onDrafts, draftCount = 0, profile }: {
           </h2>
         </div>
         <div className="flex items-center gap-2">
+          {onHelp && (
+            <button onClick={onHelp}
+              id="coachmark-help-btn"
+              className="w-9 h-9 rounded-full bg-card flex items-center justify-center border border-border"
+              style={{ boxShadow: "var(--shadow-sm)" }}
+              title="How Garm works" aria-label="How Garm works">
+              <HelpCircle size={16} strokeWidth={1.5}/>
+            </button>
+          )}
           <button onClick={onDrafts}
             className="w-9 h-9 rounded-full bg-card flex items-center justify-center border border-border relative"
             style={{ boxShadow: "var(--shadow-sm)" }}
@@ -778,7 +791,7 @@ function WelcomeScreen({ onDone }: { onDone: () => void }) {
   const slide = slides[idx];
 
   return (
-    <div className="flex-1 flex flex-col px-6 pt-4 pb-6 min-h-0">
+    <div className="flex-1 flex flex-col px-6 pt-4 pb-9 min-h-0">
       {/* Top row — wordmark + skip */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
@@ -871,7 +884,7 @@ function WelcomeScreen({ onDone }: { onDone: () => void }) {
 }
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }: { onLogin: () => void }) {
+function LoginScreen({ onLogin }: { onLogin: (identity: { phone?: string; email?: string }) => void }) {
   const [mode, setMode]         = useState<"phone" | "email">("phone");
   const [step, setStep]         = useState<"identity" | "sending" | "otp">("identity");
   const [identity, setIdentity] = useState("+91");
@@ -937,10 +950,14 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
         </p>
       </div>
 
-      {/* Animated nature hero — between heading and form */}
-      <div className="mb-6" style={{ borderRadius: 16, overflow: "hidden", boxShadow: "0 6px 16px rgba(0,0,0,0.08)" }}>
-        <NatureScene />
-      </div>
+      {/* Animated nature hero — between heading and form. Only on the identity-entry
+          step; once the OTP card is up, this decorative animation just adds clutter
+          above a form the user needs to focus on and fill in quickly. */}
+      {step !== "otp" && (
+        <div className="mb-6" style={{ borderRadius: 16, overflow: "hidden", boxShadow: "0 6px 16px rgba(0,0,0,0.08)" }}>
+          <NatureScene />
+        </div>
+      )}
 
       {/* Mode toggle */}
       <div className="grid grid-cols-2 gap-2 mb-5">
@@ -1041,7 +1058,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
             ))}
           </div>
 
-          <button onClick={onLogin} disabled={!otpReady}
+          <button onClick={() => onLogin(mode === "phone" ? { phone: fmtPhone(identity) } : { email: identity.trim() })} disabled={!otpReady}
             style={otpReady ? { ...btnPrimary, marginBottom: 10 } : { ...btnPrimaryDisabled, marginBottom: 10 }}>
             Verify & sign in
           </button>
@@ -1075,11 +1092,27 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 // ─── Onboarding Screen ────────────────────────────────────────────────────────
 type AccountType = "organisation" | "personal" | null;
 
+// Example organisation-name placeholder, tailored to the chosen type so the hint
+// text always matches what the user picked instead of always showing a school name.
+const orgNamePlaceholders: Record<string, string> = {
+  school: "e.g. Sri Vidya Mandir School",
+  college: "e.g. Delhi College of Engineering",
+  corporate: "e.g. Acme Corp Pvt Ltd",
+  hospital: "e.g. Apollo Hospital",
+  industry: "e.g. Tata Steel Industries",
+  hospitality: "e.g. Taj Palace Hotel",
+  sports: "e.g. Chennai Sports Club",
+  government: "e.g. Municipal Corporation Office",
+  ngo: "e.g. Smile Foundation Trust",
+};
+
 function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) => void }) {
   const [step, setStep] = useState<"name" | "type" | "org-details" | "personal-details">("name");
   const [fullName, setFullName] = useState("");
   const [accountType, setAccountType] = useState<AccountType>(null);
   const [orgName, setOrgName] = useState("");
+  // No default — the user must actively pick a type before continuing.
+  const [orgType, setOrgType] = useState("");
   const [gstNumber, setGstNumber] = useState("");
   const [address, setAddress]   = useState("");
   const [city, setCity]         = useState("");
@@ -1135,7 +1168,7 @@ function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) =
   }
 
   function handleComplete() {
-    onComplete({ name: fullName, avatar: null, accountType: accountType || "personal", orgName, gstNumber });
+    onComplete({ name: fullName, avatar: null, accountType: accountType || "personal", orgName, orgType, gstNumber });
   }
 
   const steps = ["name", "type", "details"];
@@ -1243,13 +1276,15 @@ function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) =
             <p className="text-muted-foreground text-sm">Tell us a bit about your organisation.</p>
           </div>
           <div style={card} className="p-4 mb-5">
-            <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Organisation name</p>
+            <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Organisation type</p>
+            <OrgTypeSelect value={orgType} onChange={setOrgType}/>
+            <p className="text-muted-foreground mb-1.5 mt-4" style={{ fontSize: 12 }}>Organisation name</p>
             <input value={orgName} onChange={e => setOrgName(e.target.value)}
-              placeholder="e.g. Sri Vidya Mandir School" style={inputStyle}/>
+              placeholder={orgType ? orgNamePlaceholders[orgType] : "Your organisation's name"} style={inputStyle}/>
           </div>
           <button onClick={handleComplete}
-            disabled={!orgName.trim()}
-            style={orgName.trim() ? btnPrimary : btnPrimaryDisabled}>
+            disabled={!orgName.trim() || !orgType}
+            style={orgName.trim() && orgType ? btnPrimary : btnPrimaryDisabled}>
             Save & open home
           </button>
         </>
@@ -1469,7 +1504,7 @@ function DraftsScreen({ drafts, onClose, onCancelDraft, onResumeDraft }: {
 }
 
 // ─── Help & Support Screen ─────────────────────────────────────────────────────
-function HelpSupportScreen({ onBack }: { onBack: () => void }) {
+function HelpSupportScreen({ onBack, onReplayTour }: { onBack: () => void; onReplayTour?: () => void }) {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
   const faqs = [
     { q: "How do I place a bulk order?",          a: "Go to the Order tab and fill in your material requirements. Our coordinator will confirm your order details and share the next steps within 2–4 hours during business hours." },
@@ -1490,6 +1525,22 @@ function HelpSupportScreen({ onBack }: { onBack: () => void }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4" style={{ scrollbarWidth: "none" }}>
+        {/* Replay the guided walkthrough (tutorial slides + tap-here coach-marks on
+            Home, New Order and Track) on demand — these only ever show automatically
+            once, so this is the way to see them again any time. */}
+        {onReplayTour && (
+          <button onClick={onReplayTour} style={card} className="w-full flex items-center gap-3 p-4 mb-5 text-left" >
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: ACCENT_BG }}>
+              <HelpCircle size={17} strokeWidth={1.5} style={{ color: ACCENT_TEXT }}/>
+            </div>
+            <div className="flex-1">
+              <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>Replay app walkthrough</p>
+              <p className="text-muted-foreground" style={{ fontSize: 11.5, marginTop: 1 }}>Show the "How Garm works" guide and tap-here tooltips again</p>
+            </div>
+            <ChevronRight size={16} className="text-muted-foreground flex-shrink-0"/>
+          </button>
+        )}
+
         <p className="label-section mb-4">Frequently asked questions</p>
 
         {/* FAQs */}
@@ -1533,6 +1584,150 @@ function HelpSupportScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ─── "How Garm works" tutorial ────────────────────────────────────────────────
+// A short, persona-specific walkthrough. Shown once automatically right after
+// onboarding, and reopenable any time from Home (the "?" button) so someone can
+// revisit it or "practice" the flow in their head before actually placing an order.
+const tutorialSlidesByPersona: Record<"organisation" | "personal", { Icon: React.ComponentType<{ size?: number; strokeWidth?: number; style?: React.CSSProperties }>; title: string; body: string }[]> = {
+  organisation: [
+    { Icon: Shirt,     title: "Add every garment you need",  body: "Browse by category and add each garment — T-shirts, uniforms, accessories — to one order. Set fabric, colour, quantity and sizes separately for each." },
+    { Icon: Wallet,    title: "Get one consolidated quote",   body: "Pricing is calculated per garment as you configure it. Review everything together before you submit — nothing is charged until your coordinator confirms." },
+    { Icon: Truck,     title: "Track production end-to-end",  body: "Once confirmed, follow your order through production, QA and delivery in the Track tab — no phone calls needed." },
+    { Icon: Building2, title: "Your organisation profile travels with you", body: "Set your business details once in Account — they'll auto-fill on every future order." },
+  ],
+  personal: [
+    { Icon: User,      title: "Tell us who it's for",         body: "Pick Men's, Women's or Kids — or set up a custom order for a family, friend group or a few students." },
+    { Icon: Shirt,     title: "Pick fabric, colour & size",    body: "Every garment is fully personalised, starting from just 1 piece — no bulk minimums for individuals." },
+    { Icon: Wallet,    title: "Pay & track your order",        body: "Pay securely in-app, then follow it from production all the way to your door in the Track tab." },
+    { Icon: RotateCcw, title: "Reorder in seconds",            body: "Drafts and past orders are saved, so reordering the same thing again is just a couple of taps." },
+  ],
+};
+
+function TutorialModal({ accountType, onClose }: { accountType?: "personal" | "organisation"; onClose: () => void }) {
+  const slides = tutorialSlidesByPersona[accountType === "organisation" ? "organisation" : "personal"];
+  const [idx, setIdx] = useState(0);
+  const isLast = idx === slides.length - 1;
+  const slide = slides[idx];
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col justify-end" style={{ background: "rgba(0,0,0,0.5)" }} onClick={onClose}>
+      <div className="bg-background rounded-t-3xl px-6 pt-5 pb-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <p className="text-foreground" style={{ fontSize: 15, fontWeight: 700 }}>How Garm works</p>
+          <button onClick={onClose} aria-label="Close" style={{ background: "var(--muted)", border: "none", borderRadius: 999, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={14}/>
+          </button>
+        </div>
+
+        <div className="flex flex-col items-center text-center mb-5">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ background: "var(--secondary)" }}>
+            <slide.Icon size={28} strokeWidth={1.5} style={{ color: DARK }}/>
+          </div>
+          <p style={{ fontSize: 17, fontWeight: 700, color: DARK, marginBottom: 8 }}>{slide.title}</p>
+          <p className="text-muted-foreground" style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 280 }}>{slide.body}</p>
+        </div>
+
+        <div className="flex justify-center gap-2 mb-5">
+          {slides.map((_, i) => (
+            <button key={i} onClick={() => setIdx(i)}
+              style={{ height: 7, borderRadius: 99, border: "none", cursor: "pointer", padding: 0, width: i === idx ? 22 : 7, background: i === idx ? DARK : "var(--border)" }}/>
+          ))}
+        </div>
+
+        <button onClick={() => (isLast ? onClose() : setIdx(i => i + 1))} style={btnPrimary}>
+          {isLast ? "Got it" : "Next"} <ArrowRight size={15} strokeWidth={2}/>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── First-login coach-mark tour ───────────────────────────────────────────────
+// Short "tap here → next step" pointers at the real controls, shown only the very
+// first time someone reaches the app (tracked by a one-time flag, never reset) —
+// after that, people already know where things are, so this doesn't show again.
+type CoachStep = { targetId: string; title: string; body: string };
+const coachSteps: CoachStep[] = [
+  { targetId: "coachmark-tab-order", title: "Start here", body: "Tap New Order to configure your garments and place your first order." },
+  { targetId: "coachmark-tab-track", title: "Follow it here", body: "Once your order's confirmed, come back to Track to follow production, QA and delivery." },
+  { targetId: "coachmark-help-btn",  title: "Need a refresher?", body: "Tap this any time for a quick walkthrough of how Garm works." },
+];
+
+function CoachmarkTour({ onDone }: { onDone: () => void }) {
+  const [idx, setIdx]   = useState(0);
+  const [frame, setFrame] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [rect, setRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const step = coachSteps[idx];
+  const isLast = idx === coachSteps.length - 1;
+
+  // Poll continuously (not just once on mount) so this reliably finds its target even
+  // if Home is still finishing its first render, or the user switches step mid-tour.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const frameEl  = document.getElementById("garm-phone-frame");
+      const targetEl = document.getElementById(step.targetId);
+      if (frameEl && targetEl) {
+        const f = frameEl.getBoundingClientRect();
+        const t = targetEl.getBoundingClientRect();
+        setFrame({ top: f.top, left: f.left, width: f.width, height: f.height });
+        setRect({ top: t.top - f.top, left: t.left - f.left, width: t.width, height: t.height });
+      } else {
+        setRect(null);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [step.targetId]);
+
+  if (!rect || !frame) return null;
+
+  const pad = 6;
+  const hole = { top: rect.top - pad, left: rect.left - pad, width: rect.width + pad * 2, height: rect.height + pad * 2 };
+  const placeBelow = hole.top < frame.height * 0.55;
+  const bubbleTop = placeBelow ? hole.top + hole.height + 12 : undefined;
+  const bubbleBottom = !placeBelow ? frame.height - hole.top + 12 : undefined;
+
+  function advance() {
+    if (isLast) onDone();
+    else setIdx(i => i + 1);
+  }
+
+  return (
+    <div style={{ position: "fixed", top: frame.top, left: frame.left, width: frame.width, height: frame.height, zIndex: 9999, overflow: "hidden", borderRadius: 44 }}>
+      {/* Four shade panels leave a rectangular "hole" around the target, instead of a
+          single full-screen dim layer, so the highlighted control is fully visible. */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: Math.max(0, hole.top), background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top + hole.height, left: 0, right: 0, bottom: 0, background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top, left: 0, width: Math.max(0, hole.left), height: hole.height, background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top, left: hole.left + hole.width, right: 0, height: hole.height, background: "rgba(13,13,13,0.68)" }}/>
+      {/* Highlight ring around the target */}
+      <div style={{ position: "absolute", top: hole.top, left: hole.left, width: hole.width, height: hole.height, borderRadius: 16, border: `2px solid ${ACCENT}`, boxShadow: "0 0 0 3px rgba(200,169,126,0.25)" }}/>
+
+      {/* Tooltip bubble */}
+      <div style={{
+          position: "absolute", top: bubbleTop, bottom: bubbleBottom, left: 20, right: 20,
+          background: "var(--background)", borderRadius: 16, padding: 16,
+          boxShadow: "0 12px 28px rgba(0,0,0,0.22)", border: "1px solid var(--border)",
+        }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: DARK, marginBottom: 4 }}>{step.title}</p>
+        <p className="text-muted-foreground mb-3" style={{ fontSize: 12, lineHeight: 1.5 }}>{step.body}</p>
+        <div className="flex items-center justify-between">
+          <button onClick={onDone} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "var(--muted-foreground)", padding: 0 }}>
+            Skip
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground" style={{ fontSize: 11 }}>{idx + 1} / {coachSteps.length}</span>
+            <button onClick={advance} className="flex items-center gap-1 px-3.5 py-2 rounded-xl" style={{ background: DARK, color: "#fff", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+              {isLast ? "Got it" : "Next"} <ArrowRight size={13} strokeWidth={2}/>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Tab items ────────────────────────────────────────────────────────────────
 const tabItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "home",    label: "Home",     icon: <Home      size={20} strokeWidth={1.5}/> },
@@ -1557,13 +1752,77 @@ export default function App() {
   const [ratingDone, setRatingDone]           = useState(false);
   const [targetOrderId, setTargetOrderId]     = useState<string | null>(null);
   const [userProfile, setUserProfile]         = useState<UserProfile>({ name: "", avatar: null, accountType: "personal" });
+  // Captured at login (phone or email, whichever the user verified with) and merged
+  // into the profile once onboarding finishes, so it's not lost between the two steps.
+  const [loginIdentity, setLoginIdentity]     = useState<{ phone?: string; email?: string }>({});
   const [showHelp, setShowHelp]               = useState(false);
+  const [showTutorial, setShowTutorial]       = useState(false);
+  const [showCoachmarks, setShowCoachmarks]   = useState(false);
+  // True only while we're inside the automatic first-time sequence (tutorial, then
+  // straight into the coach-mark tour) — a manual reopen of the tutorial from the "?"
+  // button should NOT also kick off the coach-mark tour afterwards.
+  const firstTimeFlowRef = useRef(false);
   const [showDrafts, setShowDrafts]           = useState(false);
   const [resumeDraft, setResumeDraft]         = useState<OrderDraft | null>(null);
   const [paidOrderIds, setPaidOrderIds]       = useState<string[]>([]);
   const [drafts, setDrafts]                   = useState<OrderDraft[]>(() => {
     try { return JSON.parse(localStorage.getItem("fl_drafts") || "[]"); } catch { return []; }
   });
+
+  // Fire the first-time tutorial (and, after it's closed, the coach-mark tour) the moment
+  // someone lands on the main app — whether they just finished onboarding OR skipped
+  // straight there because their phone/email was already recognised (identity lock).
+  // Gating this on authStep alone (instead of only inside onboarding's onComplete) is what
+  // makes it show for returning users too, not just brand-new ones.
+  useEffect(() => {
+    if (authStep !== "app") return;
+    try {
+      const tutorialKey = `fl_tutorial_seen_${userProfile.accountType ?? "personal"}`;
+      const seenTutorial = !!localStorage.getItem(tutorialKey);
+      const seenCoach = !!localStorage.getItem("fl_coachmarks_done");
+      if (!seenTutorial) {
+        localStorage.setItem(tutorialKey, "1");
+        firstTimeFlowRef.current = !seenCoach; // chain straight into the coach-mark tour after
+        setShowTutorial(true);
+      } else if (!seenCoach) {
+        setShowCoachmarks(true);
+      }
+    } catch { /* ignore storage errors */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStep]);
+
+  function handleTutorialClose() {
+    setShowTutorial(false);
+    if (firstTimeFlowRef.current) {
+      firstTimeFlowRef.current = false;
+      try { if (!localStorage.getItem("fl_coachmarks_done")) setShowCoachmarks(true); } catch { /* ignore */ }
+    }
+  }
+
+  // Every guide (tutorial + all 3 coach-mark surfaces) is a "show once, ever" flag —
+  // by design, so people who already know the app aren't nagged every visit. But that
+  // means once this browser/device has seen them, they're gone for good with no way
+  // back — which looks exactly like "broken" the next time someone wants to check them,
+  // demo them, or a genuinely new teammate wants a refresher. Tapping Home's "?" now
+  // clears every one of those flags and replays the whole sequence on demand, in
+  // addition to still running automatically the very first time.
+  function handleReplayTour() {
+    try {
+      localStorage.removeItem("fl_tutorial_seen_personal");
+      localStorage.removeItem("fl_tutorial_seen_organisation");
+      localStorage.removeItem("fl_coachmarks_done");
+      localStorage.removeItem("fl_coach_org_continue_done");
+      localStorage.removeItem("fl_coach_ind_continue_done");
+      localStorage.removeItem("fl_coach_order_footer_done");
+      localStorage.removeItem("fl_coach_track_order_done");
+    } catch { /* ignore */ }
+    firstTimeFlowRef.current = true;
+    setShowTutorial(true);
+  }
+  function handleCoachmarksDone() {
+    setShowCoachmarks(false);
+    try { localStorage.setItem("fl_coachmarks_done", "1"); } catch { /* ignore */ }
+  }
 
   function persistDrafts(next: OrderDraft[]) {
     setDrafts(next);
@@ -1621,6 +1880,12 @@ export default function App() {
   function handleContactAdmin() {
     alert("Calling admin: +91 98765 00000");
   }
+  // Any later profile edit (e.g. Account → Business details) should also update the
+  // saved registry entry, so a future sign-in with this identity reflects the latest edit.
+  function handleProfileUpdate(p: UserProfile) {
+    setUserProfile(p);
+    rememberIdentity({ phone: p.phone, email: p.email }, p);
+  }
   function handleSignOut() {
     setAuthStep("login");
     setActiveTab("home");
@@ -1640,14 +1905,13 @@ export default function App() {
   const phoneShell = (children: React.ReactNode) => (
     <div className="size-full flex items-center justify-center"
       style={{ fontFamily: "DM Sans, system-ui, sans-serif", background: "var(--secondary)" }}>
-      <div className="flex flex-col overflow-hidden"
+      <div id="garm-phone-frame" className="flex flex-col overflow-hidden"
         style={{
           position: "relative", width: 375, height: 812,
           borderRadius: 44, background: "var(--background)",
           border: "1px solid rgba(0,0,0,0.08)",
           boxShadow: "0 40px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.06)",
         }}>
-        <StatusBar/>
         {children}
       </div>
     </div>
@@ -1655,8 +1919,23 @@ export default function App() {
 
   // ── Auth screens ──────────────────────────────────────────────────────────
   if (authStep === "welcome")     return phoneShell(<WelcomeScreen onDone={() => setAuthStep("login")}/>);
-  if (authStep === "login")       return phoneShell(<LoginScreen onLogin={() => setAuthStep("onboarding")}/>);
-  if (authStep === "onboarding")  return phoneShell(<OnboardingScreen onComplete={p => { setUserProfile(p); setAuthStep("app"); }}/>);
+  if (authStep === "login")       return phoneShell(<LoginScreen onLogin={identity => {
+    setLoginIdentity(identity);
+    // Returning identity? Restore the exact account (and type) it registered as,
+    // instead of re-asking onboarding and risking a different account type this time.
+    const key = identityKey(identity);
+    const existing = key ? loadIdentityRegistry()[key] : undefined;
+    if (existing) { setUserProfile({ ...existing, ...identity }); setAuthStep("app"); }
+    else          { setAuthStep("onboarding"); }
+  }}/>);
+  if (authStep === "onboarding")  return phoneShell(<OnboardingScreen onComplete={p => {
+    const merged = { ...p, ...loginIdentity };
+    setUserProfile(merged);
+    rememberIdentity(loginIdentity, merged);
+    setAuthStep("app");
+    // Tutorial/coach-mark trigger lives in the authStep === "app" effect above, so it
+    // fires here AND for returning users who skip straight past onboarding.
+  }}/>);
 
   return phoneShell(
     <>
@@ -1690,11 +1969,11 @@ export default function App() {
       {/* Content area */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
         {showHelp ? (
-          <HelpSupportScreen onBack={() => setShowHelp(false)}/>
+          <HelpSupportScreen onBack={() => setShowHelp(false)} onReplayTour={() => { setShowHelp(false); handleReplayTour(); }}/>
         ) : (
           <>
-            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} draftCount={drafts.length} profile={userProfile}/>}
-            {activeTab === "order"   && <NewOrderTab key={resumeDraft?.id ?? "new"} onNavigate={handleNavigate} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>}
+            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} draftCount={drafts.length} profile={userProfile}/>}
+            {activeTab === "order"   && <NewOrderTab key={resumeDraft?.id ?? "new"} onNavigate={handleNavigate} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>}
             {activeTab === "track"   && (
               <TrackTab
                 showNew={showNewOrder}
@@ -1713,7 +1992,7 @@ export default function App() {
               <AccountTab
                 onNavigate={(tab, orderId) => handleNavigate(tab as Tab, orderId)}
                 profile={userProfile}
-                onProfileUpdate={setUserProfile}
+                onProfileUpdate={handleProfileUpdate}
                 onSignOut={handleSignOut}
               />
             )}
@@ -1732,6 +2011,7 @@ export default function App() {
           const active = activeTab === tab.id && !showHelp;
           return (
             <button key={tab.id}
+              id={`coachmark-tab-${tab.id}`}
               onClick={() => { setShowHelp(false); setResumeDraft(null); setActiveTab(tab.id); }}
               className="flex-1 flex flex-col items-center gap-0.5 py-1">
               <span className={active ? "text-foreground" : "text-muted-foreground"}>{tab.icon}</span>
@@ -1748,6 +2028,19 @@ export default function App() {
         {/* Home indicator */}
         <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-28 h-1 rounded-full bg-foreground/20 pointer-events-none"/>
       </div>
+
+      {/* "How Garm works" tutorial — shown once automatically after onboarding (or on first
+          Home visit for returning/identity-locked users), and reopenable any time from
+          Home's "?" button. */}
+      {showTutorial && (
+        <TutorialModal accountType={userProfile.accountType} onClose={handleTutorialClose}/>
+      )}
+
+      {/* First-login coach-mark tour — "tap here, this is next" pointers at the real nav
+          controls, chained right after the tutorial closes (first time only). */}
+      {showCoachmarks && activeTab === "home" && !showHelp && (
+        <CoachmarkTour onDone={handleCoachmarksDone}/>
+      )}
 
       {/* Notifications overlay */}
       {showNotifications && (

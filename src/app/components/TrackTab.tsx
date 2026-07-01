@@ -23,6 +23,7 @@ const btnPrimary: React.CSSProperties = {
   fontWeight: 500, border: "none", cursor: "pointer",
   display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
 };
+
 const btnSecondary: React.CSSProperties = {
   width: "100%", background: "var(--muted)", color: "var(--foreground)",
   borderRadius: 20, padding: "14px 20px", fontSize: 14,
@@ -487,6 +488,8 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
                         </div>
                       )
                       : <DetailRow label="Sizes" value="To be confirmed"/>}
+                    {(g.stitching || g.packaging) && <DetailRow label="Finishing" value={[g.stitching, g.packaging].filter(Boolean).join(" · ")}/>}
+                    {g.referenceMethod && <DetailRow label="Reference" value={`${g.referenceMethod}${g.referenceFiles ? ` · ${g.referenceFiles} file${g.referenceFiles !== 1 ? "s" : ""}` : ""}`}/>}
                   </div>
                 </div>
               ))}
@@ -692,15 +695,39 @@ function PaymentMilestones({ order }: { order: OrderTrack }) {
 }
 
 // ─── Sample Approval Card ─────────────────────────────────────────────────────
-function SampleApprovalCard() {
+// Shows what's actually being approved — the real fabric, colour and logo/reference
+// chosen when the order was placed — instead of three fixed placeholder swatches.
+function SampleApprovalCard({ order }: { order: OrderTrack }) {
   const [decision, setDecision] = useState<"approved" | "changes" | null>(null);
+
+  const firstLine = order.garmentLines?.[0];
+  const fabricText = firstLine?.fabric || order.fabric || "Not specified";
+
+  const colorEntry = order.colorList?.[0] ?? (firstLine ? { hex: firstLine.colorHex, label: firstLine.colorLabel } : undefined);
+  const colorLabel = colorEntry?.label || order.colors || "Not selected";
+  const colorHex = colorEntry?.hex || "#D1D5DB"; // neutral grey when nothing was actually chosen
+
+  const refMethod = firstLine?.referenceMethod ?? order.referenceMethod;
+  const refFiles = firstLine?.referenceFiles ?? order.referenceFiles ?? 0;
+  const hasLogo = !!refMethod || refFiles > 0;
+  const logoLabel = hasLogo ? (refMethod || `${refFiles} file${refFiles !== 1 ? "s" : ""} uploaded`) : "Not added";
+
+  const swatches: { label: string; value: string; color: string }[] = [
+    { label: "Fabric", value: fabricText,  color: "#1f2f46" },
+    { label: "Color",  value: colorLabel,  color: colorHex },
+    { label: "Logo",   value: logoLabel,   color: hasLogo ? ACCENT : "#D1D5DB" },
+  ];
+
   return (
     <Panel title="Sample approval" icon={<Palette size={14} strokeWidth={1.5}/>}>
       <div className="grid grid-cols-3 gap-2 mb-3">
-        {[["Fabric", "#1f2f46"], ["Color", "#23395d"], ["Logo", ACCENT]].map(([label, color]) => (
-          <div key={label} className="rounded-xl border border-border overflow-hidden bg-muted">
-            <div className="h-10" style={{ background: color }}/>
-            <p className="text-center text-muted-foreground py-1.5" style={{ fontSize: 10 }}>{label}</p>
+        {swatches.map(sw => (
+          <div key={sw.label} className="rounded-xl border border-border overflow-hidden bg-muted">
+            <div className="h-10" style={{ background: sw.color }}/>
+            <div className="text-center py-1.5 px-1">
+              <p className="text-muted-foreground" style={{ fontSize: 9, lineHeight: 1.3 }}>{sw.label}</p>
+              <p className="text-foreground" style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={sw.value}>{sw.value}</p>
+            </div>
           </div>
         ))}
       </div>
@@ -856,12 +883,85 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
   );
 }
 
+// ─── First-login coach-mark spotlight ──────────────────────────────────────────
+// One-shot "tap here" pointer at the first order card's header — shown only the very
+// first time someone reaches Track (tracked by a one-time localStorage flag, never
+// reset). Targets the header button (a fixed-height element) rather than the whole
+// card, since the card's overall height can grow hugely when it's auto-expanded
+// (forceOpen), which previously blew the spotlight's position math off-screen.
+function TrackCoachmark({ storageKey, targetId, title, body }: {
+  storageKey: string; targetId: string; title: string; body: string;
+}) {
+  const [done, setDone] = useState(() => {
+    try { return localStorage.getItem(storageKey) === "1"; } catch { return false; }
+  });
+  const [frame, setFrame] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [rect, setRect]   = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    if (done) return;
+    let raf = 0;
+    const tick = () => {
+      const frameEl  = document.getElementById("garm-phone-frame");
+      const targetEl = document.getElementById(targetId);
+      if (frameEl && targetEl) {
+        const f = frameEl.getBoundingClientRect();
+        const t = targetEl.getBoundingClientRect();
+        setFrame({ top: f.top, left: f.left, width: f.width, height: f.height });
+        setRect({ top: t.top - f.top, left: t.left - f.left, width: t.width, height: t.height });
+      } else {
+        setRect(null);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [done, targetId]);
+
+  if (done || !rect || !frame) return null;
+
+  function dismiss() {
+    setDone(true);
+    try { localStorage.setItem(storageKey, "1"); } catch { /* ignore */ }
+  }
+
+  const pad = 6;
+  const hole = { top: rect.top - pad, left: rect.left - pad, width: rect.width + pad * 2, height: rect.height + pad * 2 };
+  const placeBelow = hole.top < frame.height * 0.55;
+  const bubbleTop = placeBelow ? Math.min(hole.top + hole.height + 12, frame.height - 140) : undefined;
+  const bubbleBottom = !placeBelow ? Math.max(frame.height - hole.top + 12, 12) : undefined;
+
+  return (
+    <div style={{ position: "fixed", top: frame.top, left: frame.left, width: frame.width, height: frame.height, zIndex: 9999, overflow: "hidden", borderRadius: 44, pointerEvents: "none" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: Math.max(0, hole.top), background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top + hole.height, left: 0, right: 0, bottom: 0, background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top, left: 0, width: Math.max(0, hole.left), height: hole.height, background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top, left: hole.left + hole.width, right: 0, height: hole.height, background: "rgba(13,13,13,0.68)" }}/>
+      <div style={{ position: "absolute", top: hole.top, left: hole.left, width: hole.width, height: hole.height, borderRadius: 16, border: `2px solid ${ACCENT}`, boxShadow: "0 0 0 3px rgba(200,169,126,0.25)" }}/>
+      <div style={{
+          position: "absolute", top: bubbleTop, bottom: bubbleBottom, left: 20, right: 20,
+          background: "var(--background)", borderRadius: 16, padding: 16,
+          boxShadow: "0 12px 28px rgba(0,0,0,0.22)", border: "1px solid var(--border)",
+          pointerEvents: "auto",
+        }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: DARK, marginBottom: 4 }}>{title}</p>
+        <p className="text-muted-foreground mb-3" style={{ fontSize: 12, lineHeight: 1.5 }}>{body}</p>
+        <div className="flex justify-end">
+          <button onClick={dismiss} className="flex items-center gap-1 px-3.5 py-2 rounded-xl" style={{ background: DARK, color: "#fff", border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600 }}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Order Card ───────────────────────────────────────────────────────────────
-function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen }: {
+function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen, headerId }: {
   order: OrderTrack; accountType?: "personal" | "organisation";
   onMessage?: () => void; onReorder?: () => void; onEditOrder?: (payload?: DraftPayload) => void;
   paidOverride?: boolean; onMarkPaid?: () => void; forceOpen?: boolean;
-  onDeliveredOpen?: () => void;
+  onDeliveredOpen?: () => void; headerId?: string;
 }) {
   const [open, setOpen] = useState(order.defaultOpen || forceOpen);
   const firedRef = React.useRef(false);
@@ -896,8 +996,10 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
         </div>
       )}
 
-      {/* Card header (tap to expand) */}
+      {/* Card header (tap to expand) — a fixed-size element regardless of open/forceOpen
+          state, unlike the card as a whole, which makes it the safe coachmark target. */}
       <button onClick={() => setOpen(v => !v)}
+        id={headerId}
         className="w-full flex items-start justify-between p-4 text-left"
         style={{ background: "transparent", border: "none", cursor: "pointer" }}>
         <div>
@@ -972,7 +1074,7 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
                 <CoordinatorCard onMessage={onMessage}/>
                 <PaymentMethodCard order={order} accountType={accountType} paidOverride={paidOverride} onMarkPaid={onMarkPaid}/>
                 <OrderDetailsCard order={order} canChange={canChange} accountType={accountType} onEdit={() => onEditOrder?.(order.editPayload)}/>
-                {accountType !== "personal" && CHANGEABLE_STATUSES.includes(order.statusLabel) && !order.isAccessoryOrder && <SampleApprovalCard/>}
+                {accountType !== "personal" && CHANGEABLE_STATUSES.includes(order.statusLabel) && !order.isAccessoryOrder && <SampleApprovalCard order={order}/>}
                 <DocumentVault order={order}/>
               </div>
             </div>
@@ -1050,7 +1152,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
             </p>
           </div>
         ) : (
-          filtered.map(order => (
+          filtered.map((order, i) => (
             <OrderCard
               key={order.id}
               order={order}
@@ -1062,10 +1164,15 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
               onMarkPaid={() => onMarkOrderPaid?.(order.id)}
               forceOpen={order.id === targetOrderId}
               onDeliveredOpen={PAST_STATUSES.includes(order.statusLabel) ? onOrderDelivered : undefined}
+              headerId={i === 0 ? "coachmark-track-first-order" : undefined}
             />
           ))
         )}
       </div>
+      {filtered.length > 0 && (
+        <TrackCoachmark storageKey="fl_coach_track_order_done" targetId="coachmark-track-first-order"
+          title="Tap to see progress" body="Tap any order to expand it and follow production, QA and delivery step by step."/>
+      )}
     </div>
   );
 }

@@ -4,7 +4,7 @@ import {
   Bell, ShieldCheck, LogOut, ArrowLeft, Camera, Check,
   Navigation, Plus, Trash2, Shield, Smartphone, Key, Edit3, Pencil,
   RotateCcw, Package, BookOpen, GraduationCap, Heart, Factory,
-  Utensils, Trophy, Landmark, Users, AlertTriangle,
+  Utensils, Trophy, Landmark, Users, AlertTriangle, Lock,
 } from "lucide-react";
 
 const ACCENT      = "#C8A97E";
@@ -38,7 +38,7 @@ const btnSecondary: React.CSSProperties = {
 };
 const btnAccent: React.CSSProperties = { ...btnPrimary, background: ACCENT };
 
-export type UserProfile = { name: string; avatar: string | null; accountType?: "personal" | "organisation"; orgName?: string; gstNumber?: string; phone?: string; email?: string };
+export type UserProfile = { name: string; avatar: string | null; accountType?: "personal" | "organisation"; orgName?: string; orgType?: string; gstNumber?: string; phone?: string; email?: string };
 
 type Screen =
   | "main" | "profile" | "business" | "delivery" | "payment"
@@ -135,7 +135,7 @@ function ProfileEdit({ profile, onBack, onSave }: {
 }
 
 // ─── Business Details (save → view → edit) ────────────────────────────────────
-const orgTypeDefs = [
+export const orgTypeDefs = [
   { id:"school",       Icon: BookOpen,     label:"School"        },
   { id:"college",      Icon: GraduationCap,label:"College"       },
   { id:"corporate",    Icon: Building2,    label:"Corporate"     },
@@ -149,20 +149,38 @@ const orgTypeDefs = [
 
 interface BizData { orgType:string; name:string; reg:string; addr1:string; addr2:string; landmark:string; location:string; city:string; pin:string }
 
-// Custom org-type dropdown with per-option icons (native <select> can't render icons)
-function OrgTypeSelect({ value, onChange }: { value:string; onChange:(v:string)=>void }) {
+// The "registration" field means something different for every organisation type, so a
+// single generic label/placeholder (e.g. always showing "CBSE, NABH, CIN") is confusing
+// for anyone who isn't a school. This maps each org type to wording that actually fits it.
+const regFieldByOrgType: Record<string, { label: string; placeholder: string }> = {
+  school:      { label: "Board / Affiliation",         placeholder: "e.g. CBSE, ICSE, State Board" },
+  college:     { label: "University / Affiliation",     placeholder: "e.g. Affiliated university, UGC code" },
+  corporate:   { label: "Registration number",          placeholder: "e.g. CIN, GSTIN" },
+  hospital:    { label: "Accreditation",                placeholder: "e.g. NABH, NABL" },
+  industry:    { label: "Registration number",          placeholder: "e.g. CIN, GSTIN, factory license" },
+  hospitality: { label: "Registration / License",       placeholder: "e.g. FSSAI, trade license" },
+  sports:      { label: "Affiliation",                  placeholder: "e.g. State or national federation" },
+  government:  { label: "Department / Notification",    placeholder: "e.g. Department code, G.O. number" },
+  ngo:         { label: "Registration",                 placeholder: "e.g. 12A, 80G, trust reg. no." },
+};
+const defaultRegField = { label: "Registration / Board / Affiliation", placeholder: "e.g. CBSE, NABH, CIN" };
+
+// Custom org-type dropdown with per-option icons (native <select> can't render icons).
+// value="" (or unmatched) shows a neutral placeholder, so it can be used as a required,
+// not-yet-answered field (e.g. onboarding) as well as an always-set field (Account edit).
+export function OrgTypeSelect({ value, onChange, placeholder = "Select organisation type" }: { value:string; onChange:(v:string)=>void; placeholder?: string }) {
   const [open, setOpen] = useState(false);
-  const cur = orgTypeDefs.find(t => t.id === value) ?? orgTypeDefs[0];
-  const CurIcon = cur.Icon;
+  const cur = orgTypeDefs.find(t => t.id === value);
+  const CurIcon = cur?.Icon ?? Building2;
   return (
     <div>
       <button type="button" onClick={() => setOpen(o => !o)}
         className="w-full flex items-center gap-2.5 bg-card border border-border rounded-xl px-3 py-2.5"
         style={{ cursor:"pointer" }}>
         <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-          <CurIcon size={16} strokeWidth={1.5} style={{ color:ACCENT }}/>
+          <CurIcon size={16} strokeWidth={1.5} style={{ color: cur ? ACCENT : "#9ca3af" }}/>
         </div>
-        <span className="flex-1 text-left text-foreground text-sm" style={{ fontWeight:500 }}>{cur.label}</span>
+        <span className="flex-1 text-left text-sm" style={{ fontWeight:500, color: cur ? "var(--foreground)" : "var(--muted-foreground)" }}>{cur ? cur.label : placeholder}</span>
         <ChevronDown size={15} strokeWidth={1.8} style={{ color:"#6b7280", transform: open ? "rotate(180deg)" : "none", transition:"transform .18s" }}/>
       </button>
       {/* In-flow expanding list — never clipped by the surrounding card */}
@@ -628,10 +646,16 @@ function PaymentBillingScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function BusinessDetails({ onBack }: { onBack: () => void }) {
-  const [mode, setMode]     = useState<"edit"|"view">("edit");
-  const [orgType, setOrgType] = useState("school");
-  const [name, setName]     = useState("Sri Vidya Mandir School");
+function BusinessDetails({ profile, onBack, onSave: onSaveProfile, onContactSupport }: { profile?: UserProfile; onBack: () => void; onSave?: (p: UserProfile) => void; onContactSupport?: () => void }) {
+  // Pre-fill from what was entered at onboarding, instead of a hardcoded demo org —
+  // and if that's already there, open straight to the view (it's effectively "saved").
+  const [mode, setMode]     = useState<"edit"|"view">(profile?.orgName ? "view" : "edit");
+  // Organisation type is set once at onboarding and isn't editable here — it's a
+  // commercial classification (pricing, catalog, compliance) that only support/admin
+  // should change, not something to flip casually mid-relationship. See the read-only
+  // card below for where a user is told to go instead (Help & support).
+  const orgType = profile?.orgType ?? "";
+  const [name, setName]     = useState(profile?.orgName ?? "");
   const [reg, setReg]       = useState("");
   const [addr1, setAddr1]   = useState("");
   const [addr2, setAddr2]   = useState("");
@@ -639,11 +663,16 @@ function BusinessDetails({ onBack }: { onBack: () => void }) {
   const [location, setLocation] = useState("");
   const [city, setCity]     = useState("");
   const [pin, setPin]       = useState("");
-  const [saved, setSaved]   = useState<BizData | null>(null);
+  const [saved, setSaved]   = useState<BizData | null>(profile?.orgName
+    ? { orgType: profile.orgType ?? "", name: profile.orgName, reg: "", addr1: "", addr2: "", landmark: "", location: "", city: "", pin: "" }
+    : null);
 
   function save() {
     const d = { orgType, name, reg, addr1, addr2, landmark, location, city, pin };
     setSaved(d); setMode("view");
+    // Keep the shared profile (used across Account, onboarding-derived defaults, and
+    // New Order's organisation details) in sync with whatever is edited here.
+    onSaveProfile?.({ ...profile, name: profile?.name ?? "", avatar: profile?.avatar ?? null, orgName: name, orgType });
   }
 
   const orgDef   = orgTypeDefs.find(t => t.id === orgType);
@@ -688,14 +717,26 @@ function BusinessDetails({ onBack }: { onBack: () => void }) {
       {/* EDIT mode */}
       {mode === "edit" && (
         <>
-          <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Organisation type *</p>
-          <div className="mb-4">
-            <OrgTypeSelect value={orgType} onChange={setOrgType}/>
+          <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Organisation type</p>
+          {/* Read-only — org type drives pricing, catalog and compliance, so it's not
+              something to change casually from a text field. Changing it goes through
+              support so it can be verified and applied correctly on the admin side. */}
+          <div className="mb-2 flex items-center gap-2.5 px-3.5 py-3 rounded-xl bg-muted border border-border">
+            <div className="w-8 h-8 rounded-lg bg-card flex items-center justify-center flex-shrink-0 border border-border">
+              <OrgIcon size={16} strokeWidth={1.5} style={{ color:"var(--muted-foreground)" }}/>
+            </div>
+            <p className="text-foreground text-sm flex-1" style={{ fontWeight:600 }}>{orgLabel || "Not set"}</p>
+            <Lock size={13} strokeWidth={1.5} className="text-muted-foreground flex-shrink-0"/>
           </div>
+          <button onClick={onContactSupport}
+            className="mb-4 text-xs text-left"
+            style={{ background:"none", border:"none", cursor: onContactSupport ? "pointer" : "default", color:"var(--muted-foreground)", padding:0, textDecoration: onContactSupport ? "underline" : "none" }}>
+            Need to change this? Contact Help &amp; support — our team verifies and updates it.
+          </button>
           <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Organisation name *</p>
           <input value={name} onChange={e => setName(e.target.value)} className={INP + " mb-3 block"} style={fnt}/>
-          <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Registration / Board / Affiliation</p>
-          <input value={reg} onChange={e => setReg(e.target.value)} placeholder="e.g. CBSE, NABH, CIN" className={INP + " mb-3 block"} style={fnt}/>
+          <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>{(regFieldByOrgType[orgType] ?? defaultRegField).label}</p>
+          <input value={reg} onChange={e => setReg(e.target.value)} placeholder={(regFieldByOrgType[orgType] ?? defaultRegField).placeholder} className={INP + " mb-3 block"} style={fnt}/>
 
           <p className="text-muted-foreground mb-1.5 mt-1" style={{ fontSize:12, fontWeight:500 }}>Business address</p>
           <p className="text-muted-foreground mb-1" style={{ fontSize:11 }}>Address line 1 *</p>
@@ -815,6 +856,12 @@ function SecurityScreen({ onBack, on2FASetup, twoFAEnabled, onDisable2FA }: {
 }) {
   return (
     <SubScreen title="Security" sub="Account protection settings" onBack={onBack}>
+      <p className="text-muted-foreground mb-3" style={{ fontSize: 12, lineHeight: 1.55 }}>
+        Every login is already verified with an OTP sent to your phone or email. Turning on
+        two-factor authentication adds a second check, and reviewing active sessions lets you
+        sign out any device you don't recognise.
+      </p>
+
       {/* 2FA */}
       <div className="bg-card border border-border rounded-2xl p-4 mb-3">
         <div className="flex items-center gap-3 mb-3">
@@ -1124,7 +1171,49 @@ function HelpSupportScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: bool
   );
 }
 
-function FAQScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: boolean }) {
+// Extra FAQ items that only make sense for a specific organisation type — appended to
+// the shared organisation FAQ list so each org type sees a couple of questions that
+// are actually relevant to how it orders, instead of one generic list for every org.
+const orgTypeFaqExtras: Record<string, [string, string][]> = {
+  school: [
+    ["Can parents pay for their own child's uniform?", "Yes — many schools split payment per parent or per class. Ask your coordinator about setting up individual payment links."],
+    ["Can we reorder for new admissions mid-year?", "Yes. Reuse your saved uniform spec from Order history any time a new student joins, without re-entering fabric and size details."],
+  ],
+  college: [
+    ["Can different departments or clubs order separately?", "Yes — place a separate order per department, fest committee or club, each with its own delivery address and billing contact."],
+    ["Is there a discount for large fresher batches?", "Volume pricing applies automatically above certain quantities — your coordinator applies it when confirming your quote."],
+  ],
+  corporate: [
+    ["Can we get a GST invoice?", "Yes — add your company's GSTIN under Business details and it will appear on every invoice."],
+    ["Can we reorder the same branded merchandise later?", "Yes. Your fabric, colours and logo placement are saved against your organisation profile for fast reorders."],
+  ],
+  hospital: [
+    ["Do your fabrics meet hygiene and infection-control needs?", "Scrub and lab coat fabrics follow standard hospital-grade specs — mention any specific requirement (e.g. antimicrobial finish) in References and we'll confirm availability."],
+    ["Can departments order separately?", "Yes — nursing, OT and housekeeping can each be set up as their own garment line or their own order."],
+  ],
+  industry: [
+    ["Do you supply fire-retardant or hi-vis workwear?", "Yes — pick the relevant fabric under Workwear type, or note your safety standard in References and we'll confirm compliance."],
+    ["Can sizes be issued per employee?", "Yes — size distribution is entered per garment, so you can match it to your workforce roster."],
+  ],
+  hospitality: [
+    ["Can we order different uniforms per department?", "Yes — kitchen, service and housekeeping can each be added as separate garments with their own fabric and fit."],
+    ["Can you match our brand colours exactly?", "Share a Pantone code or fabric swatch in References and we'll match as closely as the fabric allows."],
+  ],
+  sports: [
+    ["Can you print player names and numbers?", "Yes — add these under Reference & sample once your jersey or kit is picked."],
+    ["Is there a team discount for large squads?", "Volume pricing applies automatically above certain quantities."],
+  ],
+  government: [
+    ["Can you support tender or procurement documentation?", "Yes — share your tender reference with your coordinator and we'll provide the paperwork needed for procurement approval."],
+    ["Can an order span multiple budget cycles?", "Yes — ask your coordinator about splitting an order's billing across budget cycles."],
+  ],
+  ngo: [
+    ["Can a donor or CSR partner be billed directly?", "Yes — share the billing party's details and we'll invoice them directly on request."],
+    ["Is there pricing support for registered non-profits?", "Ask your coordinator — this is considered case by case for registered non-profits."],
+  ],
+};
+
+function FAQScreen({ onBack, isOrg, orgType }: { onBack: () => void; isOrg?: boolean; orgType?: string }) {
   const orgFaqs: [string, string][] = [
     ["What's the minimum order?", "Organisation orders start at 100 pieces. Accessories start at 100 pieces per product."],
     ["What happens after I submit an order?", "Your coordinator confirms the specs, final price and timeline, then production begins. You can still request changes after submitting."],
@@ -1146,9 +1235,10 @@ function FAQScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: boolean }) {
     ["Where do I set my delivery address?", "On the review step — type it in, or tap 'Use current location' to auto-fill it."],
     ["How do I raise an issue?", "Open Help & support from Account and create a ticket with your order number."],
   ];
-  const faqs = isOrg ? orgFaqs : indFaqs;
+  const orgLabel = orgTypeDefs.find(t => t.id === orgType)?.label;
+  const faqs = isOrg ? [...orgFaqs, ...(orgTypeFaqExtras[orgType ?? ""] ?? [])] : indFaqs;
   return (
-    <SubScreen title="FAQ" sub={isOrg ? "Answers for organisation orders" : "Answers for your custom orders"} onBack={onBack}>
+    <SubScreen title="FAQ" sub={isOrg ? `Answers for ${orgLabel ?? "organisation"} orders` : "Answers for your custom orders"} onBack={onBack}>
       {faqs.map(([q, a], i) => (
         <div key={q} className="bg-card border border-border rounded-2xl p-4 mb-3">
           <p className="text-foreground text-sm" style={{ fontWeight:600 }}>{i + 1}. {q}</p>
@@ -1159,47 +1249,110 @@ function FAQScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: boolean }) {
   );
 }
 
-function PolicyScreen({ kind, onBack, isOrg }: { kind: "terms" | "payment_gateway" | "privacy"; onBack: () => void; isOrg?: boolean }) {
+// One extra, org-type-specific clause per policy document — added on top of the
+// shared organisation content so schools, hospitals, government bodies and so on each
+// see the one consideration that actually matters most for how they order.
+const orgTypePolicyExtra: Record<string, { terms: [string, string]; payment: [string, string]; privacy: [string, string] }> = {
+  school: {
+    terms:   ["School orders", "Bulk uniform orders can be split for delivery by class or section — confirm groupings with your coordinator before production starts."],
+    payment: ["Per-parent billing", "If individual parents are paying for their child's uniform, ask your coordinator to set up separate payment links per student."],
+    privacy: ["Student data", "Where an order includes a minor's name, class or size linked to a specific student, that information is used only to fulfil the order and is not shared beyond what production and delivery require."],
+  },
+  college: {
+    terms:   ["Departmental orders", "Different departments, fest committees or clubs can each place their own order with its own delivery address and billing contact."],
+    payment: ["Volume pricing", "Large batch orders (e.g. fresher kits) may qualify for volume pricing, applied automatically when your coordinator confirms the quote."],
+    privacy: ["Student & staff data", "Names, roll numbers or department details shared for sizing or delivery are used only for that order."],
+  },
+  corporate: {
+    terms:   ["Branding approval", "Logo placement and branding are confirmed with you before production — production does not start on branded merchandise without your sign-off."],
+    payment: ["GST invoicing", "Add your company's GSTIN under Business details so it appears on every invoice raised against your organisation."],
+    privacy: ["Company data", "Your company's registration and billing details are used only for invoicing and order fulfilment, and are not shared with third parties."],
+  },
+  hospital: {
+    terms:   ["Compliance requirements", "Share any fabric compliance requirement (e.g. antimicrobial finish, infection-control standard) in References — we'll confirm feasibility before production."],
+    payment: ["Departmental billing", "Nursing, OT, housekeeping and other departments can be billed as separate orders if your accounting needs it."],
+    privacy: ["Staff data", "Staff names or ID numbers used for uniform sizing are used only for that purpose and are not retained beyond order fulfilment and warranty support."],
+  },
+  industry: {
+    terms:   ["Safety standards", "If your workwear must meet a specific safety standard (fire-retardant, hi-vis, etc.), confirm the standard with your coordinator before production begins."],
+    payment: ["Workforce-scale billing", "Large workforce orders may use milestone billing (advance + balance) tied to production stages."],
+    privacy: ["Workforce data", "Employee names or ID numbers used for size allocation are used only for that purpose."],
+  },
+  hospitality: {
+    terms:   ["Per-department orders", "Kitchen, service and housekeeping uniforms can be ordered and delivered separately if that suits your operations."],
+    payment: ["Brand colour matching", "Pantone or swatch-matching requests are confirmed before cutting fabric, since exact colour matches can affect cost."],
+    privacy: ["Staff data", "Staff names used for uniform sizing are used only for that purpose."],
+  },
+  sports: {
+    terms:   ["Player customisation", "Names and numbers are confirmed with you before printing — please double-check spellings and numbers when you submit them."],
+    payment: ["Team-scale pricing", "Larger squads may qualify for volume pricing, applied automatically when your coordinator confirms the quote."],
+    privacy: ["Player data", "Player names and numbers you provide are used only to produce your kit and are not shared beyond that."],
+  },
+  government: {
+    terms:   ["Procurement documentation", "If your order requires tender or procurement paperwork, share your reference number with your coordinator — this is provided alongside the standard quote."],
+    payment: ["Budget-cycle billing", "Orders can be split for billing across financial years or budget cycles where required."],
+    privacy: ["Departmental data", "Department and employee details shared for sizing are used only to fulfil the order."],
+  },
+  ngo: {
+    terms:   ["Donor-funded orders", "If a donor or CSR partner is funding the order, share their billing details up front so invoicing matches your funding agreement."],
+    payment: ["Non-profit support", "Pricing support for registered non-profits is considered case by case — ask your coordinator."],
+    privacy: ["Volunteer & beneficiary data", "Names used for sizing (volunteers, staff or beneficiaries) are used only to fulfil the order."],
+  },
+};
+
+function PolicyScreen({ kind, onBack, isOrg, orgType }: { kind: "terms" | "payment_gateway" | "privacy"; onBack: () => void; isOrg?: boolean; orgType?: string }) {
+  const extra = orgTypePolicyExtra[orgType ?? ""];
   const content = {
     terms: {
       title:"Terms & conditions",
       sub:"How orders work on Garm",
       rows:[
-        ["Orders", "Prices shown are indicative until your coordinator confirms fabric, finishing and delivery for your order."],
+        ["Placing an order", "Prices shown while configuring a garment are indicative. Your coordinator confirms the final fabric, finishing, quantity and delivery timeline before production begins."],
+        ["Minimum quantities", isOrg
+          ? "Organisation garment orders start at 100 pieces per garment; accessories start at 100 pieces per product. Individual/custom orders are not subject to these minimums."
+          : "Custom orders start at 3 pieces; accessories start at just 1 piece per product — there's no bulk minimum for individuals."],
         ["Production", isOrg
-          ? "Production begins after your coordinator confirms the specs and any agreed advance payment."
-          : "Production begins after your coordinator confirms the details and your payment."],
-        ["Changes", "You can request changes after submitting. Changes once production has started may affect cost and timeline."],
-        ["Quality", "QA photos and inspection notes are shared before dispatch wherever applicable."],
+          ? "Production begins only after your coordinator has confirmed the specifications and, where applicable, an agreed advance payment has been received."
+          : "Production begins after your coordinator confirms the order details and your payment is received."],
+        ["Changes & cancellations", "You can request changes any time after submitting an order. Once production has started, changes or cancellations may affect cost, timeline, or may not be possible for materials already cut."],
+        ["Quality assurance", "QA photos and inspection notes are shared before dispatch wherever applicable, so you can review the order before it ships."],
+        ["Delivery", "Estimated delivery windows are shared once your order is confirmed. Delays caused by courier or logistics partners are communicated as soon as we're aware of them."],
+        ...(extra ? [extra.terms] : []),
       ],
     },
     payment_gateway: {
       title:"Payments",
       sub:"How payment, receipts and refunds work",
-      rows: isOrg
-        ? [
-            ["Methods", "Pay by UPI, card or bank transfer. Your coordinator shares payment details after confirming the order."],
-            ["Milestones", "Bulk orders may use an advance and a balance payment against production stages."],
-            ["Receipts", "Invoices and receipts are shared once payment is confirmed."],
-            ["Refunds", "Refunds depend on the order stage and any material already purchased or cut."],
-          ]
-        : [
-            ["Methods", "Pay securely by UPI or card. Nothing is charged until your coordinator confirms the order."],
-            ["Receipts", "Your receipt is shared in the app once payment is confirmed."],
-            ["Refunds", "Refunds depend on the order stage and whether the fabric has been cut."],
-            ["Security", "Payments are processed over a secure, encrypted connection."],
-          ],
+      rows: [
+        ...(isOrg
+          ? [
+              ["Methods", "Pay by UPI, card or bank transfer (NEFT/RTGS). Your coordinator shares payment details after confirming the order."],
+              ["Milestones", "Bulk orders may use an advance-plus-balance structure, tied to production milestones (confirmation, production start, dispatch)."],
+              ["Receipts & invoices", "Invoices and receipts are shared once payment is confirmed, and can include your organisation's GSTIN if provided under Business details."],
+              ["Refunds", "Refunds depend on the order stage — full refunds are generally possible before production starts, and are assessed case by case once materials have been purchased or cut."],
+            ]
+          : [
+              ["Methods", "Pay securely by UPI or card. Nothing is charged until your coordinator confirms the order details and final price."],
+              ["Receipts", "Your receipt is shared in the app as soon as payment is confirmed, and is also available under Account → Order history."],
+              ["Refunds", "Refunds depend on the order stage — generally straightforward before production starts, and assessed case by case once fabric has been cut."],
+              ["Security", "Payments are processed over a secure, encrypted connection. Garm does not store your full card details."],
+            ]),
+        ...(isOrg && extra ? [extra.payment] : []),
+      ],
     },
     privacy: {
       title:"Privacy policy",
       sub:"How we use and protect your data",
       rows:[
-        ["Your data", isOrg
-          ? "Your organisation, contact, delivery and payment details are used only to process your orders."
-          : "Your name, contact, delivery and payment details are used only to process your orders."],
-        ["Uploads", "Logos, photos and references you upload are used only to make your order."],
-        ["Security", "OTP login and optional 2FA protect your account. Share sensitive details only inside the app."],
-        ["Your control", "Update your profile, delivery and payment details anytime from Account."],
+        ["What we collect", isOrg
+          ? "Your organisation name and type, contact person, phone/email, delivery address and payment details — collected to set up and fulfil your orders."
+          : "Your name, phone/email, delivery address and payment details — collected to set up and fulfil your orders."],
+        ["Uploads & references", "Logos, photos and reference images you upload (for branding, colour matching, or sample matching) are used only to produce your order and are not used for any other purpose."],
+        ["How it's used", "Your details are used to confirm quotes, coordinate production and QA, arrange delivery, and provide order support — nothing more."],
+        ["Sharing", "We don't sell your data. Information is shared only with the production, QA and logistics partners needed to fulfil your specific order."],
+        ["Account security", "OTP login and optional two-factor authentication protect your account. Please only share sensitive details (payment, address) inside the app, never over email or phone."],
+        ["Your control", "You can review, update or correct your profile, delivery and payment details any time from Account. To request deletion of your data, contact Help & support."],
+        ...(isOrg && extra ? [extra.privacy] : []),
       ],
     },
   }[kind];
@@ -1235,7 +1388,7 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
   }
 
   if (screen === "profile")               return <ProfileEdit profile={{ ...profile, name: displayName, avatar: displayAvatar }} onBack={() => setScreen("main")} onSave={p => { onProfileUpdate?.(p); setScreen("main"); }}/>;
-  if (screen === "business")              return <BusinessDetails onBack={() => setScreen("main")}/>;
+  if (screen === "business")              return <BusinessDetails profile={profile} onSave={onProfileUpdate} onBack={() => setScreen("main")} onContactSupport={() => setScreen("help_support")}/>;
   if (screen === "delivery")              return <DeliveryAddresses onBack={() => setScreen("main")}/>;
   if (screen === "security")              return <SecurityScreen onBack={() => setScreen("main")} on2FASetup={() => setScreen("two_fa_setup")} twoFAEnabled={twoFAEnabled} onDisable2FA={() => setTwoFAEnabled(false)}/>;
   if (screen === "two_fa_setup")          return <TwoFASetup onBack={() => setScreen("security")} onComplete={() => { setTwoFAEnabled(true); setScreen("security"); }}/>;
@@ -1243,10 +1396,10 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
   if (screen === "order_history")         return <OrderHistory onBack={() => setScreen("main")} onReorder={handleReorder}/>;
   if (screen === "payment")               return <PaymentBillingScreen onBack={() => setScreen("main")}/>;
   if (screen === "help_support")          return <HelpSupportScreen isOrg={isOrg} onBack={() => setScreen("main")}/>;
-  if (screen === "faq")                   return <FAQScreen isOrg={isOrg} onBack={() => setScreen("main")}/>;
-  if (screen === "terms")                 return <PolicyScreen kind="terms" isOrg={isOrg} onBack={() => setScreen("main")}/>;
-  if (screen === "payment_gateway")       return <PolicyScreen kind="payment_gateway" isOrg={isOrg} onBack={() => setScreen("main")}/>;
-  if (screen === "privacy")               return <PolicyScreen kind="privacy" isOrg={isOrg} onBack={() => setScreen("main")}/>;
+  if (screen === "faq")                   return <FAQScreen isOrg={isOrg} orgType={profile?.orgType} onBack={() => setScreen("main")}/>;
+  if (screen === "terms")                 return <PolicyScreen kind="terms" isOrg={isOrg} orgType={profile?.orgType} onBack={() => setScreen("main")}/>;
+  if (screen === "payment_gateway")       return <PolicyScreen kind="payment_gateway" isOrg={isOrg} orgType={profile?.orgType} onBack={() => setScreen("main")}/>;
+  if (screen === "privacy")               return <PolicyScreen kind="privacy" isOrg={isOrg} orgType={profile?.orgType} onBack={() => setScreen("main")}/>;
   if (screen === "tech_packs") return (
     <SubScreen title="My tech packs" sub="Saved garment specifications" onBack={() => setScreen("main")}>
       <div className="text-center py-10">
@@ -1260,7 +1413,10 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
   // ── Main menu ──────────────────────────────────────────────────────────────
   const groups = [
     [
-      { icon:<Edit3     size={16} strokeWidth={1.5}/>, label:"Edit profile",         s:"profile"               as Screen },
+      // "Edit profile" used to be listed here too, but the profile card right above
+      // this menu already opens the exact same screen when tapped — having both was
+      // two identical entry points to one destination. Kept the card (it shows the
+      // avatar/name/email at a glance) and dropped this redundant row.
       ...(isOrg ? [{ icon:<Building2 size={16} strokeWidth={1.5}/>, label:"Business details",     s:"business"              as Screen }] : []),
       ...(!isOrg ? [{ icon:<MapPin size={16} strokeWidth={1.5}/>, label:"Delivery addresses", s:"delivery" as Screen }] : []),
       { icon:<CreditCard size={16} strokeWidth={1.5}/>,label:"Payment details",       s:"payment"               as Screen },
