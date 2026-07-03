@@ -1870,6 +1870,13 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                     </div>
                   )}
                 </button>
+                {added && (
+                  <RemoveChip title={`Remove ${it.name} from this order`}
+                    onRemove={() => {
+                      onChange(cart.filter(g => !sameLine(g, it.name)));
+                      if (openItem === it.name) setOpenItem(null);
+                    }}/>
+                )}
                 {!added && (
                   <button onClick={() => addGarment(it)} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0"
                     style={{ border:`1px solid ${DARK}`, background:"var(--card)", color:DARK, cursor:"pointer", fontSize:12, fontWeight:600 }}>
@@ -2535,6 +2542,13 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
   const [cat, setCat] = useState<GarmentCategoryId>(cats[0]?.id ?? "mens");
   const [kidGender, setKidGender] = useState<"boy" | "girl">("boy");
   const [openId, setOpenId] = useState<number | null>(null);
+  // "Added" pill un-select — first tap arms "Remove?", auto-resets if left alone.
+  const [armRemove, setArmRemove] = useState<string | null>(null);
+  useEffect(() => {
+    if (!armRemove) return;
+    const t = setTimeout(() => setArmRemove(null), 2600);
+    return () => clearTimeout(t);
+  }, [armRemove]);
   useEffect(() => { if (!cats.some(c => c.id === cat)) setCat(cats[0]?.id ?? "mens"); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [allowedCategories]);
   const active = garmentCatalog.find(c => c.id === cat)!;
   const lineGender = cat === "kids" ? kidGender : undefined;
@@ -2631,9 +2645,24 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                   <p style={{ fontSize: 13, fontWeight: added ? 700 : 500, color: added ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
                   <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>From {inr(it.basePrice)}/pc</p>
                 </div>
-                {added
-                  ? <span className="flex items-center gap-1 px-2.5 py-1 rounded-full flex-shrink-0" style={{ background:"#EFF6FF", color:"#1a4a8a", fontSize:11, fontWeight:600 }}><Check size={12}/> Added</span>
-                  : <button onClick={() => addGarment(it)} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0" style={{ border:"1px solid #1a4a8a", background:"var(--card)", color:"#1a4a8a", cursor:"pointer", fontSize:12, fontWeight:600 }}><Plus size={13}/> Add</button>}
+                {added ? (
+                  armRemove === `${cat}-${lineGender ?? ""}-${it.name}` ? (
+                    <button onClick={() => { onChange(cart.filter(l => !sameLine(l, it.name))); setArmRemove(null); }}
+                      className="px-2.5 py-1 rounded-full flex-shrink-0"
+                      style={{ background:"#fef2f2", border:"1px solid #fecaca", color:"#dc2626", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                      Remove?
+                    </button>
+                  ) : (
+                    <button onClick={() => setArmRemove(`${cat}-${lineGender ?? ""}-${it.name}`)}
+                      title="Tap to remove this garment"
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-full flex-shrink-0"
+                      style={{ background:"#EFF6FF", border:"none", color:"#1a4a8a", fontSize:11, fontWeight:600, cursor:"pointer" }}>
+                      <Check size={12}/> Added <X size={11} style={{ opacity: 0.6 }}/>
+                    </button>
+                  )
+                ) : (
+                  <button onClick={() => addGarment(it)} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0" style={{ border:"1px solid #1a4a8a", background:"var(--card)", color:"#1a4a8a", cursor:"pointer", fontSize:12, fontWeight:600 }}><Plus size={13}/> Add</button>
+                )}
               </div>
             );
           })}
