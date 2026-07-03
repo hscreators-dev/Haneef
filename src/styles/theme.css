@@ -353,3 +353,19 @@
     line-height: 1.5;
   }
 }
+
+/* ── App-wide micro-animations (decorative "magic" layer) ─────────────── */
+@keyframes garmHeroFloat { 0%,100% { transform: translateY(0) rotate(6deg); } 50% { transform: translateY(-7px) rotate(6deg); } }
+@keyframes garmThread    { from { stroke-dashoffset: 66; } to { stroke-dashoffset: 0; } }
+@keyframes garmShimmer   { from { transform: translateX(-130%); } to { transform: translateX(260%); } }
+@keyframes garmTwinkle   { 0%,100% { opacity: .15; transform: scale(.8); } 50% { opacity: .9; transform: scale(1); } }
+@keyframes garmNavPop    { 0% { transform: scale(.82); } 60% { transform: scale(1.1); } 100% { transform: scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .magic-anim { animation: none !important; }
+}
+
+/* ── Live garment mockup ("atelier") animations ───────────────────────── */
+@keyframes flSwing  { 0%, 100% { transform: rotate(-1.3deg); } 50% { transform: rotate(1.3deg); } }
+@keyframes flSheen  { 0%, 14% { transform: translateX(-70px); } 60%, 100% { transform: translateX(290px); } }
+@keyframes flStitch { 0% { stroke-dashoffset: 64; opacity: 1; } 70% { opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }

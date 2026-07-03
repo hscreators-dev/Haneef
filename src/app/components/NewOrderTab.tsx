@@ -607,6 +607,15 @@ const sizeSets: Record<SizeCat, { label: string; hint: string }[]> = {
   custom:  [],
 };
 
+// ── Bottom-wear sizes by waist — jeans aren't bought in S/M/L ─────────────────
+const waistSizeSets: { mens: { label: string; hint: string }[]; womens: { label: string; hint: string }[] } = {
+  mens:   [28, 30, 32, 34, 36, 38, 40].map(w => ({ label: `${w}"`, hint: "waist" })),
+  womens: [26, 28, 30, 32, 34, 36].map(w => ({ label: `${w}"`, hint: "waist" })),
+};
+function isBottomWearGarment(name: string): boolean {
+  return /jean|chino|trouser|\bpant|jogger|legging|palazzo|short|track/i.test(name);
+}
+
 const sizeCats = [
   { id:"mens" as SizeCat,    label:"Men's",           desc:"Adult male — chest-based" },
   { id:"womens" as SizeCat,  label:"Women's",         desc:"Adult female — UK sizing" },
@@ -781,25 +790,68 @@ function garmentPriceForFabric(garment: SelectedGarment | null, fabric?: string,
 // Keyword-matched against the catalog item name so it works across men/women/kids.
 function garmentStyleOptions(name: string): string[] {
   const n = name.toLowerCase();
-  if (/polo/.test(n))                       return ["Classic collar", "Tipped collar", "Zip placket", "Mandarin collar"];
-  if (/oversized/.test(n))                  return ["Drop shoulder", "Boxy fit", "Longline"];
-  if (/round neck/.test(n))                 return ["Round neck", "Crew neck", "Raglan sleeve"];
-  if (/t-?shirt|tee\b/.test(n))             return ["Round neck", "V-neck", "Henley", "Collared (polo)", "Raglan sleeve"];
-  if (/denim shirt/.test(n))                return ["Plain", "Washed", "Double pocket"];
-  if (/formal.*shirt|shirt.*formal/.test(n))return ["Full sleeve", "Half sleeve", "Mandarin / Chinese collar", "Cutaway collar"];
-  if (/casual.*shirt|shirt.*casual/.test(n))return ["Plain", "Printed", "Checked", "Mandarin / Chinese collar", "Half sleeve"];
-  if (/\bshirt|blouse/.test(n))             return ["Formal", "Semi-formal", "Mandarin / Chinese collar", "Printed", "Plain"];
-  if (/jeans/.test(n))                      return ["Slim fit", "Straight fit", "Relaxed fit", "Skinny"];
-  if (/chino|trouser/.test(n))              return ["Flat front", "Pleated", "Slim fit", "Regular fit"];
-  if (/legging/.test(n))                    return ["Ankle length", "Full length", "Churidar"];
-  if (/short/.test(n))                      return ["Regular", "Cargo", "Bermuda"];
-  if (/track ?pant|jogger/.test(n))         return ["Regular", "Slim fit", "Cuffed"];
-  if (/palazzo/.test(n))                    return ["Flared", "Straight", "Culotte"];
-  if (/hoodie/.test(n))                     return ["Pullover", "Zip-up"];
-  if (/sweatshirt/.test(n))                 return ["Crew neck", "Hooded"];
-  if (/kurti|kurta|tunic/.test(n))          return ["Straight", "A-line", "Anarkali"];
-  if (/blazer|waistcoat|jacket/.test(n))    return ["Single-breasted", "Double-breasted"];
+  // ── Tops ──
+  if (/polo/.test(n))                        return ["Classic collar", "Tipped collar", "Zip placket", "Mandarin collar"];
+  if (/oversized/.test(n))                   return ["Drop shoulder", "Boxy fit", "Longline"];
+  if (/round neck/.test(n))                  return ["Round neck", "Crew neck", "Raglan sleeve"];
+  if (/t-?shirt|tee\b/.test(n))              return ["Round neck", "V-neck", "Henley", "Collared (polo)", "Raglan sleeve"];
+  if (/denim shirt/.test(n))                 return ["Plain", "Washed", "Double pocket"];
+  if (/formal.*shirt|shirt.*formal/.test(n)) return ["Slim fit", "Regular fit", "Full sleeve", "Half sleeve", "Cutaway collar", "Mandarin collar"];
+  if (/casual.*shirt|shirt.*casual/.test(n)) return ["Plain", "Printed", "Checked", "Korean fit (boxy)", "Half sleeve", "Mandarin collar"];
+  if (/night suit/.test(n))                  return ["Shirt + pyjama", "Tee + shorts", "Full sleeve set"];
+  if (/\bshirt|blouse/.test(n))              return ["Formal", "Semi-formal", "Slim fit", "Regular fit", "Printed", "Plain"];
+  if (/\btops?\b/.test(n))                   return ["Regular fit", "Crop", "Peplum", "Sleeveless"];
+  // ── Bottoms — fits ──
+  if (/jeans/.test(n))                       return ["Slim fit", "Straight fit", "Regular fit", "Relaxed fit", "Skinny", "Baggy / wide leg", "Korean fit (tapered)"];
+  if (/chino|trouser/.test(n))               return ["Formal", "Slim fit", "Regular fit", "Korean fit (tapered)", "Baggy / relaxed", "Pleated", "Flat front"];
+  if (/legging/.test(n))                     return ["Ankle length", "Full length", "Churidar"];
+  if (/short/.test(n))                       return ["Regular fit", "Cargo", "Bermuda", "Baggy fit"];
+  if (/track ?pant|jogger/.test(n))          return ["Regular fit", "Slim fit", "Cuffed ankle", "Baggy fit"];
+  if (/palazzo/.test(n))                     return ["Flared", "Straight", "Culotte"];
+  // ── Layers ──
+  if (/hoodie/.test(n))                      return ["Pullover", "Zip-up", "Oversized fit"];
+  if (/sweatshirt/.test(n))                  return ["Crew neck", "Hooded", "Oversized fit"];
+  if (/safety jacket/.test(n))               return ["Sleeveless vest", "Full sleeve", "With hood"];
+  if (/blazer|waistcoat/.test(n))            return ["Single-breasted", "Double-breasted", "Slim fit", "Regular fit"];
+  if (/jacket/.test(n))                      return ["Bomber", "Denim", "Windcheater", "Varsity"];
+  // ── Ethnic & occasion ──
+  if (/saree/.test(n))                       return ["Plain", "Zari border", "Printed", "Embroidered"];
+  if (/salwar/.test(n))                      return ["Straight cut", "A-line", "Anarkali"];
+  if (/churidar/.test(n))                    return ["Classic", "Anarkali", "Straight cut"];
+  if (/kurta set/.test(n))                   return ["Kurta + pyjama", "Kurta + churidar", "With jacket"];
+  if (/ethnic.*girl/.test(n))                return ["Lehenga choli", "Anarkali", "Sharara set"];
+  if (/ethnic.*boy/.test(n))                 return ["Kurta pyjama", "Sherwani style", "Dhoti set"];
+  if (/kurti|kurta|tunic/.test(n))           return ["Straight", "A-line", "Anarkali"];
+  if (/lehenga|skirt/.test(n))               return ["Flared", "A-line", "Layered"];
+  if (/gown/.test(n))                        return ["A-line", "Ball gown", "Mermaid", "Straight"];
+  if (/frock/.test(n))                       return ["A-line", "Twirl", "Party frock"];
+  if (/maxi|dress/.test(n))                  return ["A-line", "Fit & flare", "Bodycon", "Shift"];
+  if (/romper|onesie/.test(n))               return ["Half sleeve", "Full sleeve", "Sleeveless"];
+  if (/co-?ord/.test(n))                     return ["Casual set", "Formal set", "Lounge set"];
+  // ── Workwear ──
+  if (/uniform/.test(n))                     return ["Regular fit", "Comfort fit", "Slim fit"];
+  if (/lab coat/.test(n))                    return ["Full sleeve", "Half sleeve", "Knee length"];
+  if (/apron/.test(n))                       return ["Bib apron", "Waist apron", "Cross-back"];
   return [];
+}
+
+// ── Multi-piece sets — what's included, so buyers aren't guessing ─────────────
+// First piece wears the line's main colour; the rest get their own colour pick.
+function garmentSetPieces(name: string): string[] | null {
+  const n = name.toLowerCase();
+  if (/salwar/.test(n))            return ["Kurta", "Salwar", "Dupatta"];
+  if (/churidar set/.test(n))      return ["Kurta", "Churidar", "Dupatta"];
+  if (/co-?ord/.test(n))           return ["Top", "Bottom"];
+  if (/night suit/.test(n))        return ["Top", "Pyjama"];
+  if (/kurta set/.test(n))         return ["Kurta", "Pyjama"];
+  if (/lehenga|skirt set/.test(n)) return ["Choli (top)", "Lehenga / skirt"];
+  if (/ethnic.*girl/.test(n))      return ["Top", "Bottom", "Dupatta"];
+  if (/ethnic.*boy/.test(n))       return ["Kurta", "Bottom"];
+  return null;
+}
+// Single-piece garments buyers often assume are sets — flag them clearly.
+function garmentTopOnly(name: string): boolean {
+  return /kurti|kurtas?\b|tunic|blouse/i.test(name) && !/set/i.test(name);
 }
 
 // ─── Per-org-type garment relevance ──────────────────────────────────────────
@@ -924,7 +976,8 @@ function GarmentPhoto({ name, view, className, style, iconSize = 48 }: { name: s
     return (
       <div className={className} style={{ ...style, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:6, background:"var(--muted)" }}>
         <GarmentIcon name={name} size={iconSize} color="#9ca3af"/>
-        <span style={{ fontSize:10, color:"#9ca3af" }}>Photo coming soon</span>
+        {/* Caption only where there's room — tiny list thumbs just show the icon */}
+        {iconSize >= 40 && <span style={{ fontSize:10, color:"#9ca3af" }}>Photo coming soon</span>}
       </div>
     );
   }
@@ -1536,7 +1589,7 @@ function GarmentCatalog({ selected, onSelect, lockedCategory, allowedCategories,
               style={{ border:`1.5px solid ${isSel ? DARK : "var(--border)"}`, background: isSel ? "rgba(13,13,13,0.04)" : "var(--card)", cursor:"pointer" }}>
               <div className="flex-1 min-w-0">
                 <p style={{ fontSize: 13, fontWeight: isSel ? 700 : 500, color: isSel ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
-                <p style={{ fontSize: 11, color: isSel ? "#1a4a8a" : "#9ca3af", fontWeight: isSel ? 600 : 400 }}>{inr(it.basePrice)}/pc starting price · fabric picked next sets the final rate</p>
+                <p style={{ fontSize: 11, color: isSel ? "#1a4a8a" : "#9ca3af", fontWeight: isSel ? 600 : 400 }}>From {inr(it.basePrice)}/pc</p>
               </div>
               <div className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border:`2px solid ${isSel ? DARK : "#d1d5db"}`, background: isSel ? DARK : "var(--card)" }}>
                 {isSel && <Check size={12} strokeWidth={3} color="#fff"/>}
@@ -1573,7 +1626,19 @@ function GarmentCatalog({ selected, onSelect, lockedCategory, allowedCategories,
 // e.g. 1 Hoodie + 1 Shirt. Each garment is a line with its own quantity stepper.
 // A garment line is now colour-aware: the SAME garment in a different colour is a
 // SEPARATE line with its own quantity. So "1 black hoodie" + "1 white hoodie" = 2 pcs.
-type GarmentLine = SelectedGarment & { qty: number; colorHex: string; colorLabel: string; sizes?: Record<string, number>; gender?: "boy" | "girl"; style?: string };
+type GarmentLine = SelectedGarment & {
+  qty: number; colorHex: string; colorLabel: string;
+  sizes?: Record<string, number>; gender?: "boy" | "girl"; style?: string;
+  // Per-piece colours for set garments (Salwar, Dupatta…) — absent = matches the main colour.
+  pieceColors?: Record<string, { hex: string; label: string }>;
+};
+// Colour summary including set pieces — "Navy Blue · Salwar: White · Dupatta: Gold".
+function lineColourSummary(g: GarmentLine): string {
+  const pieces = g.pieceColors
+    ? Object.entries(g.pieceColors).map(([p, c]) => `${p}: ${c.label}`).join(" · ")
+    : "";
+  return pieces ? `${g.colorLabel} · ${pieces}` : g.colorLabel;
+}
 function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: GarmentLine[]; onChange: (next: GarmentLine[]) => void; lockedCategory?: GarmentCategoryId; onViewPhotos?: (name: string) => void }) {
   const [cat, setCat] = useState<GarmentCategoryId>(lockedCategory ?? "mens");
   useEffect(() => { if (lockedCategory) setCat(lockedCategory); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [lockedCategory]);
@@ -1601,6 +1666,11 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
   }
   const pcsInCat = (cid: GarmentCategoryId) => cart.filter(g => g.categoryId === cid).reduce((s, g) => s + g.qty, 0);
   const audienceName = (cid: GarmentCategoryId) => (cid === "mens" ? "Men" : cid === "womens" ? "Women" : "Kids");
+  // Warm, human labels for the "who else?" picker — easier to connect with than category names.
+  const audiencePersona = (cid: GarmentCategoryId) =>
+    cid === "mens"   ? { Icon: User,  title: "For him",      sub: "Shirts, tees & more · chest sizes" } :
+    cid === "womens" ? { Icon: Heart, title: "For her",      sub: "Kurtis, tees & more · UK sizes" } :
+                       { Icon: Users, title: "For the kids", sub: "Boys & girls · age-based sizes" };
 
   // For kids, lines are scoped per gender so a Boys T-shirt and a Girls T-shirt are
   // separate selections (and don't appear selected under the other tab).
@@ -1649,40 +1719,83 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
   function removeLine(name: string, colorHex: string) {
     onChange(cart.filter(g => !(sameLine(g, name) && g.colorHex === colorHex)));
   }
+  // Colour for one piece of a set (Salwar, Dupatta…) — null resets to "match".
+  function setLinePieceColor(name: string, colorHex: string, piece: string, hex: string | null, label?: string) {
+    const idx = lineIndex(name, colorHex);
+    if (idx < 0) return;
+    const next = cart.slice();
+    const cur = { ...(next[idx].pieceColors ?? {}) };
+    if (hex === null) delete cur[piece];
+    else cur[piece] = { hex, label: label ?? "" };
+    next[idx] = { ...next[idx], pieceColors: cur };
+    onChange(next);
+  }
 
   const totalPcs = cart.reduce((s, g) => s + g.qty, 0);
 
   return (
     <div>
       <p className="text-muted-foreground mb-3" style={{ fontSize: 12, lineHeight: 1.5 }}>
-        Add the garments you want, pick a colour for each and set how many. The same garment in another colour counts as a separate piece — e.g. 1 black hoodie + 1 white hoodie = 2 pcs.
+        Tap <strong>Add</strong> on a garment, then pick its colour and quantity. Every colour is its own piece.
       </p>
 
-      {/* ── Add more order — kept at the top so it's seen without scrolling ── */}
+      {/* ── Add more order — a warm "who else?" invitation, kept above the fold ── */}
       {lockedCategory && remainingCats.length > 0 && (
         showAddAudience ? (
-          <div className="mb-3 rounded-xl p-3" style={{ border:`1.5px solid ${ACCENT}`, background: ACCENT_BG }}>
-            <p style={{ fontSize:12, fontWeight:700, color:"#7c5419", marginBottom:8 }}>Who else is this order for?</p>
-            <div className="grid gap-2 mb-2" style={{ gridTemplateColumns:`repeat(${remainingCats.length}, minmax(0,1fr))` }}>
-              {remainingCats.map(cid => (
-                <button key={cid} onClick={() => addAudienceCat(cid)}
-                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl"
-                  style={{ border:"1.5px solid var(--border)", background:"var(--card)", cursor:"pointer" }}>
-                  <GarmentCategoryIcon id={cid}/>
-                  <span style={{ fontSize:11, fontWeight:600, color:DARK }}>{audienceName(cid)}</span>
-                </button>
-              ))}
+          <div className="mb-3 rounded-2xl p-3.5" style={{ border:`1.5px solid ${ACCENT}`, background: ACCENT_BG }}>
+            <p style={{ fontSize:13, fontWeight:700, color:"#7c5419", marginBottom:2 }}>Who else are you dressing?</p>
+            <p style={{ fontSize:11, color:ACCENT_TEXT, marginBottom:10 }}>They join this same order — one payment, one delivery.</p>
+            <div className="flex flex-col gap-2 mb-2">
+              {remainingCats.map(cid => {
+                const p = audiencePersona(cid);
+                return (
+                  <button key={cid} onClick={() => addAudienceCat(cid)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left"
+                    style={{ border:"1.5px solid var(--border)", background:"var(--card)", cursor:"pointer" }}>
+                    <span className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+                      style={{ background: ACCENT_BG, border:`1.5px solid ${ACCENT}` }}>
+                      <p.Icon size={15} strokeWidth={1.8} style={{ color:"#7c5419" }}/>
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block" style={{ fontSize:13, fontWeight:700, color:DARK }}>{p.title}</span>
+                      <span className="block" style={{ fontSize:11, color:"#9ca3af" }}>{p.sub}</span>
+                    </span>
+                    <span className="flex items-center gap-1 px-2.5 py-1 rounded-full flex-shrink-0"
+                      style={{ background: DARK, color:"#fff", fontSize:11, fontWeight:600 }}>
+                      <Plus size={11}/> Add
+                    </span>
+                  </button>
+                );
+              })}
             </div>
             <button onClick={() => setShowAddAudience(false)}
               style={{ background:"none", border:"none", cursor:"pointer", fontSize:11.5, fontWeight:600, color:"#9ca3af", padding:0 }}>
-              Cancel
+              Not now
             </button>
           </div>
         ) : (
           <button onClick={() => setShowAddAudience(true)}
-            className="mb-3 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl"
-            style={{ border:`1.5px dashed ${ACCENT}`, background: ACCENT_BG, color:"#7c5419", cursor:"pointer", fontSize:12.5, fontWeight:700 }}>
-            <Plus size={14}/> Add more order — {remainingCats.map(audienceName).join(" / ")}
+            className="mb-3 w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl text-left"
+            style={{ border:`1.5px dashed ${ACCENT}`, background: ACCENT_BG, cursor:"pointer" }}>
+            {/* Overlapping mini avatars — instantly reads as "more people" */}
+            <span className="flex flex-shrink-0" aria-hidden="true">
+              {remainingCats.slice(0, 3).map((cid, i) => {
+                const p = audiencePersona(cid);
+                return (
+                  <span key={cid} className="w-7 h-7 rounded-full flex items-center justify-center"
+                    style={{ background:"var(--card)", border:`1.5px solid ${ACCENT}`, marginLeft: i ? -8 : 0, zIndex: 3 - i, position:"relative" }}>
+                    <p.Icon size={13} strokeWidth={1.8} style={{ color:"#7c5419" }}/>
+                  </span>
+                );
+              })}
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block" style={{ fontSize:13, fontWeight:700, color:"#7c5419" }}>Ordering for someone else too?</span>
+              <span className="block" style={{ fontSize:11, color:ACCENT_TEXT }}>Add {remainingCats.map(audienceName).join(" or ")} to this same order</span>
+            </span>
+            <span className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0" style={{ background:"#7c5419" }}>
+              <Plus size={13} style={{ color:"#fff" }}/>
+            </span>
           </button>
         )
       )}
@@ -1725,9 +1838,15 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
           const added = lines.length > 0;
           const usedHexes = new Set(lines.map(l => l.colorHex));
           const canAddColor = individualColorPresets.some(p => !usedHexes.has(p.hex));
+          const setPieces = garmentSetPieces(it.name);
+          const topOnly = garmentTopOnly(it.name);
           return (
-            <div key={it.name} className="px-3.5 py-2.5 rounded-xl"
-              style={{ border:`1.5px solid ${added ? DARK : "var(--border)"}`, background: added ? "rgba(13,13,13,0.04)" : "var(--card)" }}>
+            <div key={it.name} className="px-3.5 py-2.5 rounded-xl transition-colors"
+              style={{
+                border:`1.5px solid ${added ? ACCENT : "var(--border)"}`,
+                background: added ? "rgba(200,169,126,0.06)" : "var(--card)",
+                boxShadow: added ? "0 2px 8px rgba(200,169,126,0.15)" : "none",
+              }}>
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => { if (added) setOpenItem(openItem === it.name ? null : it.name); }}
@@ -1737,8 +1856,10 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                   <div className="flex-1 min-w-0">
                     <p style={{ fontSize: 13, fontWeight: added ? 700 : 500, color: added ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
                     {added && openItem !== it.name
-                      ? <p style={{ fontSize: 11, color:"#1a4a8a", fontWeight: 600 }}>{lines[0]?.style ? `${lines[0].style} · ` : ""}{lines.length} colour{lines.length !== 1 ? "s" : ""} · {lines.reduce((s, l) => s + l.qty, 0)} pcs</p>
-                      : <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>{inr(it.basePrice)}/pc starting price · fabric picked next sets the final rate</p>}
+                      ? <p style={{ fontSize: 11, color:"#7c5419", fontWeight: 600 }}>{lines[0]?.style ? `${lines[0].style} · ` : ""}{lines.length} colour{lines.length !== 1 ? "s" : ""} · {lines.reduce((s, l) => s + l.qty, 0)} pcs</p>
+                      : <p style={{ fontSize: 11, color: added ? "#7c5419" : "#9ca3af", fontWeight: added ? 600 : 400 }}>
+                          From {inr(it.basePrice)}/pc{setPieces ? ` · ${setPieces.length}-piece set` : topOnly ? " · top only" : ""}
+                        </p>}
                   </div>
                   {added && (
                     <div className="flex items-center gap-1 flex-shrink-0">
@@ -1760,6 +1881,17 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
               {/* Colour lines for this garment */}
               {added && openItem === it.name && (
                 <div className="mt-2.5 flex flex-col gap-2">
+                  {/* What's in the box — full set vs top only, so nobody has to guess */}
+                  {(setPieces || topOnly) && (
+                    <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: ACCENT_BG, border: "0.5px solid rgba(200,169,126,0.5)" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: "#7c5419" }}>{setPieces ? "Full set includes:" : "Top only"}</span>
+                      {setPieces?.map(p => (
+                        <span key={p} className="px-2 py-0.5 rounded-full" style={{ background: "var(--card)", border: "1px solid rgba(200,169,126,0.5)", fontSize: 10.5, fontWeight: 600, color: "#374151" }}>{p}</span>
+                      ))}
+                      {topOnly && <span style={{ fontSize: 10.5, color: "#92400e" }}>— bottom &amp; dupatta not included</span>}
+                    </div>
+                  )}
+
                   {/* Style — round neck / collared, formal / printed, leggings / jeans … */}
                   {garmentStyleOptions(it.name).length > 0 && (
                     <div>
@@ -1771,7 +1903,7 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                     </div>
                   )}
                   {lines.map(line => (
-                    <div key={line.colorHex} className="flex flex-col gap-1.5 px-2.5 py-2 rounded-lg bg-card border border-border">
+                    <div key={line.colorHex} className="flex flex-col gap-1.5 px-2.5 py-2 rounded-xl" style={{ background: "var(--card)", boxShadow: "0 1px 3px rgba(13,13,13,0.05)" }}>
                       <div className="flex items-center gap-2">
                         <div className="w-5 h-5 rounded-full flex-shrink-0" style={{ background: line.colorHex, border:"1px solid rgba(0,0,0,0.15)" }}/>
                         <span className="flex-1" style={{ fontSize: 12, fontWeight: 600, color: DARK }}>{line.colorLabel}</span>
@@ -1786,6 +1918,9 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                         </div>
                       </div>
                       {/* Colour swatches to change this line's colour */}
+                      {setPieces && (
+                        <p className="pl-7" style={{ fontSize: 10.5, fontWeight: 600, color: "#6b7280" }}>{setPieces[0]} colour</p>
+                      )}
                       <div className="flex flex-wrap gap-1.5 pl-7">
                         {individualColorPresets.map(p => {
                           const isThis = p.hex === line.colorHex;
@@ -1799,6 +1934,38 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                           );
                         })}
                       </div>
+
+                      {/* Per-piece colours for sets — salwar, dupatta, pyjama… */}
+                      {setPieces && setPieces.length > 1 && (
+                        <div className="flex flex-col gap-2 pl-7 pt-1.5 mt-0.5" style={{ borderTop: "1px dashed var(--border)" }}>
+                          {setPieces.slice(1).map(piece => {
+                            const sel = line.pieceColors?.[piece];
+                            return (
+                              <div key={piece}>
+                                <p style={{ fontSize: 10.5, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>{piece} colour</p>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <button onClick={() => setLinePieceColor(it.name, line.colorHex, piece, null)}
+                                    className="px-2 py-0.5 rounded-full"
+                                    style={{
+                                      fontSize: 10, fontWeight: 600, cursor: "pointer",
+                                      border: `1.5px solid ${!sel ? DARK : "var(--border)"}`,
+                                      background: !sel ? "rgba(13,13,13,0.05)" : "var(--card)",
+                                      color: !sel ? DARK : "#9ca3af",
+                                    }}>
+                                    Match {setPieces[0].toLowerCase()}
+                                  </button>
+                                  {individualColorPresets.map(p => (
+                                    <button key={p.hex} title={p.label}
+                                      onClick={() => setLinePieceColor(it.name, line.colorHex, piece, p.hex, p.label)}
+                                      className="w-5 h-5 rounded-full"
+                                      style={{ background: p.hex, border: sel?.hex === p.hex ? `2.5px solid ${DARK}` : "1.5px solid rgba(0,0,0,0.12)", cursor: "pointer" }}/>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   ))}
                   {canAddColor && (
@@ -1815,9 +1982,9 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
       </div>
 
       {totalPcs > 0 && (
-        <div className="mt-3 flex items-center justify-between px-3 py-2.5 rounded-xl" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
-          <span style={{ fontSize: 12, color:"#1a4a8a", fontWeight: 600 }}>{cart.length} line{cart.length !== 1 ? "s" : ""} · {totalPcs} pcs total</span>
-          <Check size={14} style={{ color:"#1a4a8a", flexShrink:0 }}/>
+        <div className="mt-3 flex items-center justify-between px-3 py-2.5 rounded-xl" style={{ background: ACCENT_BG, border: `1px solid rgba(200,169,126,0.4)` }}>
+          <span style={{ fontSize: 12, color:"#7c5419", fontWeight: 600 }}>{cart.length} line{cart.length !== 1 ? "s" : ""} · {totalPcs} pcs total</span>
+          <Check size={14} style={{ color:"#7c5419", flexShrink:0 }}/>
         </div>
       )}
     </div>
@@ -2122,11 +2289,72 @@ function SizeSection({ totalQty, defaultCat = "school", step = 1, onAllocationCh
 // ─── Per-colour size allocator (Individual flow) ──────────────────────────────
 // Each colour line distributes its OWN quantity across the age/size set, so the
 // size↔colour pairing is captured at input time (no ambiguity later).
-function PerColourSize({ line, cat, audienceLabel, onChange }: { line: GarmentLine; cat: SizeCat; audienceLabel?: string; onChange: (sizes: Record<string, number>) => void }) {
-  const sizes = sizeSets[cat] ?? sizeSets.mens;
+// Draped / one-size garments never ask for a size chart — sarees don't come in XS–XXL.
+function isFreeSizeGarment(name: string): boolean {
+  return /saree|dupatta|stole|shawl|scarf|apron/i.test(name);
+}
+
+// Two-tap remove chip — × arms into "Remove?", auto-resets if left alone.
+function RemoveChip({ onRemove, title }: { onRemove: () => void; title?: string }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 2600);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return armed ? (
+    <button onClick={onRemove} className="px-2 py-0.5 rounded-full flex-shrink-0"
+      style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", fontSize: 10.5, fontWeight: 700, cursor: "pointer" }}>
+      Remove?
+    </button>
+  ) : (
+    <button onClick={() => setArmed(true)} title={title ?? "Remove"}
+      className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+      style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer" }}>
+      <X size={13}/>
+    </button>
+  );
+}
+
+function PerColourSize({ line, cat, audienceLabel, onChange, onRemove }: { line: GarmentLine; cat: SizeCat; audienceLabel?: string; onChange: (sizes: Record<string, number>) => void; onRemove?: () => void }) {
+  // Bottom-wear uses waist sizes for adults; kids stay age-based for everything.
+  const bottoms = isBottomWearGarment(line.name);
+  const sizes = bottoms && (cat === "mens" || cat === "womens")
+    ? waistSizeSets[cat]
+    : (sizeSets[cat] ?? sizeSets.mens);
+  const sizeSystem = bottoms && (cat === "mens" || cat === "womens") ? "Waist in inches"
+    : cat === "mens" ? "Chest-based sizes"
+    : cat === "womens" ? "UK sizes"
+    : cat === "school" ? "Age-based sizes" : "";
   const [qtys, setQtys] = useState<Record<string, number>>(line.sizes ?? {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { onChange(qtys); }, [qtys]);
+  const freeSize = isFreeSizeGarment(line.name);
+  // Free-size garments auto-allocate all pieces — nothing for the user to do.
+  useEffect(() => {
+    if (freeSize) setQtys({ "Free size": line.qty });
+  }, [freeSize, line.qty]);
+  // Two-tap remove — first tap arms "Remove?", auto-resets if left alone.
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  useEffect(() => {
+    if (!confirmRemove) return;
+    const t = setTimeout(() => setConfirmRemove(false), 2600);
+    return () => clearTimeout(t);
+  }, [confirmRemove]);
+  const removeBtn = onRemove ? (
+    confirmRemove ? (
+      <button onClick={onRemove} className="px-2 py-1 rounded-full flex-shrink-0"
+        style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", fontSize: 10.5, fontWeight: 700, cursor: "pointer" }}>
+        Remove?
+      </button>
+    ) : (
+      <button onClick={() => setConfirmRemove(true)} title="Remove this garment from the order"
+        className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+        style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer" }}>
+        <X size={14}/>
+      </button>
+    )
+  ) : null;
   const allocated = Object.values(qtys).reduce((a, b) => a + b, 0);
   const remaining = line.qty - allocated;
   const over = remaining < 0;
@@ -2141,6 +2369,31 @@ function PerColourSize({ line, cat, audienceLabel, onChange }: { line: GarmentLi
     setQtys(next);
   }
   const pct = line.qty > 0 ? Math.min(100, Math.round((allocated / line.qty) * 100)) : 0;
+
+  // ── Free-size garments (sarees, aprons…) — nothing to allocate, just confirm ──
+  if (freeSize) {
+    return (
+      <div className="rounded-2xl bg-card p-3.5" style={{ border: "1px solid #86efac" }}>
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-full flex-shrink-0" style={{ background: line.colorHex, boxShadow: "0 0 0 2px var(--card), 0 0 0 3px rgba(0,0,0,0.10)" }}/>
+          <div className="min-w-0 flex-1">
+            <p className="text-foreground" style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.2 }}>
+              {line.name}{audienceLabel ? <span style={{ fontSize: 10.5, fontWeight: 600, marginLeft: 6, padding: "1px 6px", borderRadius: 999, background: "var(--muted)", color: "#6b7280" }}>{audienceLabel}</span> : null}
+            </p>
+            <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>{line.colorLabel} · {line.qty} pc{line.qty !== 1 ? "s" : ""}</p>
+          </div>
+          <span className="flex items-center gap-1 px-2.5 py-1 rounded-full flex-shrink-0" style={{ fontSize: 11, fontWeight: 600, background: "#ecfdf5", color: "#047857" }}>
+            <Check size={11}/> Free size
+          </span>
+          {removeBtn}
+        </div>
+        <p className="text-muted-foreground mt-2" style={{ fontSize: 10.5, lineHeight: 1.5 }}>
+          Draped / one-size garment — no size chart needed.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl bg-card p-3.5" style={{ border: `1px solid ${done ? "#86efac" : over ? "#fca5a5" : "var(--border)"}` }}>
       {/* Header — colour identity + live count */}
@@ -2155,6 +2408,7 @@ function PerColourSize({ line, cat, audienceLabel, onChange }: { line: GarmentLi
         <span className="flex items-center gap-1 px-2.5 py-1 rounded-full flex-shrink-0" style={{ fontSize: 11, fontWeight: 600, background: done ? "#ecfdf5" : over ? "#fef2f2" : "var(--muted)", color: done ? "#047857" : over ? "#dc2626" : "#6b7280" }}>
           {done && <Check size={11}/>}{allocated} / {line.qty}
         </span>
+        {removeBtn}
       </div>
 
       {/* Progress + quick-fill */}
@@ -2167,26 +2421,58 @@ function PerColourSize({ line, cat, audienceLabel, onChange }: { line: GarmentLi
         </button>
       </div>
 
-      {/* Age tiles — light up only when filled */}
-      <div className="grid grid-cols-2 gap-2">
+      {/* Size chips — tap a size to add a piece; each chip shows its measurement */}
+      <p className="text-muted-foreground mb-1.5" style={{ fontSize: 10.5 }}>
+        {remaining > 0 ? `Tap a size to place ${remaining} remaining piece${remaining !== 1 ? "s" : ""}` : done ? "All pieces sized ✓" : "Tap a size to add a piece"}
+        {sizeSystem ? <span style={{ color: "#7c5419", fontWeight: 600 }}> · {sizeSystem}</span> : null}
+      </p>
+      <div className="flex flex-wrap gap-1.5">
         {sizes.map(s => {
           const q = qtys[s.label] ?? 0;
           const on = q > 0;
+          const canAdd = remaining > 0;
+          // Hide the hint when it just repeats the label (kids "5-6Y" vs "Age 5-6", waist chips).
+          const showHint = !!s.hint && cat !== "school" && s.hint !== "waist";
           return (
-            <div key={s.label} className="rounded-xl px-2.5 pt-2 pb-2 transition-colors" style={{ background: on ? ACCENT_BG : "var(--card)", border: `1px solid ${on ? ACCENT : "var(--border)"}` }}>
-              <div className="flex items-baseline justify-between mb-2">
-                <span className="text-foreground" style={{ fontSize: 12, fontWeight: 600 }}>{s.label}</span>
-                {s.hint && <span className="text-muted-foreground" style={{ fontSize: 9.5 }}>{s.hint}</span>}
-              </div>
-              <div className="flex items-center justify-between">
-                <button onClick={() => setQ(s.label, q - 1)} disabled={q === 0} className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "var(--card)", border: "1px solid var(--border)", cursor: q === 0 ? "default" : "pointer", opacity: q === 0 ? 0.4 : 1 }}><Minus size={12}/></button>
-                <span className="text-center" style={{ minWidth: 22, fontSize: 15, fontWeight: 700, color: on ? "#7c5419" : "#c4c4c4" }}>{q}</span>
-                <button onClick={() => setQ(s.label, q + 1)} className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: on ? ACCENT : DARK, border: "none", cursor: "pointer", color: "#fff" }}><Plus size={12}/></button>
-              </div>
-            </div>
+            <button key={s.label} title={s.hint || s.label}
+              onClick={() => { if (canAdd) setQ(s.label, q + 1); }}
+              className="flex flex-col items-center px-3 py-1 rounded-2xl transition-colors"
+              style={{
+                border: `1.5px solid ${on ? ACCENT : "var(--border)"}`,
+                background: on ? ACCENT_BG : "var(--card)",
+                cursor: canAdd ? "pointer" : "default",
+              }}>
+              <span className="flex items-center gap-1" style={{ fontSize: 12, fontWeight: on ? 700 : 500, color: on ? "#7c5419" : canAdd ? DARK : "#c4c4c4" }}>
+                {s.label}{on && <span className="px-1.5 rounded-full" style={{ background: ACCENT, color: "#fff", fontSize: 10, fontWeight: 700, lineHeight: "15px" }}>{q}</span>}
+              </span>
+              {showHint && (
+                <span style={{ fontSize: 8.5, lineHeight: 1.2, color: on ? ACCENT_TEXT : canAdd ? "#9ca3af" : "#d4d4d4" }}>{s.hint}</span>
+              )}
+            </button>
           );
         })}
       </div>
+
+      {/* Chosen sizes — small adjust rows, only for what's actually picked */}
+      {sizes.some(s => (qtys[s.label] ?? 0) > 0) && (
+        <div className="mt-2.5 flex flex-col gap-1.5">
+          {sizes.filter(s => (qtys[s.label] ?? 0) > 0).map(s => {
+            const q = qtys[s.label] ?? 0;
+            return (
+              <div key={s.label} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg" style={{ background: "var(--muted)" }}>
+                <span className="text-foreground" style={{ fontSize: 12, fontWeight: 700, minWidth: 34 }}>{s.label}</span>
+                {s.hint && <span className="text-muted-foreground flex-1 min-w-0" style={{ fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.hint}</span>}
+                {!s.hint && <span className="flex-1"/>}
+                <button onClick={() => setQ(s.label, q - 1)} className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: "var(--card)", border: "1px solid var(--border)", cursor: "pointer" }}><Minus size={11}/></button>
+                <span className="text-center" style={{ minWidth: 18, fontSize: 13, fontWeight: 700, color: "#7c5419" }}>{q}</span>
+                <button onClick={() => { if (remaining > 0) setQ(s.label, q + 1); }} className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: remaining > 0 ? DARK : "#E5E7EB", border: "none", cursor: remaining > 0 ? "pointer" : "default", color: remaining > 0 ? "#fff" : "#9CA3AF" }}><Plus size={11}/></button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {over && <p className="mt-2 text-red-600" style={{ fontSize: 10.5 }}>{Math.abs(remaining)} too many — remove some.</p>}
     </div>
@@ -2334,16 +2620,20 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
           {visibleItems.map(it => {
             const added = isAdded(it.name);
             return (
-              <div key={it.name} className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl"
-                style={{ border:`1.5px solid ${added ? DARK : "var(--border)"}`, background: added ? "rgba(13,13,13,0.04)" : "var(--card)" }}>
+              <div key={it.name} className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl transition-colors"
+                style={{
+                  border:`1.5px solid ${added ? "#1a4a8a" : "var(--border)"}`,
+                  background: added ? "#F5F9FF" : "var(--card)",
+                  boxShadow: added ? "0 2px 8px rgba(26,74,138,0.10)" : "none",
+                }}>
                 <GarmentThumb name={it.name} size={40} onOpen={n => onViewPhotos?.(n)}/>
                 <div className="flex-1 min-w-0">
                   <p style={{ fontSize: 13, fontWeight: added ? 700 : 500, color: added ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
-                  <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>{inr(it.basePrice)}/pc starting price · fabric picked next sets the final rate</p>
+                  <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>From {inr(it.basePrice)}/pc</p>
                 </div>
                 {added
                   ? <span className="flex items-center gap-1 px-2.5 py-1 rounded-full flex-shrink-0" style={{ background:"#EFF6FF", color:"#1a4a8a", fontSize:11, fontWeight:600 }}><Check size={12}/> Added</span>
-                  : <button onClick={() => addGarment(it)} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0" style={{ border:`1px solid ${DARK}`, background:"var(--card)", color:DARK, cursor:"pointer", fontSize:12, fontWeight:600 }}><Plus size={13}/> Add</button>}
+                  : <button onClick={() => addGarment(it)} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0" style={{ border:"1px solid #1a4a8a", background:"var(--card)", color:"#1a4a8a", cursor:"pointer", fontSize:12, fontWeight:600 }}><Plus size={13}/> Add</button>}
               </div>
             );
           })}
@@ -2357,7 +2647,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
     <div>
       <div className="flex items-center justify-between mb-3">
         <p className="text-foreground" style={{ fontSize: 13, fontWeight: 700 }}>Your garments ({cart.length})</p>
-        <button onClick={() => onViewChange("add")} className="flex items-center gap-1 px-3 py-1.5 rounded-full" style={{ border:`1px solid ${DARK}`, background:"var(--card)", color:DARK, cursor:"pointer", fontSize:12, fontWeight:600 }}>
+        <button onClick={() => onViewChange("add")} className="flex items-center gap-1 px-3 py-1.5 rounded-full" style={{ border:"1.5px dashed #1a4a8a", background:"#F5F9FF", color:"#1a4a8a", cursor:"pointer", fontSize:12, fontWeight:600 }}>
           <Plus size={13}/> Add more
         </button>
       </div>
@@ -2374,9 +2664,13 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
           const sizeDone = allocated === l.qty;
           const catLabel = garmentCatalog.find(c => c.id === l.categoryId)?.label ?? "";
           return (
-            <div key={l.id} className="rounded-xl overflow-hidden" style={{ border:`1.5px solid ${DARK}` }}>
+            <div key={l.id} className="rounded-xl overflow-hidden transition-colors"
+              style={{
+                border:`1.5px solid ${open ? "#1a4a8a" : "var(--border)"}`,
+                boxShadow: open ? "0 3px 12px rgba(26,74,138,0.12)" : "0 1px 3px rgba(13,13,13,0.04)",
+              }}>
               {/* Card header */}
-              <div className="flex items-center gap-2 px-3.5 py-2.5" style={{ background:"rgba(13,13,13,0.04)" }}>
+              <div className="flex items-center gap-2 px-3.5 py-2.5" style={{ background: open ? "#F5F9FF" : "var(--muted)" }}>
                 <button onClick={() => setOpenId(open ? null : l.id)} className="flex-1 min-w-0 flex items-center gap-2.5 text-left" style={{ background:"none", border:"none", padding:0, cursor:"pointer" }}>
                   <GarmentThumb name={l.name} size={36} onOpen={n => onViewPhotos?.(n)}/>
                   <div className="flex-1 min-w-0">
@@ -2527,6 +2821,150 @@ const PREVIEW_PLACEMENTS: { id: string; label: string; view: "front" | "back"; x
   { id: "right_sleeve", label: "Right sleeve", view: "front", x: 28,  y: 74,  w: 26, h: 24 },
   { id: "center_back",  label: "Back centre",  view: "back",  x: 78,  y: 80,  w: 64, h: 74 },
 ];
+
+// Quick perceived-brightness check — picks a readable icon colour on any swatch.
+function isLightHex(hex: string): boolean {
+  const h = hex.replace("#", "");
+  if (h.length < 6) return true;
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150;
+}
+
+// ── Silhouette per garment family — a polo gets its collar, a hoodie its hood ──
+type PreviewShape = "tee" | "polo" | "shirt" | "hoodie" | "dress" | "pants" | "saree";
+function previewShapeFor(name: string): PreviewShape {
+  const n = name.toLowerCase();
+  if (/saree|dupatta|stole|shawl|scarf/.test(n)) return "saree";
+  if (/polo/.test(n)) return "polo";
+  if (/t-shirt|tshirt|\btee\b|oversized|\btop\b|tops/.test(n)) return "tee";
+  if (/hoodie|sweatshirt|sweater/.test(n)) return "hoodie";
+  if (/shirt|blouse|kurta|kurti|jacket|blazer|waistcoat|coat/.test(n)) return "shirt";
+  if (/dress|frock|gown|maxi|lehenga|skirt|onesie|romper|churidar|salwar|tunic/.test(n)) return "dress";
+  if (/jean|chino|jogger|legging|palazzo|trouser|pant|short|pyjama|track/.test(n)) return "pants";
+  return "tee";
+}
+// Placement options differ per family — pants have thighs and pockets, not chests.
+const PLACEMENTS_BY_SHAPE: Record<PreviewShape, typeof PREVIEW_PLACEMENTS> = {
+  tee:   PREVIEW_PLACEMENTS,
+  polo:  PREVIEW_PLACEMENTS,
+  shirt: PREVIEW_PLACEMENTS,
+  hoodie: [
+    { id: "left_chest",   label: "Left chest",   view: "front", x: 114, y: 88,  w: 28, h: 28 },
+    { id: "front_centre", label: "Front centre", view: "front", x: 82,  y: 94,  w: 56, h: 46 },
+    { id: "right_sleeve", label: "Right sleeve", view: "front", x: 26,  y: 78,  w: 26, h: 24 },
+    { id: "hood_back",    label: "Hood (back)",  view: "back",  x: 82,  y: 18,  w: 36, h: 26 },
+  ],
+  dress: [
+    { id: "chest",        label: "Chest",        view: "front", x: 82, y: 56,  w: 36, h: 28 },
+    { id: "front_centre", label: "Front centre", view: "front", x: 78, y: 100, w: 44, h: 52 },
+    { id: "hem",          label: "Hem border",   view: "front", x: 78, y: 166, w: 44, h: 26 },
+    { id: "back_centre",  label: "Back centre",  view: "back",  x: 78, y: 80,  w: 44, h: 52 },
+  ],
+  pants: [
+    { id: "right_thigh", label: "Right thigh",  view: "front", x: 70,  y: 104, w: 24, h: 28 },
+    { id: "left_thigh",  label: "Left thigh",   view: "front", x: 106, y: 104, w: 24, h: 28 },
+    { id: "hip",         label: "Hip / pocket", view: "front", x: 108, y: 56,  w: 22, h: 20 },
+    { id: "back_pocket", label: "Back pocket",  view: "back",  x: 72,  y: 58,  w: 22, h: 20 },
+  ],
+  saree: [], // drape — free drag only, no named spots
+};
+
+const PREVIEW_SHAPES: Record<PreviewShape, string> = {
+  tee:    "M82,30 Q100,23 118,30 L142,38 L166,64 L154,86 L134,76 C137,120 137,164 134,206 Q100,212 66,206 C63,164 63,120 66,76 L46,86 L34,64 L58,38 Z",
+  polo:   "M82,30 Q100,23 118,30 L142,38 L166,64 L154,86 L134,76 C137,120 137,164 134,206 Q100,212 66,206 C63,164 63,120 66,76 L46,86 L34,64 L58,38 Z",
+  shirt:  "M82,30 Q100,23 118,30 L142,38 L166,64 L154,86 L134,76 C137,120 137,164 134,206 Q100,212 66,206 C63,164 63,120 66,76 L46,86 L34,64 L58,38 Z",
+  hoodie: "M78,32 Q100,25 122,32 L148,42 L172,70 L157,92 L138,82 C140,118 140,155 138,188 Q100,196 62,188 C60,155 60,118 62,82 L43,92 L28,70 L52,42 Z",
+  dress:  "M82,30 Q100,23 118,30 L142,38 L164,62 L152,84 L133,75 C140,120 152,168 156,206 Q100,216 44,206 C48,168 60,120 67,75 L48,84 L36,62 L58,38 Z",
+  pants:  "M70,40 L130,40 L134,60 L129,206 Q120,211 111,207 L103,96 L97,96 L89,207 Q80,211 71,206 L66,60 Z",
+  saree:  "M70,26 Q100,19 130,26 L133,198 Q100,210 67,198 Z",
+};
+// Family-specific detailing drawn over the shaded body (collars, plackets, hoods…).
+function previewShapeDetails(shape: PreviewShape, view: "front" | "back", colorHex: string) {
+  switch (shape) {
+    case "polo": return (
+      <>
+        <path d="M82,30 Q100,25 118,30 L114,35 Q100,30 86,35 Z" fill="rgba(0,0,0,0.14)"/>
+        <path d="M86,32 L95,47 L100,38 Z" fill="rgba(0,0,0,0.22)"/>
+        <path d="M114,32 L105,47 L100,38 Z" fill="rgba(0,0,0,0.22)"/>
+        <rect x="97.6" y="38" width="4.8" height="21" rx="1.6" fill="rgba(0,0,0,0.10)"/>
+        <circle cx="100" cy="45" r="1.3" fill="rgba(255,255,255,0.65)"/>
+        <circle cx="100" cy="52" r="1.3" fill="rgba(255,255,255,0.65)"/>
+      </>
+    );
+    case "shirt": return (
+      <>
+        <path d="M84,30 L93,45 L100,36 Z" fill="rgba(0,0,0,0.22)"/>
+        <path d="M116,30 L107,45 L100,36 Z" fill="rgba(0,0,0,0.22)"/>
+        <path d="M84,30 Q100,26 116,30 L113,33 Q100,29 87,33 Z" fill="rgba(0,0,0,0.14)"/>
+        <line x1="100" y1="36" x2="100" y2="202" stroke="rgba(0,0,0,0.13)" strokeWidth="1"/>
+        {[52, 76, 100, 124, 148, 172].map(y => (
+          <circle key={y} cx="100" cy={y} r="1.4" fill="rgba(255,255,255,0.55)" stroke="rgba(0,0,0,0.2)" strokeWidth="0.4"/>
+        ))}
+        <path d="M74,88 h15 v13 l-7.5,4 l-7.5,-4 Z" fill="rgba(0,0,0,0.07)" stroke="rgba(0,0,0,0.14)" strokeWidth="0.8"/>
+      </>
+    );
+    case "hoodie": return (
+      <>
+        {/* hood — sits behind the shoulders, opening shadow in front */}
+        <path d="M78,34 Q76,13 100,11 Q124,13 122,34 Q112,46 100,47 Q88,46 78,34 Z"
+          fill={colorHex} stroke="rgba(0,0,0,0.24)" strokeWidth="1.2" style={{ transition: "fill .45s ease" }}/>
+        <path d="M83,32 Q100,44 117,32 Q111,40 100,41 Q89,40 83,32 Z" fill="rgba(0,0,0,0.30)"/>
+        <path d="M78,34 Q76,13 100,11 Q124,13 122,34" fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="1.4"/>
+        {/* drawstrings */}
+        <path d="M94,45 q-2,10 0,17" fill="none" stroke="rgba(0,0,0,0.35)" strokeWidth="1.2" strokeLinecap="round"/>
+        <path d="M106,45 q2,10 0,17" fill="none" stroke="rgba(0,0,0,0.35)" strokeWidth="1.2" strokeLinecap="round"/>
+        <circle cx="94" cy="63" r="1.5" fill="rgba(0,0,0,0.35)"/>
+        <circle cx="106" cy="63" r="1.5" fill="rgba(0,0,0,0.35)"/>
+        {/* kangaroo pocket */}
+        <path d="M80,146 L120,146 L125,181 L75,181 Z" fill="rgba(0,0,0,0.07)" stroke="rgba(0,0,0,0.13)" strokeWidth="1"/>
+        {/* ribbed hem band */}
+        <path d="M62.4,182 Q100,190 137.6,182 L138,188 Q100,196 62,188 Z" fill="rgba(0,0,0,0.10)"/>
+      </>
+    );
+    case "saree": return (
+      <>
+        {/* top fold over the hanger */}
+        <path d="M70,26 Q100,18 130,26 L130,35 Q100,27 70,35 Z" fill="rgba(0,0,0,0.13)"/>
+        {/* pleats falling down the drape */}
+        <path d="M84,31 L81,199" stroke="rgba(0,0,0,0.11)" strokeWidth="1"/>
+        <path d="M94,29 L93,203" stroke="rgba(0,0,0,0.09)" strokeWidth="1"/>
+        <path d="M106,29 L107,203" stroke="rgba(255,255,255,0.12)" strokeWidth="1"/>
+        <path d="M116,31 L119,201" stroke="rgba(0,0,0,0.11)" strokeWidth="1"/>
+        {/* zari border — gold band along the hem and edge */}
+        <path d="M67.3,189 L132.7,189 L133,198 Q100,210 67,198 Z" fill="rgba(200,169,126,0.92)"/>
+        <path d="M67.2,184 L132.8,184" stroke="rgba(200,169,126,0.75)" strokeWidth="1.6"/>
+        <path d="M128,27 L131,188" stroke="rgba(200,169,126,0.85)" strokeWidth="2.4"/>
+      </>
+    );
+    case "dress": return (
+      <>
+        <path d="M84,30 Q100,50 116,30 Q100,37 84,30 Z" fill="rgba(0,0,0,0.16)"/>
+        <path d="M84,30 Q100,48 116,30" fill="none" stroke="rgba(255,255,255,0.26)" strokeWidth="1.5"/>
+        <path d="M70,112 Q100,120 130,112" fill="none" stroke="rgba(0,0,0,0.12)" strokeWidth="1" strokeDasharray="3 2"/>
+      </>
+    );
+    case "pants": return (
+      <>
+        <line x1="68" y1="49" x2="132" y2="49" stroke="rgba(0,0,0,0.18)" strokeWidth="1.2"/>
+        <circle cx="100" cy="45" r="1.6" fill="rgba(255,255,255,0.6)" stroke="rgba(0,0,0,0.2)" strokeWidth="0.4"/>
+        <path d="M100,50 L100,90" stroke="rgba(0,0,0,0.15)" strokeWidth="1" strokeDasharray="2.5 2"/>
+        <path d="M72,53 Q82,67 89,56" fill="none" stroke="rgba(0,0,0,0.14)" strokeWidth="1"/>
+        <path d="M128,53 Q118,67 111,56" fill="none" stroke="rgba(0,0,0,0.14)" strokeWidth="1"/>
+      </>
+    );
+    default: return view === "front" ? (
+      <>
+        <path d="M82,30 Q100,48 118,30 Q100,36 82,30 Z" fill="rgba(0,0,0,0.16)"/>
+        <path d="M82,30 Q100,46 118,30" fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="1.6"/>
+      </>
+    ) : (
+      <>
+        <path d="M82,30 Q100,38 118,30 Q100,33 82,30 Z" fill="rgba(0,0,0,0.12)"/>
+        <path d="M82,30 Q100,37 118,30" fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="1.4"/>
+      </>
+    );
+  }
+}
 function GarmentPreview({ lines, audience, designUrl, material }: { lines: PreviewLine[]; audience?: string; designUrl?: string; material?: string }) {
   const [mode, setMode] = useState<"preview" | "picture">("preview");
   const [ci, setCi] = useState(0);
@@ -2557,24 +2995,44 @@ function GarmentPreview({ lines, audience, designUrl, material }: { lines: Previ
     }
   }
   const colour = lines[ci] ?? lines[0];
-  const pl = PREVIEW_PLACEMENTS.find(p => p.id === placement) ?? PREVIEW_PLACEMENTS[0];
+  // Placement options follow the garment family (pants ≠ shirts ≠ dresses).
+  const previewShape: PreviewShape = colour ? previewShapeFor(colour.name) : "tee";
+  const placements = PLACEMENTS_BY_SHAPE[previewShape];
+  const pl = placements.find(p => p.id === placement) ?? placements[0] ?? PREVIEW_PLACEMENTS[0];
   if (!colour) return null;
   const view = pl.view;
   // Hand-positioning: drag the design anywhere on the garment.
   const svgRef = useRef<SVGSVGElement>(null);
   const [custom, setCustom] = useState<{ x: number; y: number } | null>(null);
   const [drag, setDrag] = useState(false);
-  const box = custom ? { x: custom.x, y: custom.y, w: 40, h: 40 } : { x: pl.x, y: pl.y, w: pl.w, h: pl.h };
+  // Sarees are a drape, not a top — the design defaults to the centre of the panel.
+  const isDrape = previewShape === "saree";
+  const box = custom ? { x: custom.x, y: custom.y, w: 40, h: 40 }
+    : isDrape ? { x: 80, y: 104, w: 40, h: 40 }
+    : { x: pl.x, y: pl.y, w: pl.w, h: pl.h };
   function moveTo(e: React.PointerEvent) {
     const svg = svgRef.current; if (!svg) return;
     const r = svg.getBoundingClientRect();
     const px = ((e.clientX - r.left) / r.width) * 200;
-    const py = ((e.clientY - r.top) / r.height) * 232;
+    const py = ((e.clientY - r.top) / r.height) * 244;
     setCustom({ x: Math.min(150 - 40, Math.max(30, px - 20)), y: Math.min(196 - 40, Math.max(38, py - 20)) });
   }
   const fitLabel = audience === "kids" ? "Kids fit" : audience === "women" ? "Women's fit" : audience === "men" ? "Men's fit" : "Custom fit";
-  // Single tee/top silhouette — generic mock that reads clearly for tops.
-  const bodyPath = "M62,42 L82,29 Q100,21 118,29 L138,42 L168,66 L149,88 L138,78 L138,201 Q138,211 128,211 L72,211 Q62,211 62,201 L62,78 L51,88 L32,66 Z";
+  // "Stitch-on" moment — plays once when a design first lands on the garment.
+  const [stitchAnim, setStitchAnim] = useState(false);
+  const prevDesign = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const was = prevDesign.current;
+    prevDesign.current = designUrl;
+    if (designUrl && !was) {
+      setStitchAnim(true);
+      const t = setTimeout(() => setStitchAnim(false), 1900);
+      return () => clearTimeout(t);
+    }
+  }, [designUrl]);
+  // Silhouette follows the garment family — tee, polo, shirt, hoodie, dress or pants.
+  const shapeId = previewShape;
+  const bodyPath = PREVIEW_SHAPES[shapeId];
   return (
     <div className="rounded-2xl border border-border bg-card p-3 mb-4">
       {/* Live picture (selfie try-on) removed — preview only. */}
@@ -2582,65 +3040,182 @@ function GarmentPreview({ lines, audience, designUrl, material }: { lines: Previ
       {mode === "preview" && (
       <>
       <div className="flex items-center justify-end mb-2">
-        <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10, fontWeight: 600, background: "var(--muted)", color: "#6b7280" }}>{fitLabel} · mockup</span>
+        <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10, fontWeight: 600, background: "var(--muted)", color: "#6b7280" }}>{fitLabel} · live mockup</span>
       </div>
 
-      <div className="rounded-xl mb-2.5 flex items-center justify-center" style={{ background: "#F4F2EC", padding: "10px 0" }}>
-        <svg ref={svgRef} viewBox="0 0 200 232" width="170" height="197" role="img" aria-label={`${colour.name} in ${colour.colorLabel}, ${custom ? "custom position" : pl.label}`} style={{ touchAction: "none" }}>
-          <path d={bodyPath} fill={colour.colorHex} stroke="rgba(0,0,0,0.18)" strokeWidth="1.5"/>
-          {/* soft shading down the left for depth */}
-          <path d="M62,78 L62,201 Q62,211 72,211 L86,211 L86,84 L70,84 Z" fill="rgba(0,0,0,0.06)"/>
-          {/* neckline */}
-          {view === "front"
-            ? <path d="M82,29 Q100,49 118,29 Q110,33 100,33 Q90,33 82,29 Z" fill="rgba(0,0,0,0.14)"/>
-            : <path d="M82,29 Q100,37 118,29 Q100,33 82,29 Z" fill="rgba(0,0,0,0.10)"/>}
-          {/* placement composite — draggable */}
-          <g
-            onPointerDown={e => { (e.currentTarget as Element).setPointerCapture?.(e.pointerId); setDrag(true); moveTo(e); }}
-            onPointerMove={e => { if (drag) moveTo(e); }}
-            onPointerUp={() => setDrag(false)}
-            onPointerCancel={() => setDrag(false)}
-            style={{ cursor: drag ? "grabbing" : "grab" }}>
-            {designUrl ? (
-              <>
-                <clipPath id="fl-pz"><rect x={box.x} y={box.y} width={box.w} height={box.h} rx="3"/></clipPath>
-                <image href={designUrl} x={box.x} y={box.y} width={box.w} height={box.h} preserveAspectRatio="xMidYMid slice" clipPath="url(#fl-pz)"/>
-                <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="3" fill="none" stroke="rgba(0,0,0,0.35)" strokeWidth="1" strokeDasharray="3 2"/>
-              </>
-            ) : (
-              <>
-                <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="3" fill="rgba(255,255,255,0.65)" stroke="#7c5419" strokeWidth="1" strokeDasharray="4 3"/>
-                <text x={box.x + box.w / 2} y={box.y + box.h / 2} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 6.5, fontWeight: 600 }} fill="#7c5419">Your design</text>
-              </>
-            )}
+      {/* Studio-style product shot — hanging garment with real fabric shading */}
+      <div className="rounded-xl mb-2.5 flex items-center justify-center relative overflow-hidden"
+        style={{ background: "linear-gradient(180deg, #ECE9E1 0%, #F7F5EF 52%, #E5E1D6 100%)", padding: "8px 0 4px" }}>
+        {/* soft studio vignette */}
+        <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse at 50% 34%, rgba(255,255,255,0.55) 0%, transparent 62%)" }}/>
+        <svg ref={svgRef} viewBox="0 0 200 244" width="184" height="224" role="img" aria-label={`${colour.name} in ${colour.colorLabel}, ${custom ? "custom position" : pl.label}`} style={{ touchAction: "none", position: "relative" }}>
+          <defs>
+            <clipPath id="fl-body"><path d={bodyPath}/></clipPath>
+            <linearGradient id="fl-sideL" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#000" stopOpacity="0.18"/><stop offset="0.45" stopColor="#000" stopOpacity="0"/>
+            </linearGradient>
+            <linearGradient id="fl-sideR" x1="1" y1="0" x2="0" y2="0">
+              <stop offset="0" stopColor="#000" stopOpacity="0.15"/><stop offset="0.45" stopColor="#000" stopOpacity="0"/>
+            </linearGradient>
+            <radialGradient id="fl-chest" cx="0.5" cy="0.26" r="0.6">
+              <stop offset="0" stopColor="#fff" stopOpacity="0.20"/><stop offset="1" stopColor="#fff" stopOpacity="0"/>
+            </radialGradient>
+            <pattern id="fl-knit" width="4" height="4" patternUnits="userSpaceOnUse">
+              <path d="M0 4 L4 0" stroke="rgba(0,0,0,0.045)" strokeWidth="0.7"/>
+            </pattern>
+            <linearGradient id="fl-sheenGrad" x1="0" y1="0" x2="1" y2="0.35">
+              <stop offset="0" stopColor="#fff" stopOpacity="0"/>
+              <stop offset="0.5" stopColor="#fff" stopOpacity="0.16"/>
+              <stop offset="1" stopColor="#fff" stopOpacity="0"/>
+            </linearGradient>
+            <filter id="fl-soft" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="1.6"/></filter>
+          </defs>
+
+          {/* clothes rail */}
+          <line x1="16" y1="7" x2="184" y2="7" stroke="rgba(0,0,0,0.20)" strokeWidth="3" strokeLinecap="round"/>
+
+          {/* floor shadow (static — the garment sways above it) */}
+          <ellipse cx="100" cy="228" rx="54" ry="7" fill="rgba(0,0,0,0.13)" filter="url(#fl-soft)"/>
+
+          {/* Everything below sways gently on the hanger */}
+          <g className="magic-anim" style={{ animation: "flSwing 6s ease-in-out infinite", transformOrigin: "100px 8px" }}>
+
+            {/* wooden hanger */}
+            <path d="M100 22 Q93 22 93 15.5 Q93 10 98 10 Q102 10 102 13.5" fill="none" stroke="#8A7250" strokeWidth="2.2" strokeLinecap="round"/>
+            <path d="M100 22 L60 37 M100 22 L140 37" stroke="#A98E63" strokeWidth="4" strokeLinecap="round"/>
+
+            {/* garment body — colour crossfades when you switch swatches */}
+            <path d={bodyPath} fill={colour.colorHex} stroke="rgba(0,0,0,0.24)" strokeWidth="1.2" style={{ transition: "fill .45s ease" }}/>
+
+            {/* fabric shading & texture — all clipped to the garment */}
+            <g clipPath="url(#fl-body)">
+              <rect x="28" y="18" width="144" height="210" fill="url(#fl-sideL)"/>
+              <rect x="28" y="18" width="144" height="210" fill="url(#fl-sideR)"/>
+              <rect x="28" y="18" width="144" height="210" fill="url(#fl-chest)"/>
+              <rect x="28" y="18" width="144" height="210" fill="url(#fl-knit)"/>
+              {/* soft drape folds */}
+              <g filter="url(#fl-soft)" fill="none" strokeWidth="2.4">
+                <path d="M80 116 q6 30 2 66" stroke="rgba(0,0,0,0.09)"/>
+                <path d="M120 112 q-5 34 -1 70" stroke="rgba(0,0,0,0.09)"/>
+                <path d="M101 148 q3 24 1 50" stroke="rgba(0,0,0,0.07)"/>
+                <path d="M87 120 q4 28 1 60" stroke="rgba(255,255,255,0.09)"/>
+                <path d="M113 118 q-3 30 0 62" stroke="rgba(255,255,255,0.08)"/>
+              </g>
+              {/* armhole seams */}
+              <path d="M66,76 Q60,56 58,40" fill="none" stroke="rgba(0,0,0,0.15)" strokeWidth="1.1"/>
+              <path d="M134,76 Q140,56 142,40" fill="none" stroke="rgba(0,0,0,0.15)" strokeWidth="1.1"/>
+              {/* hem & sleeve stitching */}
+              <path d="M68 201 L132 201" stroke="rgba(0,0,0,0.18)" strokeWidth="0.9" strokeDasharray="2.5 2"/>
+              <path d="M44 82 L35 66" stroke="rgba(0,0,0,0.16)" strokeWidth="0.9" strokeDasharray="2.5 2"/>
+              <path d="M156 82 L165 66" stroke="rgba(0,0,0,0.16)" strokeWidth="0.9" strokeDasharray="2.5 2"/>
+              {/* light sheen sweeping across the fabric */}
+              <rect x="-70" y="0" width="42" height="244" fill="url(#fl-sheenGrad)"
+                className="magic-anim" style={{ animation: "flSheen 5.6s ease-in-out infinite" }}/>
+            </g>
+
+            {/* family-specific detailing — collar, placket, hood, waistband… */}
+            {previewShapeDetails(shapeId, view, colour.colorHex)}
+
+            {/* placement composite — draggable */}
+            <g
+              onPointerDown={e => { (e.currentTarget as Element).setPointerCapture?.(e.pointerId); setDrag(true); moveTo(e); }}
+              onPointerMove={e => { if (drag) moveTo(e); }}
+              onPointerUp={() => setDrag(false)}
+              onPointerCancel={() => setDrag(false)}
+              style={{ cursor: drag ? "grabbing" : "grab" }}>
+              {designUrl ? (
+                <>
+                  <clipPath id="fl-pz"><rect x={box.x} y={box.y} width={box.w} height={box.h} rx="3"/></clipPath>
+                  <image href={designUrl} x={box.x} y={box.y} width={box.w} height={box.h} preserveAspectRatio="xMidYMid slice" clipPath="url(#fl-pz)"
+                    opacity={drag ? 0.85 : 0.97}/>
+                  <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="3" fill="none"
+                    stroke={drag ? "#7c5419" : "rgba(0,0,0,0.18)"} strokeWidth="0.8" strokeDasharray={drag ? "3 2" : "none"}/>
+                  {/* stitch-on moment — sewing dashes run around the design, sparkles pop */}
+                  {stitchAnim && (
+                    <>
+                      <rect x={box.x - 2.5} y={box.y - 2.5} width={box.w + 5} height={box.h + 5} rx="5" fill="none"
+                        stroke={ACCENT} strokeWidth="1.7" strokeDasharray="5 4" pathLength={64}
+                        className="magic-anim" style={{ animation: "flStitch 1.5s ease forwards" }}/>
+                      <circle cx={box.x + box.w + 6} cy={box.y - 5} r="2.4" fill={ACCENT} className="magic-anim" style={{ animation: "garmTwinkle .8s ease-in-out 2" }}/>
+                      <circle cx={box.x - 6} cy={box.y + box.h + 5} r="2" fill={ACCENT} className="magic-anim" style={{ animation: "garmTwinkle .8s ease-in-out .3s 2" }}/>
+                      <circle cx={box.x - 5} cy={box.y - 6} r="1.6" fill="#fff" className="magic-anim" style={{ animation: "garmTwinkle .8s ease-in-out .5s 2" }}/>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="5" fill="rgba(255,255,255,0.5)" stroke="#7c5419" strokeWidth="1" strokeDasharray="4 3"/>
+                  <text x={box.x + box.w / 2} y={box.y + box.h / 2 - 3} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 9, fontWeight: 700 }} fill="#7c5419">+</text>
+                  <text x={box.x + box.w / 2} y={box.y + box.h / 2 + 6} textAnchor="middle" dominantBaseline="central" style={{ fontSize: 5.5, fontWeight: 600 }} fill="#7c5419">Your design</text>
+                </>
+              )}
+            </g>
           </g>
         </svg>
+        {/* fabric chip — grounds the mockup in the real material you chose */}
+        {material && (
+          <span className="absolute" style={{ left: 10, bottom: 8, padding: "3px 9px", borderRadius: 999, background: "rgba(255,255,255,0.85)", border: "1px solid rgba(0,0,0,0.08)", fontSize: 9.5, fontWeight: 700, color: "#6b7280", backdropFilter: "blur(3px)" }}>
+            {material}
+          </span>
+        )}
       </div>
 
+      {/* Order-line selector — every garment × colour in the order is one tap away,
+          and the mockup reshapes to match (polo, hoodie, shirt, dress…) */}
+      {/* Garment tiles — icon on a colour swatch, clearly different from the
+          text-pill placement chips below */}
       {lines.length > 1 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {lines.map((l, i) => (
-            <button key={l.colorHex + i} onClick={() => setCi(i)} title={l.colorLabel}
-              className="w-6 h-6 rounded-full" style={{ background: l.colorHex, border: i === ci ? `2.5px solid ${DARK}` : "1.5px solid rgba(0,0,0,0.15)", cursor: "pointer" }}/>
-          ))}
+        <>
+          <p className="text-muted-foreground mb-1.5" style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            Preview a garment
+          </p>
+          <div className="grid grid-cols-2 gap-1.5 mb-2.5">
+            {lines.map((l, i) => {
+              const on = i === ci;
+              const lightBg = isLightHex(l.colorHex);
+              return (
+                <button key={l.name + l.colorHex + i} onClick={() => setCi(i)} title={`${l.name} · ${l.colorLabel}`}
+                  className="flex items-center gap-2 pl-1.5 pr-2 py-1.5 rounded-xl text-left"
+                  style={{
+                    border: `1.5px solid ${on ? ACCENT : "var(--border)"}`,
+                    background: on ? ACCENT_BG : "var(--card)",
+                    cursor: "pointer", transition: "background .2s, border-color .2s",
+                  }}>
+                  <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: l.colorHex, border: "1px solid rgba(0,0,0,0.12)" }}>
+                    <GarmentIcon name={l.name} size={19} color={lightBg ? "rgba(0,0,0,0.60)" : "rgba(255,255,255,0.92)"}/>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block" style={{ fontSize: 11.5, fontWeight: on ? 700 : 600, color: on ? "#7c5419" : DARK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span>
+                    <span className="block" style={{ fontSize: 10, color: on ? ACCENT_TEXT : "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.colorLabel}</span>
+                  </span>
+                  {on && <Check size={13} strokeWidth={2.5} style={{ color: "#7c5419", flexShrink: 0 }}/>}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Placement chips — options match the garment family (thighs for pants,
+          hood for hoodies…); drapes like sarees offer free drag only */}
+      {placements.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {placements.map(p => {
+            const on = p.id === pl.id;
+            return (
+              <button key={p.id} onClick={() => { setPlacement(p.id); setCustom(null); }}
+                className="px-2.5 py-1 rounded-full" style={{ fontSize: 11, fontWeight: on && !custom ? 600 : 500, background: on && !custom ? DARK : "var(--muted)", color: on && !custom ? "#fff" : "#6b7280", border: "none", cursor: "pointer" }}>
+                {p.label}
+              </button>
+            );
+          })}
         </div>
       )}
 
-      <div className="flex flex-wrap gap-1.5 mb-1.5">
-        {PREVIEW_PLACEMENTS.map(p => {
-          const on = p.id === placement;
-          return (
-            <button key={p.id} onClick={() => { setPlacement(p.id); setCustom(null); }}
-              className="px-2.5 py-1 rounded-full" style={{ fontSize: 11, fontWeight: on && !custom ? 600 : 500, background: on && !custom ? DARK : "var(--muted)", color: on && !custom ? "#fff" : "#6b7280", border: "none", cursor: "pointer" }}>
-              {p.label}
-            </button>
-          );
-        })}
-      </div>
-
       <div className="flex items-center justify-between gap-2">
         <p className="text-muted-foreground" style={{ fontSize: 10.5, lineHeight: 1.5 }}>
-          {colour.name} · {colour.colorLabel} · {custom ? "Custom spot" : pl.label} · drag to move{designUrl ? "" : " — upload a design below"}
+          {colour.name} · {colour.colorLabel} · {custom ? "Custom spot" : pl.label} · drag to move{designUrl ? "" : " — add your design above to see it here"}
         </p>
         {custom && <button onClick={() => setCustom(null)} style={{ background:"none", border:"none", color:"#7c5419", fontSize: 10.5, fontWeight: 600, cursor:"pointer", flexShrink:0 }}>Reset</button>}
       </div>
@@ -2736,10 +3311,9 @@ function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, in
 
   return (
     <div>
-      {persona !== "organisation" && previewLines && previewLines.length > 0 && (
-        <GarmentPreview lines={previewLines} audience={previewAudience} designUrl={logoFiles[0]?.url} material={previewMaterial}/>
-      )}
-      <p className="text-muted-foreground mb-3" style={{ fontSize: 12 }}>Pick <strong>one</strong> option — whichever is easiest for you.</p>
+      {/* Upload comes FIRST — so it's clear you add your design, then watch it appear
+          on the live mockup below. */}
+      <p className="text-muted-foreground mb-3" style={{ fontSize: 12 }}>Add your design or logo — then see it live on your garment below.</p>
       <div className="flex flex-col gap-2">
         {refOptDefs.filter(opt => {
           if (isAccessoryOrder && (opt.id === "match_uniform" || opt.id === "swatch_box")) return false;
@@ -2855,6 +3429,22 @@ function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, in
           );
         })}
       </div>
+
+      {/* Live mockup — sits below the upload so the "aha" lands right after uploading */}
+      {persona !== "organisation" && previewLines && previewLines.length > 0 && (
+        <div className="mt-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: ACCENT_BG }}>
+              <Shirt size={13} strokeWidth={1.8} style={{ color: "#7c5419" }}/>
+            </span>
+            <p className="text-foreground" style={{ fontSize: 13, fontWeight: 700 }}>Live preview</p>
+            {logoFiles[0]?.url && (
+              <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 9.5, fontWeight: 700, background: "#ECFDF5", color: "#047857" }}>Design on ✓</span>
+            )}
+          </div>
+          <GarmentPreview lines={previewLines} audience={previewAudience} designUrl={logoFiles[0]?.url} material={previewMaterial}/>
+        </div>
+      )}
 
       <input ref={logoCamRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => processLogoFiles(e.target.files)}/>
       <input ref={logoGalRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={e => processLogoFiles(e.target.files)}/>
@@ -4728,7 +5318,8 @@ function PersonaOrderForm({
               return {
                 name: g.name,
                 style: g.style,
-                colorLabel: g.colorLabel,
+                // Includes set-piece colours (e.g. "Navy · Salwar: White · Dupatta: Gold")
+                colorLabel: lineColourSummary(g),
                 colorHex: g.colorHex,
                 gender: g.gender,
                 // Mixed-audience orders label each line (Men's / Women's / Kids) in Track.
@@ -4856,9 +5447,10 @@ function PersonaOrderForm({
       </div>
     );
     const line = (k: React.ReactNode, v: React.ReactNode) => (
-      <div className="flex items-start justify-between gap-4 py-1">
-        <span className="text-muted-foreground flex-shrink-0" style={{ fontSize: 12 }}>{k}</span>
-        <span className="text-foreground text-right" style={{ fontSize: 12, fontWeight: 500 }}>{v}</span>
+      <div className="flex items-start justify-between gap-3 py-1">
+        {/* Label wraps; value never shrinks — long garment lines can't overlap the price */}
+        <span className="text-muted-foreground flex-1 min-w-0" style={{ fontSize: 12, lineHeight: 1.45, overflowWrap: "break-word" }}>{k}</span>
+        <span className="text-foreground text-right flex-shrink-0" style={{ fontSize: 12, fontWeight: 500 }}>{v}</span>
       </div>
     );
     const card = "rounded-2xl border border-border bg-card mb-3 overflow-hidden";
@@ -4973,7 +5565,7 @@ function PersonaOrderForm({
                 garmentCart.length > 0 ? (
                   <>
                     {garmentCart.map(g => line(
-                      `${indivCartMixed ? `${indivAudienceShort(g.categoryId)} · ` : ""}${g.name}${g.style ? ` · ${g.style}` : ""} · ${g.colorLabel} × ${g.qty}`,
+                      `${indivCartMixed ? `${indivAudienceShort(g.categoryId)} · ` : ""}${g.name}${g.style ? ` · ${g.style}` : ""} · ${lineColourSummary(g)} × ${g.qty}`,
                       `${inr(garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave))}/pc`
                     ))}
                     {line("Total pieces", `${garmentCartQty} pcs`)}
@@ -5584,7 +6176,7 @@ function PersonaOrderForm({
         <div className="flex flex-col gap-4">
           {persona === "individual" ? (
             <TipBanner tipKey="individual-garment-step">
-              Pick a fabric and colour per garment — each one gets its own Size distribution, Stitching &amp; packaging and Reference &amp; sample right inside its card.
+              Every garment keeps its own colour, sizes and finishing — you'll set each one step by step.
             </TipBanner>
           ) : (
             <TipBanner tipKey="org-garment-step">
@@ -5669,9 +6261,13 @@ function PersonaOrderForm({
                     const weaveVal  = o.weaveOptions.includes(cur.weave) ? cur.weave : o.weaveOptions[0];
                     return (
                       <div key={name} className="rounded-xl border border-border overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2" style={{ background:"var(--muted)" }}>
+                        <div className="flex items-center justify-between gap-2 px-3 py-2" style={{ background:"var(--muted)" }}>
                           <span style={{ fontSize: 12.5, fontWeight: 700, color: DARK }}>{name}</span>
-                          <span style={{ fontSize: 11, color:"#1a4a8a", fontWeight: 600 }}>{inr(garmentPriceForFabric({ categoryId: "mens", name, basePrice: garmentCart.find(g => g.name === name)!.basePrice }, fabricVal, weaveVal))}/pc</span>
+                          <span className="flex items-center gap-1.5 flex-shrink-0">
+                            <span style={{ fontSize: 11, color:"#1a4a8a", fontWeight: 600 }}>{inr(garmentPriceForFabric({ categoryId: "mens", name, basePrice: garmentCart.find(g => g.name === name)!.basePrice }, fabricVal, weaveVal))}/pc</span>
+                            <RemoveChip title={`Remove ${name} from this order`}
+                              onRemove={() => setGarmentCart(prev => prev.filter(g => g.name !== name))}/>
+                          </span>
                         </div>
                         <div className="px-3 py-2.5">
                           <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Fabric</p>
@@ -5798,7 +6394,8 @@ function PersonaOrderForm({
                   <PerColourSize key={`${ln.categoryId}-${ln.gender ?? ""}-${ln.name}-${ln.colorHex}`} line={ln}
                     cat={indivLineSizeCat(ln)}
                     audienceLabel={indivCartMixed && ln.categoryId !== "kids" ? (ln.categoryId === "womens" ? "Women's" : "Men's") : undefined}
-                    onChange={s => setLineSizes(idx, s)}/>
+                    onChange={s => setLineSizes(idx, s)}
+                    onRemove={() => setGarmentCart(prev => prev.filter((_, i) => i !== idx))}/>
                 ))}
               </div>
             </>
@@ -6202,7 +6799,7 @@ function CustomAudienceForm({ onContinue, onBack, onAccessories }: { onContinue:
             })}
           </div>
           <p className="text-muted-foreground mt-2.5" style={{ fontSize: 11, lineHeight: 1.5 }}>
-            Ordering for the whole family? Start with one — you can tap <strong>"Add more order"</strong> on the next step to add Men, Women or Kids to the same order.
+            Ordering for the family? Start with one person — you can add more on the next step.
           </p>
         </Section>
 

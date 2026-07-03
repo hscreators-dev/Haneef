@@ -994,6 +994,11 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
         transition: "box-shadow .25s ease",
       }}>
 
+      {/* Gold thread strip — appears when the card is open */}
+      {open && !order.isNew && (
+        <div style={{ height: 3, background: "linear-gradient(90deg, #C8A97E 0%, rgba(200,169,126,0.2) 100%)" }}/>
+      )}
+
       {/* New order banner */}
       {order.isNew && (
         <div className="px-4 py-2 border-b border-border" style={{ background: ACCENT_BG }}>

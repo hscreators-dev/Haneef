@@ -504,6 +504,25 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
   const activeOrder = orders.find(o => !["Delivered", "Completed"].includes(o.status)) ?? orders[0];
   const curStage = activeOrder ? (statusToStage[activeOrder.status] ?? 0) : 0;
 
+  // Persona-aware hero copy — individuals get warm, personal lines;
+  // organisations get the procurement pitch.
+  const personalHome = !profile?.accountType || profile.accountType === "personal";
+  const hero = personalHome
+    ? {
+        eyebrow: "Garm · Made to order",
+        line1: "Your style, your colours —",
+        line2: "stitched just for you",
+        body: "One piece or the whole family's. You design it, we make it, track it to your door.",
+        cta: "Start my order",
+      }
+    : {
+        eyebrow: "Garm Procurement",
+        line1: "Team wear & uniforms,",
+        line2: "sorted end to end",
+        body: "One coordinator handles quotes, fabric, QA and delivery — you just approve.",
+        cta: "Start an order",
+      };
+
   return (
     <div className="flex-1 overflow-y-auto pb-4 min-h-0" style={{ scrollbarWidth: "none" }}>
 
@@ -551,38 +570,63 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
         </div>
       </div>
 
-      {/* ── Hero banner ── */}
+      {/* ── Hero banner — woven texture + floating brand mark + stitched thread ── */}
       <div className="mx-5 mb-5 rounded-2xl p-5 relative overflow-hidden"
-        style={{ background: "linear-gradient(140deg, #1A1815 0%, #0D0D0D 55%, #14110C 100%)", boxShadow: "0 8px 24px rgba(13,13,13,0.18)" }}>
-        <div className="absolute top-0 right-0 w-48 h-48 rounded-full border border-white/5"
-          style={{ transform: "translate(30%,-30%)" }}/>
-        <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full border border-white/5"
+        style={{ background: "linear-gradient(140deg, #1A1815 0%, #0D0D0D 55%, #14110C 100%)", boxShadow: "0 10px 28px rgba(13,13,13,0.22)" }}>
+        {/* Basket-weave texture — the Garm mark, woven into the background */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ opacity: 0.055 }} aria-hidden="true">
+          <defs>
+            <pattern id="garmWeavePat" width="36" height="36" patternUnits="userSpaceOnUse">
+              <rect x="4" y="4" width="28" height="11" rx="5.5" fill="none" stroke="#fff" strokeWidth="1.5"/>
+              <rect x="20" y="20" width="28" height="11" rx="5.5" fill="none" stroke="#fff" strokeWidth="1.5"/>
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#garmWeavePat)"/>
+        </svg>
+        {/* Warm glow behind the floating mark */}
+        <div className="absolute top-0 right-0 w-44 h-44 rounded-full pointer-events-none"
+          style={{ transform: "translate(28%,-28%)", background: "radial-gradient(circle, rgba(200,169,126,0.28) 0%, transparent 70%)" }}/>
+        <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full border border-white/5 pointer-events-none"
           style={{ transform: "translate(-30%,30%)" }}/>
-        <div className="absolute top-0 right-0 w-40 h-40 rounded-full"
-          style={{ transform: "translate(35%,-35%)", background: "radial-gradient(circle, rgba(200,169,126,0.16) 0%, transparent 70%)" }}/>
-        <p className="text-white/40 mb-2 label-section">Garm Procurement</p>
+        {/* Floating woven logo tile */}
+        <div className="absolute pointer-events-none magic-anim"
+          style={{ top: 16, right: 16, animation: "garmHeroFloat 5s ease-in-out infinite", filter: "drop-shadow(0 6px 12px rgba(0,0,0,0.4))" }}>
+          <GarmLogo size={46}/>
+        </div>
+
+        <p className="mb-2 label-section" style={{ color: "rgba(200,169,126,0.8)" }}>{hero.eyebrow}</p>
         <h1 className="text-white mb-1" style={{ fontSize: 24, fontWeight: 600, lineHeight: 1.25 }}>
-          Managed textile<br/><span style={{ color: ACCENT }}>sourcing for teams</span>
+          {hero.line1}<br/><span style={{ color: ACCENT }}>{hero.line2}</span>
         </h1>
-        <p className="text-white/50 mb-5" style={{ fontSize: 12 }}>
-          Requirements, orders, QA and delivery in one place
+        {/* Running stitch — a thread sewing itself under the headline */}
+        <svg width="156" height="10" viewBox="0 0 156 10" className="mb-1.5" aria-hidden="true">
+          <path className="magic-anim" d="M2 6 C 32 2, 62 9, 92 5 S 144 4, 154 5" fill="none"
+            stroke={ACCENT} strokeWidth="1.6" strokeLinecap="round" strokeDasharray="6 5"
+            style={{ animation: "garmThread 2.6s linear infinite" }}/>
+        </svg>
+        <p className="text-white/55 mb-5" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+          {hero.body}
         </p>
         <button onClick={() => onNavigate("order")}
-          className="w-full bg-white text-foreground rounded-xl py-3 flex items-center justify-center gap-2 text-sm font-medium">
-          <PlusCircle size={15} strokeWidth={2}/> Start an order
+          className="w-full bg-white text-foreground rounded-xl py-3 flex items-center justify-center gap-2 text-sm font-medium"
+          style={{ boxShadow: "0 6px 20px rgba(200,169,126,0.28)" }}>
+          <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: ACCENT }}>
+            <PlusCircle size={13} strokeWidth={2} color="#fff"/>
+          </span>
+          {hero.cta}
         </button>
       </div>
 
       {/* ── Stats row ── */}
       <div className="mx-5 mb-5 grid grid-cols-3 gap-2.5">
         {[
-          { label: "Active",    value: "3",   icon: <Clock        size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
-          { label: "Delivered", value: "4",   icon: <CheckCircle2 size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
-          { label: "On-time",   value: "97%", icon: <TrendingUp   size={14} strokeWidth={1.5} className="text-muted-foreground"/> },
+          { label: "Active",    value: "3",   icon: <Clock        size={14} strokeWidth={1.8}/>, tint: "#7C5419", bg: ACCENT_BG },
+          { label: "Delivered", value: "4",   icon: <CheckCircle2 size={14} strokeWidth={1.8}/>, tint: "#047857", bg: "#ECFDF5" },
+          { label: "On-time",   value: "97%", icon: <TrendingUp   size={14} strokeWidth={1.8}/>, tint: "#1a4a8a", bg: "#EFF6FF" },
         ].map(s => (
           <div key={s.label} style={card} className="p-3.5">
-            <div className="mb-2">{s.icon}</div>
-            <p className="text-foreground" style={{ fontSize: 20, fontWeight: 600, lineHeight: 1 }}>{s.value}</p>
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center mb-2" style={{ background: s.bg, color: s.tint }}>{s.icon}</div>
+            <p className="text-foreground" style={{ fontSize: 20, fontWeight: 700, lineHeight: 1 }}>{s.value}</p>
             <p className="text-muted-foreground mt-0.5" style={{ fontSize: 11 }}>{s.label}</p>
           </div>
         ))}
@@ -591,6 +635,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
       {/* ── Active order progress (org & individual, shown once an order exists) ── */}
       {activeOrder && (
         <div className="mx-5 mb-5 overflow-hidden" style={card}>
+          <div style={{ height: 3, background: "linear-gradient(90deg, #C8A97E 0%, rgba(200,169,126,0.25) 100%)" }}/>
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <div>
               <p className="label-section">Order in progress</p>
@@ -648,8 +693,11 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
 
       {/* ── Wedding & Events banner (personal only) ── */}
       {(!profile?.accountType || profile.accountType === "personal") && (
-        <button className="mx-5 mb-5 text-left w-[calc(100%-2.5rem)] overflow-hidden rounded-2xl"
-          style={{ background: "linear-gradient(135deg,#2d1b4e 0%,#5b2d8e 50%,#c8a84b 100%)", border: "none", cursor: "pointer" }}>
+        <button className="mx-5 mb-5 text-left w-[calc(100%-2.5rem)] overflow-hidden rounded-2xl relative"
+          style={{ background: "linear-gradient(135deg,#2d1b4e 0%,#5b2d8e 50%,#c8a84b 100%)", border: "none", cursor: "pointer", boxShadow: "0 8px 22px rgba(91,45,142,0.28)" }}>
+          <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 12, right: 48, width: 5, height: 5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out infinite" }}/>
+          <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 30, right: 20, width: 3.5, height: 3.5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out .6s infinite" }}/>
+          <span className="absolute rounded-full pointer-events-none magic-anim" style={{ bottom: 16, right: 76, width: 4, height: 4, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out 1.2s infinite" }}/>
           <div className="px-4 py-4">
             <div className="flex items-center gap-2 mb-2">
               <Star size={20} strokeWidth={1.5} color="#fff"/>
@@ -693,9 +741,13 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
               </div>
               <p className="text-foreground text-sm font-medium mb-1">{o.name} — {o.shade}</p>
               <p className="text-muted-foreground" style={{ fontSize: 12 }}>{o.qty} · {o.gsm} · {o.eta}</p>
-              {/* Progress bar */}
-              <div className="h-1 bg-muted rounded-full mt-3 overflow-hidden">
-                <div className="h-full rounded-full transition-all" style={{ width: `${o.pct}%`, background: ACCENT }}/>
+              {/* Progress bar — gold thread with a light shimmer running along it */}
+              <div className="h-1.5 bg-muted rounded-full mt-3 overflow-hidden">
+                <div className="h-full rounded-full transition-all relative overflow-hidden"
+                  style={{ width: `${o.pct}%`, background: "linear-gradient(90deg, #B08D58, #C8A97E)" }}>
+                  <div className="absolute inset-y-0 w-1/2 magic-anim"
+                    style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent)", animation: "garmShimmer 2.4s ease-in-out infinite" }}/>
+                </div>
               </div>
             </div>
             {o.quoteReady && (
@@ -2024,14 +2076,19 @@ export default function App() {
               id={`coachmark-tab-${tab.id}`}
               onClick={() => { setShowHelp(false); setResumeDraft(null); setActiveTab(tab.id); }}
               className="flex-1 flex flex-col items-center gap-0.5 py-1">
-              <span className={active ? "text-foreground" : "text-muted-foreground"}>{tab.icon}</span>
-              <span className={active ? "text-foreground" : "text-muted-foreground"}
-                style={{ fontSize: 10, fontWeight: active ? 600 : 400 }}>
+              <span className={`flex items-center justify-center rounded-full ${active ? "magic-anim" : "text-muted-foreground"}`}
+                style={{
+                  padding: "4px 14px",
+                  background: active ? ACCENT_BG : "transparent",
+                  color: active ? ACCENT_TEXT : undefined,
+                  transition: "background .2s",
+                  animation: active ? "garmNavPop .25s ease" : undefined,
+                }}>
+                {tab.icon}
+              </span>
+              <span style={{ fontSize: 10, fontWeight: active ? 700 : 400, color: active ? ACCENT_TEXT : "var(--muted-foreground)" }}>
                 {tab.label}
               </span>
-              {active
-                ? <span className="w-1 h-1 rounded-full bg-foreground mt-0.5"/>
-                : <span className="w-1 h-1 mt-0.5"/>}
             </button>
           );
         })}
