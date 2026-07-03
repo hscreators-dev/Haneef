@@ -1584,6 +1584,24 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
   // Which garment card is expanded. One open at a time → finished cards collapse to a summary.
   const [openItem, setOpenItem] = useState<string | null>(null);
 
+  // ── "Add more order" (individual flow) ──────────────────────────────────────
+  // The catalog starts locked to the audience picked on the previous screen, but the
+  // user can add more audiences to the SAME order (e.g. kids + wife + himself).
+  // Categories already present in the cart stay enabled, so drafts resume correctly.
+  const [extraCats, setExtraCats] = useState<GarmentCategoryId[]>(() =>
+    lockedCategory ? Array.from(new Set(cart.map(g => g.categoryId))).filter(c => c !== lockedCategory) : []);
+  const enabledCats: GarmentCategoryId[] = lockedCategory ? [lockedCategory, ...extraCats] : garmentCatalog.map(c => c.id);
+  const remainingCats = garmentCatalog.map(c => c.id).filter(c => !enabledCats.includes(c));
+  const [showAddAudience, setShowAddAudience] = useState(false);
+  function addAudienceCat(c: GarmentCategoryId) {
+    setExtraCats(prev => (prev.includes(c) ? prev : [...prev, c]));
+    setCat(c);
+    setOpenItem(null);
+    setShowAddAudience(false);
+  }
+  const pcsInCat = (cid: GarmentCategoryId) => cart.filter(g => g.categoryId === cid).reduce((s, g) => s + g.qty, 0);
+  const audienceName = (cid: GarmentCategoryId) => (cid === "mens" ? "Men" : cid === "womens" ? "Women" : "Kids");
+
   // For kids, lines are scoped per gender so a Boys T-shirt and a Girls T-shirt are
   // separate selections (and don't appear selected under the other tab).
   const lineGender = cat === "kids" ? kidGender : undefined;
@@ -1640,17 +1658,50 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
         Add the garments you want, pick a colour for each and set how many. The same garment in another colour counts as a separate piece — e.g. 1 black hoodie + 1 white hoodie = 2 pcs.
       </p>
 
-      {/* Category tabs only when the audience isn't already chosen (organisation reuse) */}
-      {!lockedCategory && (
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          {garmentCatalog.map(c => (
-            <button key={c.id} onClick={() => setCat(c.id)}
-              className="flex flex-col items-center gap-0.5 py-2 rounded-xl"
-              style={{ border:`1.5px solid ${cat===c.id ? DARK : "var(--border)"}`, background: cat===c.id ? "rgba(13,13,13,0.04)" : "var(--card)", cursor:"pointer" }}>
-              <GarmentCategoryIcon id={c.id}/>
-              <span style={{ fontSize: 10.5, fontWeight: cat===c.id ? 700 : 500, color: cat===c.id ? DARK : "#374151" }}>{c.label}</span>
+      {/* ── Add more order — kept at the top so it's seen without scrolling ── */}
+      {lockedCategory && remainingCats.length > 0 && (
+        showAddAudience ? (
+          <div className="mb-3 rounded-xl p-3" style={{ border:`1.5px solid ${ACCENT}`, background: ACCENT_BG }}>
+            <p style={{ fontSize:12, fontWeight:700, color:"#7c5419", marginBottom:8 }}>Who else is this order for?</p>
+            <div className="grid gap-2 mb-2" style={{ gridTemplateColumns:`repeat(${remainingCats.length}, minmax(0,1fr))` }}>
+              {remainingCats.map(cid => (
+                <button key={cid} onClick={() => addAudienceCat(cid)}
+                  className="flex flex-col items-center gap-1 py-2.5 rounded-xl"
+                  style={{ border:"1.5px solid var(--border)", background:"var(--card)", cursor:"pointer" }}>
+                  <GarmentCategoryIcon id={cid}/>
+                  <span style={{ fontSize:11, fontWeight:600, color:DARK }}>{audienceName(cid)}</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setShowAddAudience(false)}
+              style={{ background:"none", border:"none", cursor:"pointer", fontSize:11.5, fontWeight:600, color:"#9ca3af", padding:0 }}>
+              Cancel
             </button>
-          ))}
+          </div>
+        ) : (
+          <button onClick={() => setShowAddAudience(true)}
+            className="mb-3 w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl"
+            style={{ border:`1.5px dashed ${ACCENT}`, background: ACCENT_BG, color:"#7c5419", cursor:"pointer", fontSize:12.5, fontWeight:700 }}>
+            <Plus size={14}/> Add more order — {remainingCats.map(audienceName).join(" / ")}
+          </button>
+        )
+      )}
+
+      {/* Category tabs — always shown when the audience isn't pre-chosen (organisation
+          reuse); for individuals they appear once "Add more order" enables a 2nd audience */}
+      {(!lockedCategory || enabledCats.length > 1) && (
+        <div className="grid gap-2 mb-3" style={{ gridTemplateColumns: `repeat(${lockedCategory ? enabledCats.length : garmentCatalog.length}, minmax(0, 1fr))` }}>
+          {garmentCatalog.filter(c => !lockedCategory || enabledCats.includes(c.id)).map(c => {
+            const pcs = pcsInCat(c.id);
+            return (
+              <button key={c.id} onClick={() => setCat(c.id)}
+                className="flex flex-col items-center gap-0.5 py-2 rounded-xl"
+                style={{ border:`1.5px solid ${cat===c.id ? DARK : "var(--border)"}`, background: cat===c.id ? "rgba(13,13,13,0.04)" : "var(--card)", cursor:"pointer" }}>
+                <GarmentCategoryIcon id={c.id}/>
+                <span style={{ fontSize: 10.5, fontWeight: cat===c.id ? 700 : 500, color: cat===c.id ? DARK : "#374151" }}>{c.label}{pcs > 0 ? ` · ${pcs}` : ""}</span>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -2071,7 +2122,7 @@ function SizeSection({ totalQty, defaultCat = "school", step = 1, onAllocationCh
 // ─── Per-colour size allocator (Individual flow) ──────────────────────────────
 // Each colour line distributes its OWN quantity across the age/size set, so the
 // size↔colour pairing is captured at input time (no ambiguity later).
-function PerColourSize({ line, cat, onChange }: { line: GarmentLine; cat: SizeCat; onChange: (sizes: Record<string, number>) => void }) {
+function PerColourSize({ line, cat, audienceLabel, onChange }: { line: GarmentLine; cat: SizeCat; audienceLabel?: string; onChange: (sizes: Record<string, number>) => void }) {
   const sizes = sizeSets[cat] ?? sizeSets.mens;
   const [qtys, setQtys] = useState<Record<string, number>>(line.sizes ?? {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2097,7 +2148,7 @@ function PerColourSize({ line, cat, onChange }: { line: GarmentLine; cat: SizeCa
         <div className="w-7 h-7 rounded-full flex-shrink-0" style={{ background: line.colorHex, boxShadow: "0 0 0 2px var(--card), 0 0 0 3px rgba(0,0,0,0.10)" }}/>
         <div className="min-w-0 flex-1">
           <p className="text-foreground" style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.2 }}>
-            {line.name}{line.gender ? <span style={{ fontSize: 10.5, fontWeight: 600, marginLeft: 6, padding: "1px 6px", borderRadius: 999, background: line.gender === "boy" ? "#E0F0FF" : "#fce7f0", color: line.gender === "boy" ? "#1a4a8a" : "#9d3a5d" }}>{line.gender === "boy" ? "Boys" : "Girls"}</span> : null}
+            {line.name}{line.gender ? <span style={{ fontSize: 10.5, fontWeight: 600, marginLeft: 6, padding: "1px 6px", borderRadius: 999, background: line.gender === "boy" ? "#E0F0FF" : "#fce7f0", color: line.gender === "boy" ? "#1a4a8a" : "#9d3a5d" }}>{line.gender === "boy" ? "Boys" : "Girls"}</span> : null}{audienceLabel ? <span style={{ fontSize: 10.5, fontWeight: 600, marginLeft: 6, padding: "1px 6px", borderRadius: 999, background: "var(--muted)", color: "#6b7280" }}>{audienceLabel}</span> : null}
           </p>
           <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>{line.colorLabel}</p>
         </div>
@@ -4264,6 +4315,14 @@ function PersonaOrderForm({
   const indivSizesAllocated = garmentCart.reduce((s, g) => s + lineAllocated(g), 0);
   const indivSizesComplete  = garmentCart.length > 0 && garmentCart.every(g => lineAllocated(g) === g.qty);
 
+  // Audiences present in the individual cart — "Add more order" lets one order mix
+  // Kids / Men / Women, so each line's size chart follows its own category.
+  const indivCartCats = Array.from(new Set(garmentCart.map(g => g.categoryId)));
+  const indivCartMixed = indivCartCats.length > 1;
+  const indivLineSizeCat = (g: GarmentLine): SizeCat =>
+    g.categoryId === "kids" ? "school" : g.categoryId === "womens" ? "womens" : g.categoryId === "mens" ? "mens" : cfg.defaultSizeCat;
+  const indivAudienceShort = (c: GarmentCategoryId) => (c === "kids" ? "Kids" : c === "womens" ? "Women" : "Men");
+
   // Mirror the colour-aware cart into indivColors so the Review, summary and Track all
   // show each colour with its piece count (e.g. Black × 1, White × 1). Individual only.
   useEffect(() => {
@@ -4408,7 +4467,9 @@ function PersonaOrderForm({
     : customDetails?.isAccessoryOrder
     ? `Personal · Min ${IND_ACCESSORY_MOQ} pcs`
     : customDetails
-    ? ((customDetails.audience === "kids" ? "Kids sizing" : customDetails.audience === "women" ? "Women sizing" : "Men sizing") + " · Min 1 pcs")
+    ? ((indivCartMixed
+        ? indivCartCats.map(indivAudienceShort).join(" + ") + " sizing"
+        : customDetails.audience === "kids" ? "Kids sizing" : customDetails.audience === "women" ? "Women sizing" : "Men sizing") + " · Min 1 pcs")
     : undefined;
 
   const accentBg = persona === "organisation" ? "#E0F0FF" : ACCENT_BG;
@@ -4590,6 +4651,9 @@ function PersonaOrderForm({
 
     const orderForLabel = isAccessoryOrder ? "Accessories"
       : orgDetails ? `${subLabel}${serviceLabel ? " · " + serviceLabel : ""}`
+      // "Add more order" can mix audiences — label reflects everyone in the cart.
+      : persona === "individual" && customDetails && garmentCart.length > 0
+        ? indivCartCats.map(indivAudienceShort).join(" + ")
       : customDetails?.audience === "kids" ? "Kids"
       : customDetails?.audience === "women" ? "Women"
       : customDetails?.audience === "men" ? "Men"
@@ -4667,6 +4731,8 @@ function PersonaOrderForm({
                 colorLabel: g.colorLabel,
                 colorHex: g.colorHex,
                 gender: g.gender,
+                // Mixed-audience orders label each line (Men's / Women's / Kids) in Track.
+                audience: indivCartMixed ? orgAudienceLabel(g.categoryId, g.gender) : undefined,
                 qty: g.qty,
                 fabric: m.fabric,
                 gsm: m.gsm,
@@ -4907,7 +4973,7 @@ function PersonaOrderForm({
                 garmentCart.length > 0 ? (
                   <>
                     {garmentCart.map(g => line(
-                      `${g.name}${g.style ? ` · ${g.style}` : ""} · ${g.colorLabel} × ${g.qty}`,
+                      `${indivCartMixed ? `${indivAudienceShort(g.categoryId)} · ` : ""}${g.name}${g.style ? ` · ${g.style}` : ""} · ${g.colorLabel} × ${g.qty}`,
                       `${inr(garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave))}/pc`
                     ))}
                     {line("Total pieces", `${garmentCartQty} pcs`)}
@@ -5726,10 +5792,13 @@ function PersonaOrderForm({
           <p className="text-foreground text-xs mb-2.5" style={{ fontWeight: 500 }}>Size distribution</p>
           {persona === "individual" ? (
             <>
-              <p className="text-muted-foreground mb-2.5" style={{ fontSize: 11 }}>Set the ages for each colour — every piece is matched to its size.</p>
+              <p className="text-muted-foreground mb-2.5" style={{ fontSize: 11 }}>Set the sizes for each colour — every piece is matched to its size.</p>
               <div className="flex flex-col gap-3">
                 {garmentCart.map((ln, idx) => (
-                  <PerColourSize key={ln.name + ln.colorHex} line={ln} cat={cfg.defaultSizeCat} onChange={s => setLineSizes(idx, s)}/>
+                  <PerColourSize key={`${ln.categoryId}-${ln.gender ?? ""}-${ln.name}-${ln.colorHex}`} line={ln}
+                    cat={indivLineSizeCat(ln)}
+                    audienceLabel={indivCartMixed && ln.categoryId !== "kids" ? (ln.categoryId === "womens" ? "Women's" : "Men's") : undefined}
+                    onChange={s => setLineSizes(idx, s)}/>
                 ))}
               </div>
             </>
@@ -5794,7 +5863,7 @@ function PersonaOrderForm({
               </div>
             </div>
           )}
-          <Section title="References & samples" icon={ImageIcon}><RefImagesSection persona={persona} isAccessoryOrder={isAccessoryOrgOrder} onStateChange={setRefState} initialChosen={resume ? refState.chosen : undefined} previewLines={persona === "individual" ? garmentCart.map(g => ({ name: g.name, colorHex: g.colorHex, colorLabel: g.colorLabel })) : undefined} previewAudience={customDetails?.audience} previewMaterial={material.fabric}/></Section>
+          <Section title="References & samples" icon={ImageIcon}><RefImagesSection persona={persona} isAccessoryOrder={isAccessoryOrgOrder} onStateChange={setRefState} initialChosen={resume ? refState.chosen : undefined} previewLines={persona === "individual" ? garmentCart.map(g => ({ name: g.name, colorHex: g.colorHex, colorLabel: g.colorLabel })) : undefined} previewAudience={indivCartMixed ? undefined : customDetails?.audience} previewMaterial={material.fabric}/></Section>
         </div>
       );
     }
@@ -6132,6 +6201,9 @@ function CustomAudienceForm({ onContinue, onBack, onAccessories }: { onContinue:
               );
             })}
           </div>
+          <p className="text-muted-foreground mt-2.5" style={{ fontSize: 11, lineHeight: 1.5 }}>
+            Ordering for the whole family? Start with one — you can tap <strong>"Add more order"</strong> on the next step to add Men, Women or Kids to the same order.
+          </p>
         </Section>
 
         {/* Accessories — same catalog as organisation orders */}

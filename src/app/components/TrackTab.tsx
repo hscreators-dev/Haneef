@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import type { SubmittedOrderSummary, OrderPrice, DraftPayload, OrderGarmentLine } from "./NewOrderTab";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
+import { StageAnimation, stageFromLabel, type OrderStage } from "./StageAnimation";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const ACCENT      = "#C8A97E";
@@ -16,6 +17,7 @@ const fnt: React.CSSProperties = { fontFamily: "DM Sans, sans-serif" };
 // ─── Shared style helpers ─────────────────────────────────────────────────────
 const card: React.CSSProperties = {
   background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16,
+  boxShadow: "0 1px 2px rgba(13,13,13,0.03), 0 4px 14px rgba(13,13,13,0.04)",
 };
 const btnPrimary: React.CSSProperties = {
   width: "100%", background: DARK, color: "#fff",
@@ -246,7 +248,8 @@ function Panel({ title, icon, action, children }: {
 // ─── Status badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ label, cls }: { label: string; cls: string }) {
   return (
-    <span className={`text-xs px-2.5 py-0.5 rounded-full ${cls}`} style={{ fontWeight: 500, fontSize: 10 }}>
+    <span className={`text-xs px-2.5 py-1 rounded-full ${cls}`}
+      style={{ fontWeight: 600, fontSize: 10, letterSpacing: "0.02em", boxShadow: "inset 0 0 0 1px rgba(13,13,13,0.05)" }}>
       {label}
     </span>
   );
@@ -985,6 +988,10 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
         border: order.isNew
           ? `1.5px solid ${ACCENT}`
           : "1px solid var(--border)",
+        boxShadow: open
+          ? "0 2px 4px rgba(13,13,13,0.04), 0 10px 24px rgba(13,13,13,0.07)"
+          : "0 1px 2px rgba(13,13,13,0.03), 0 4px 14px rgba(13,13,13,0.04)",
+        transition: "box-shadow .25s ease",
       }}>
 
       {/* New order banner */}
@@ -1031,6 +1038,15 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
             </div>
           ) : (
             <div className="pt-3">
+              {/* Stage animation — scene follows the order's current stage */}
+              <div className="mb-4">
+                <StageAnimation stage={
+                  (order.steps.find(s => s.status === "active")
+                    ? stageFromLabel(order.steps.find(s => s.status === "active")!.label)
+                    : "delivered") as OrderStage
+                }/>
+              </div>
+
               {/* Timeline steps */}
               {order.steps.map((step, i) => {
                 const isLast     = i === order.steps.length - 1;
@@ -1042,10 +1058,18 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
                     style={{ marginBottom: isLast ? 0 : 16 }}>
                     {!isLast && (
                       <div className="absolute"
-                        style={{ left: 11, top: 24, bottom: -16, width: 1, background: "var(--border)", zIndex: 0 }}/>
+                        style={{
+                          left: 11, top: 24, bottom: -16, width: 2, borderRadius: 2,
+                          background: step.status === "done" ? "rgba(13,13,13,0.55)" : "var(--border)",
+                          zIndex: 0,
+                        }}/>
                     )}
                     <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center relative"
-                      style={{ background: iconBg, border: `1.5px solid ${iconBorder}`, color: iconColor, zIndex: 1 }}>
+                      style={{
+                        background: iconBg, border: `1.5px solid ${iconBorder}`, color: iconColor, zIndex: 1,
+                        boxShadow: step.status === "active" ? `0 0 0 4px ${ACCENT_BG}` : "none",
+                        animation: step.status === "active" ? "trackActivePulse 2s ease-in-out infinite" : "none",
+                      }}>
                       {step.icon}
                     </div>
                     <div style={{ paddingTop: 2 }}>
@@ -1124,21 +1148,29 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      <style>{`
+        @keyframes trackActivePulse{0%,100%{box-shadow:0 0 0 4px ${ACCENT_BG}}50%{box-shadow:0 0 0 7px rgba(200,169,126,0.06)}}
+        @media (prefers-reduced-motion:reduce){.track-anim-off,[style*="trackActivePulse"]{animation:none!important}}
+      `}</style>
 
-      {/* ── Filter tabs ── */}
-      <div className="flex px-5 pt-4 pb-3 gap-2 flex-shrink-0">
-        {(["active", "past", "all"] as TrackFilter[]).map(f => (
-          <button key={f} onClick={() => setFilter(f)}
-            className="flex-1 py-2.5 rounded-xl text-sm"
-            style={{
-              background: filter === f ? DARK : "var(--muted)",
-              color: filter === f ? "#fff" : "var(--muted-foreground)",
-              fontWeight: filter === f ? 600 : 400,
-              border: "none", cursor: "pointer",
-            }}>
-            {f === "active" ? `Active (${counts.active})` : f === "past" ? `Past (${counts.past})` : `All (${counts.all})`}
-          </button>
-        ))}
+      {/* ── Filter tabs — segmented control ── */}
+      <div className="px-5 pt-4 pb-3 flex-shrink-0">
+        <div className="flex gap-1 p-1 rounded-2xl" style={{ background: "var(--muted)", border: "1px solid var(--border)" }}>
+          {(["active", "past", "all"] as TrackFilter[]).map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              className="flex-1 py-2 rounded-xl text-sm"
+              style={{
+                background: filter === f ? "var(--card)" : "transparent",
+                color: filter === f ? "var(--foreground)" : "var(--muted-foreground)",
+                fontWeight: filter === f ? 600 : 500,
+                border: "none", cursor: "pointer",
+                boxShadow: filter === f ? "0 1px 3px rgba(13,13,13,0.10), 0 1px 2px rgba(13,13,13,0.06)" : "none",
+                transition: "background .2s, box-shadow .2s, color .2s",
+              }}>
+              {f === "active" ? `Active (${counts.active})` : f === "past" ? `Past (${counts.past})` : `All (${counts.all})`}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Order list ── */}

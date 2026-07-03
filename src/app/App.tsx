@@ -11,6 +11,7 @@ import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPay
 import { TrackTab } from "./components/TrackTab";
 import { AccountTab, type UserProfile, orgTypeDefs, OrgTypeSelect } from "./components/AccountTab";
 import { NotificationsScreen } from "./components/NotificationsScreen";
+import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
 
 export type Tab = "home" | "order" | "track" | "account";
 
@@ -46,6 +47,7 @@ const btnAccent: React.CSSProperties = {
 // Standard card
 const card: React.CSSProperties = {
   background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16,
+  boxShadow: "0 1px 2px rgba(13,13,13,0.03), 0 4px 14px rgba(13,13,13,0.04)",
 };
 // Muted input
 const inputStyle: React.CSSProperties = {
@@ -550,11 +552,14 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
       </div>
 
       {/* ── Hero banner ── */}
-      <div className="mx-5 mb-5 rounded-2xl p-5 relative overflow-hidden" style={{ background: DARK }}>
+      <div className="mx-5 mb-5 rounded-2xl p-5 relative overflow-hidden"
+        style={{ background: "linear-gradient(140deg, #1A1815 0%, #0D0D0D 55%, #14110C 100%)", boxShadow: "0 8px 24px rgba(13,13,13,0.18)" }}>
         <div className="absolute top-0 right-0 w-48 h-48 rounded-full border border-white/5"
           style={{ transform: "translate(30%,-30%)" }}/>
         <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full border border-white/5"
           style={{ transform: "translate(-30%,30%)" }}/>
+        <div className="absolute top-0 right-0 w-40 h-40 rounded-full"
+          style={{ transform: "translate(35%,-35%)", background: "radial-gradient(circle, rgba(200,169,126,0.16) 0%, transparent 70%)" }}/>
         <p className="text-white/40 mb-2 label-section">Garm Procurement</p>
         <h1 className="text-white mb-1" style={{ fontSize: 24, fontWeight: 600, lineHeight: 1.25 }}>
           Managed textile<br/><span style={{ color: ACCENT }}>sourcing for teams</span>
@@ -597,7 +602,12 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
             </button>
           </div>
 
-          <div className="px-4 pt-5 pb-4">
+          <div className="px-4 pt-4 pb-4">
+            {/* Stage animation — scene follows the active order's current stage */}
+            <div className="mb-4">
+              <StageAnimation stage={stageFromLabel(activeOrder.status)} compact/>
+            </div>
+
             {/* Horizontal progress stepper */}
             <div className="relative flex justify-between items-start">
               <div className="absolute" style={{ left: 11, right: 11, top: 10, height: 2, background: "var(--border)" }}/>
