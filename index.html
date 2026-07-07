@@ -11,6 +11,15 @@
       <meta name="robots" content="noindex, nofollow" />
       <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
 
+      <!-- "Add to Home Screen" support — iOS only reads apple-touch-icon (it
+           ignores the web manifest for this), Android/Chrome use the manifest. -->
+      <link rel="apple-touch-icon" href="/Haneef/apple-touch-icon.png" />
+      <link rel="manifest" href="/Haneef/manifest.webmanifest" />
+      <meta name="theme-color" content="#F8F7F5" />
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+      <meta name="apple-mobile-web-app-title" content="Garm" />
+
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
       <link rel="stylesheet"
