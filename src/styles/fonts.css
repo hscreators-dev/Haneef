@@ -1,4 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap');
+/* The DM Sans stylesheet itself is loaded from index.html as a non-blocking
+   <link>, not via @import here — @import is render-blocking and was adding
+   a multi-second delay to first paint, especially on a cold app launch. */
 
 :root {
   font-family: 'DM Sans', system-ui, -apple-system, sans-serif;

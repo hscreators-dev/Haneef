@@ -22,9 +22,16 @@ const PORT = process.env.PORT ?? 4000;
 
 // ─── Security & parsing middleware ────────────────────────────────────────────
 
+const allowedOrigins = [
+  process.env.FRONTEND_URL ?? "http://localhost:5173",
+  // Capacitor's native WebView origins for the Android/iOS app builds
+  "capacitor://localhost",
+  "https://localhost",
+];
+
 app.use(helmet());
 app.use(cors({
-  origin:      process.env.FRONTEND_URL ?? "http://localhost:5173",
+  origin:      allowedOrigins,
   credentials: true,
 }));
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));

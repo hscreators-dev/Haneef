@@ -369,3 +369,15 @@
 @keyframes flSwing  { 0%, 100% { transform: rotate(-1.3deg); } 50% { transform: rotate(1.3deg); } }
 @keyframes flSheen  { 0%, 14% { transform: translateX(-70px); } 60%, 100% { transform: translateX(290px); } }
 @keyframes flStitch { 0% { stroke-dashoffset: 64; opacity: 1; } 70% { opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+
+/* ── Mobile input zoom fix ─────────────────────────────────────────────
+   iOS auto-zooms the whole page on focus for any input/textarea/select
+   with a computed font-size under 16px. Many of this app's fields use
+   14-15px by design (desktop-appropriate), which was triggering that zoom
+   on real devices. Force 16px on inputs specifically at phone widths —
+   desktop/tablet sizing is untouched. */
+@media (max-width: 640px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}

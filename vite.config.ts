@@ -18,11 +18,14 @@ function figmaAssetResolver() {
 
 const repoName = 'Haneef';
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
   const isBuild = command === 'build';
+  const isCapacitor = mode === 'capacitor';
 
   return {
-    base: isBuild ? `/${repoName}/` : '/',
+    // Capacitor serves the built assets from the app's local root, so they
+    // must use root-relative paths regardless of the GitHub Pages repo path.
+    base: isCapacitor ? '/' : (isBuild ? `/${repoName}/` : '/'),
     plugins: [
       figmaAssetResolver(),
       // The React and Tailwind plugins are both required for Make, even if

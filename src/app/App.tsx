@@ -1964,15 +1964,21 @@ export default function App() {
   }
 
   // ── Phone frame shell ──
+  // Below the `sm` breakpoint (real phones, native app) this fills the whole
+  // viewport edge-to-edge and insets its own padding for the notch/home indicator.
+  // At `sm` and above (desktop browser) it renders as a centered phone-shaped
+  // preview card instead, since there's no device chrome to align to there.
   const phoneShell = (children: React.ReactNode) => (
     <div className="size-full flex items-center justify-center"
       style={{ fontFamily: "DM Sans, system-ui, sans-serif", background: "var(--secondary)" }}>
-      <div id="garm-phone-frame" className="flex flex-col overflow-hidden"
+      <div id="garm-phone-frame"
+        className="flex flex-col overflow-hidden w-full h-full sm:w-[375px] sm:h-[812px] rounded-none sm:rounded-[44px] border-0 sm:border sm:border-black/[0.08] shadow-none sm:shadow-[0_40px_80px_rgba(0,0,0,0.18),0_0_0_1px_rgba(0,0,0,0.06)]"
         style={{
-          position: "relative", width: 375, height: 812,
-          borderRadius: 44, background: "var(--background)",
-          border: "1px solid rgba(0,0,0,0.08)",
-          boxShadow: "0 40px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.06)",
+          position: "relative", background: "var(--background)",
+          paddingTop: "env(safe-area-inset-top, 0px)",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+          paddingLeft: "env(safe-area-inset-left, 0px)",
+          paddingRight: "env(safe-area-inset-right, 0px)",
         }}>
         {children}
       </div>
