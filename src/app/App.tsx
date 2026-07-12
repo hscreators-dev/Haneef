@@ -11,9 +11,87 @@ import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPay
 import { TrackTab } from "./components/TrackTab";
 import { AccountTab, type UserProfile, orgTypeDefs, OrgTypeSelect } from "./components/AccountTab";
 import { NotificationsScreen } from "./components/NotificationsScreen";
+import { fetchUnreadCount } from "../lib/notifCenter";
 import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
+import { auth as authApi, account as accountApi, orders as ordersApi, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
+import { readPendingOrders, writePendingOrders, rememberOrderSummary } from "../lib/orderSync";
 
 export type Tab = "home" | "order" | "track" | "account";
+
+// ─── Submit → backend order mapping ───────────────────────────────────────────
+// Turns the rich in-app order summary into the backend Order payload so the
+// order actually lands in the shared MongoDB (and the Garm Admin Portal).
+function parseINRAmount(v?: string): number | undefined {
+  if (!v) return undefined;
+  if (v.includes("–") || v.includes("-")) return undefined; // estimate range
+  const n = Number(v.replace(/[^\d]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function summaryToOrderPayload(summary: SubmittedOrderSummary, profile: UserProfile): Partial<ApiOrder> {
+  const persona = profile.accountType === "organisation" ? "organisation" : "individual";
+  const firstLine = summary.garmentLines?.[0];
+  const src = (summary.fabricSource || "").toLowerCase();
+  const fabricSource = src.includes("surplus") || src.includes("deadstock") ? "surplus" : src ? "fresh" : undefined;
+  const total = summary.price?.kind === "fixed" ? parseINRAmount(summary.price.totalValue) : undefined;
+  const totalQty = summary.qty ?? summary.totalPcs ?? 0;
+  const perPc = total && totalQty ? Math.round(total / totalQty) : 0;
+  // Per-garment line items — carries STYLE, colour and the size split for
+  // every garment, so the admin portal shows exactly what the customer
+  // configured (not just top-level defaults).
+  const lines = (summary.garmentLines ?? []).flatMap((g) => {
+    const pname = `${g.name}${g.style ? ` · ${g.style}` : ""}`;
+    return g.sizes.length
+      ? g.sizes.map((s) => ({ p: pname, size: s.size, color: g.colorLabel, qty: s.qty, unit: perPc }))
+      : [{ p: pname, size: "—", color: g.colorLabel, qty: g.qty, unit: perPc }];
+  });
+  return {
+    persona,
+    isAccessoryOrder: summary.isAccessoryOrder,
+    orgName: persona === "organisation" ? profile.orgName : undefined,
+    orgType: persona === "organisation" ? profile.orgType : undefined,
+    serviceLabel: summary.serviceLabel ?? summary.name,
+    // Garment carries the chosen style; fabric/GSM/weave come from the
+    // PER-GARMENT material the customer actually picked (the top-level
+    // summary fields are just the configurator's defaults).
+    garmentType: firstLine ? `${firstLine.name}${firstLine.style ? ` · ${firstLine.style}` : ""}` : (summary.garmentLabel ?? undefined),
+    fabric: firstLine?.fabric ?? summary.fabric,
+    gsm: firstLine?.gsm ?? summary.gsm,
+    weave: firstLine?.weave ?? summary.weave,
+    fabricSource: fabricSource as ApiOrder["fabricSource"],
+    lines,
+    qty: totalQty,
+    sizes: (summary.sizeBreakdown ?? firstLine?.sizes ?? []).map((s) => ({ label: s.size, qty: s.qty })),
+    colors: (summary.colors ?? (firstLine ? [{ hex: firstLine.colorHex, label: firstLine.colorLabel }] : [])).map((c) => ({ hex: c.hex, label: c.label })),
+    accessoryItems: (summary.accessoryItems ?? []).map((a) => ({
+      categoryId: "app", categoryLabel: summary.serviceLabel ?? "Accessories", itemName: a.name, qty: a.qty,
+    })),
+    stitching: firstLine?.stitching ?? summary.stitching,
+    packaging: firstLine?.packaging ?? summary.packaging,
+    deliveryAddress: summary.delivery?.address,
+    deliveryCity: summary.delivery?.city,
+    deliveryPin: summary.delivery?.pin,
+    contactName: summary.delivery?.name || profile.name,
+    contactPhone: summary.delivery?.phone || profile.phone,
+    contactEmail: summary.delivery?.email || profile.email,
+    // Accessory spec choices (Colour, Material, Finish…) travel to the admin
+    // as readable notes so the order record is complete on both sides.
+    notes: [
+      summary.colorDesc,
+      ...(summary.accessorySpecs ?? []).map((sp) =>
+        `${sp.name}: ${sp.fields.map((f) => `${f.label} — ${f.value}`).join(", ")}${sp.notes ? ` · Note: ${sp.notes}` : ""}`),
+    ].filter(Boolean).join("\n") || undefined,
+    total,
+    quoteAmount: total,
+    serviceFee: summary.serviceFee,
+    // Design/logo reference uploads — downloadable by the admin team from the
+    // portal's order Documents card.
+    documents: (summary.referenceAttachments ?? []).map((f) => ({
+      name: f.name, kind: "DESIGN" as const, dataUrl: f.dataUrl, uploadedBy: "customer" as const,
+    })),
+  };
+}
+
 
 // ─── Design tokens (mirrors theme.css) ────────────────────────────────────────
 const ACCENT     = "#C8A97E";
@@ -477,31 +555,75 @@ function SwatchBoxModal({ onClose }: { onClose: () => void }) {
 // been removed — it was just a static design-preview icon with no function, and on a
 // real device the OS already draws its own status bar, so this was redundant chrome.
 
-// ─── Orders data ───────────────────────────────────────────────────────────────
-const orders = [
-  { id: "#FL-2041", name: "Cotton Twill",       shade: "Navy",         qty: "300 pcs",  gsm: "GSM 220", eta: "ETA Jul 14", status: "In production", statusCls: "text-emerald-700 bg-emerald-50", pct: 55,  quoteReady: false },
-  { id: "#FL-2038", name: "Linen Blend Fabric", shade: "Ivory",        qty: "200 pcs",  gsm: "GSM 160", eta: "ETA Jul 8",  status: "Quality check",  statusCls: "text-amber-700 bg-amber-50",   pct: 78,  quoteReady: false },
-  { id: "#FL-2045", name: "Heavy Denim",        shade: "Washed Black", qty: "1000 pcs", gsm: "GSM 360", eta: "Awaiting",   status: "Quote ready",    statusCls: "text-emerald-700 bg-emerald-50", pct: 15,  quoteReady: true  },
-];
+// ─── Active-order card shape (Home) ─────────────────────────────────────────────
+// Derived from the customer's REAL orders — no mock data. The card only shows
+// once a real order exists, so tapping "Track" always opens something.
+interface HomeOrderCard { id: string; name: string; shade: string; qty: string; gsm: string; eta: string; status: string; pct: number; quoteReady: boolean; quoteText: string; }
+
+const HOME_STATUS_PCT: Record<string, number> = {
+  "Order placed": 8, "Order submitted": 8, "Quote pending": 15, "Quote ready": 20, "Order confirmed": 30,
+  "In production": 55, "Quality check": 78, "Shipped": 92, "Delivered": 100, "Completed": 100,
+};
+
+function apiOrderToHomeCard(o: ApiOrder): HomeOrderCard {
+  const name = o.isAccessoryOrder && o.accessoryItems?.length
+    ? `${o.accessoryItems[0].itemName}${o.accessoryItems.length > 1 ? ` +${o.accessoryItems.length - 1}` : ""}`
+    : (o.garmentType || "Custom order");
+  const shade = o.colors?.[0]?.label || "";
+  const quoteReady = o.status === "Quote ready" || (o.persona === "organisation" && (o.quoteAmount ?? 0) > 0 && o.paymentStatus !== "paid" && o.status === "Quote pending");
+  return {
+    id: o.orderRef ? `#${o.orderRef}` : (o._id ? `#${o._id.slice(-6)}` : "#—"),
+    name,
+    shade,
+    qty: `${o.qty || 0} pcs`,
+    gsm: "",
+    eta: o.etaDate ? `ETA ${o.etaDate}` : "",
+    status: o.status,
+    pct: HOME_STATUS_PCT[o.status] ?? 10,
+    quoteReady,
+    quoteText: (o.quoteAmount ?? 0) > 0 ? `Quote ready — ₹${Math.round(o.quoteAmount!).toLocaleString("en-IN")}` : "Quote ready",
+  };
+}
 
 // ─── Home Tab ─────────────────────────────────────────────────────────────────
-function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile }: {
+function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCount = 0, profile }: {
   onNavigate: (t: Tab, orderId?: string) => void;
   onBell: () => void;
   onDrafts: () => void;
   onHelp?: () => void;
   draftCount?: number;
+  notifCount?: number;
   profile?: UserProfile;
 }) {
   const [showSwatch, setShowSwatch] = useState(false);
 
+  // Real orders — same source Track uses. The "Order in progress" card only
+  // appears once the customer actually has an active order (nothing mocked),
+  // so tapping Track always lands on real data. Refreshes on mount + 30s.
+  const [homeOrders, setHomeOrders] = useState<HomeOrderCard[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const load = () => ordersApi.list()
+      .then(({ orders }) => {
+        if (!alive) return;
+        const active = orders
+          .filter((o) => !["Draft", "Delivered", "Completed", "Cancelled"].includes(o.status))
+          .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
+        setHomeOrders(active.map(apiOrderToHomeCard));
+      })
+      .catch(() => { if (alive) setHomeOrders([]); }); // offline / not signed in → no card
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
   // Active order drives the horizontal progress tracker
   const trackStages = ["Review", "Quote", "Approve", "Production", "QA", "Shipped", "Delivered"];
   const statusToStage: Record<string, number> = {
-    "Order placed": 0, "Quote pending": 1, "Quote ready": 2, "In production": 3,
+    "Order placed": 0, "Order submitted": 0, "Order confirmed": 1, "Quote pending": 1, "Quote ready": 2, "In production": 3,
     "Quality check": 4, "Shipped": 5, "Delivered": 6, "Completed": 6,
   };
-  const activeOrder = orders.find(o => !["Delivered", "Completed"].includes(o.status)) ?? orders[0];
+  const activeOrder = homeOrders[0] ?? null;
   const curStage = activeOrder ? (statusToStage[activeOrder.status] ?? 0) : 0;
 
   // Persona-aware hero copy — individuals get warm, personal lines;
@@ -558,7 +680,10 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
             className="w-9 h-9 rounded-full bg-card flex items-center justify-center border border-border relative"
             style={{ boxShadow: "var(--shadow-sm)" }}>
             <Bell size={16} strokeWidth={1.5}/>
-            <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full" style={{ background: ACCENT }}/>
+            {notifCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center"
+                style={{ background: ACCENT, color: "#fff", fontSize: 9, fontWeight: 700 }}>{notifCount > 99 ? "99+" : notifCount}</span>
+            )}
           </button>
           <button onClick={() => onNavigate("account")}
             className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center"
@@ -682,10 +807,10 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
             {/* Order data, shown clearly below */}
             <div className="mt-4 pt-3.5 border-t border-border">
               <div className="flex items-center justify-between mb-1">
-                <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>{activeOrder.name} — {activeOrder.shade}</p>
-                <span className={activeOrder.statusCls?.split(" ").find(c => c.startsWith("text-")) ?? "text-foreground"} style={{ fontSize: 11, fontWeight: 600, background: "transparent" }}>{activeOrder.status}</span>
+                <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>{activeOrder.name}{activeOrder.shade ? ` — ${activeOrder.shade}` : ""}</p>
+                <span className="text-foreground" style={{ fontSize: 11, fontWeight: 600, background: "transparent" }}>{activeOrder.status}</span>
               </div>
-              <p className="text-muted-foreground" style={{ fontSize: 12 }}>{activeOrder.qty} · {activeOrder.gsm} · {activeOrder.eta}</p>
+              <p className="text-muted-foreground" style={{ fontSize: 12 }}>{[activeOrder.qty, activeOrder.gsm, activeOrder.eta].filter(Boolean).join(" · ")}</p>
             </div>
           </div>
         </div>
@@ -726,7 +851,13 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
 
       {/* ── Order cards ── */}
       <div className="px-5 flex flex-col gap-2.5">
-        {orders.map(o => (
+        {homeOrders.length === 0 && (
+          <button onClick={() => onNavigate("order")} className="text-left w-full p-4 rounded-2xl" style={{ ...card, border: "1px dashed var(--border)" }}>
+            <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>No orders yet</p>
+            <p className="text-muted-foreground" style={{ fontSize: 12, marginTop: 2 }}>Start your first order — it'll show up here to track.</p>
+          </button>
+        )}
+        {homeOrders.map(o => (
           <button key={o.id} onClick={() => onNavigate("track", o.id)}
             className="text-left w-full overflow-hidden"
             style={{
@@ -737,10 +868,10 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
             <div className="p-4">
               <div className="flex items-start justify-between mb-2">
                 <p className="text-muted-foreground" style={{ fontSize: 11 }}>{o.id}</p>
-                <StatusBadge label={o.status} cls={o.statusCls}/>
+                <StatusBadge label={o.status} cls="bg-muted text-foreground"/>
               </div>
-              <p className="text-foreground text-sm font-medium mb-1">{o.name} — {o.shade}</p>
-              <p className="text-muted-foreground" style={{ fontSize: 12 }}>{o.qty} · {o.gsm} · {o.eta}</p>
+              <p className="text-foreground text-sm font-medium mb-1">{o.name}{o.shade ? ` — ${o.shade}` : ""}</p>
+              <p className="text-muted-foreground" style={{ fontSize: 12 }}>{[o.qty, o.gsm, o.eta].filter(Boolean).join(" · ")}</p>
               {/* Progress bar — gold thread with a light shimmer running along it */}
               <div className="h-1.5 bg-muted rounded-full mt-3 overflow-hidden">
                 <div className="h-full rounded-full transition-all relative overflow-hidden"
@@ -756,7 +887,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, profile
                 <div className="flex items-center gap-2">
                   <TrendingUp size={13} style={{ color: "#7c5419" }}/>
                   <div>
-                    <p style={{ fontSize: 12, fontWeight: 600, color: ACCENT_TEXT }}>Quote ready — ₹57,700</p>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: ACCENT_TEXT }}>{o.quoteText}</p>
                     <p style={{ fontSize: 10, color: "#92400e" }}>Tap to review & approve</p>
                   </div>
                 </div>
@@ -946,12 +1077,18 @@ function WelcomeScreen({ onDone }: { onDone: () => void }) {
 }
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }: { onLogin: (identity: { phone?: string; email?: string }) => void }) {
+function LoginScreen({ onLogin }: { onLogin: (identity: { phone?: string; email?: string }, remoteProfile?: ApiUserProfile) => void }) {
   const [mode, setMode]         = useState<"phone" | "email">("phone");
   const [step, setStep]         = useState<"identity" | "sending" | "otp">("identity");
   const [identity, setIdentity] = useState("+91");
   const [otp, setOtp]           = useState("");
   const [resendSecs, setResendSecs] = useState(0);
+  const [sendError, setSendError]     = useState("");
+  const [verifyError, setVerifyError] = useState("");
+  const [verifying, setVerifying]     = useState(false);
+  // Dev-mode OTP echoed back by the backend until a real SMS/email gateway
+  // (Twilio/Gmail) is configured — see server/README.md.
+  const [devCode, setDevCode]         = useState("");
   const resendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const otpReady = otp.replace(/\s/g, "").length === 6;
 
@@ -965,6 +1102,7 @@ function LoginScreen({ onLogin }: { onLogin: (identity: { phone?: string; email?
 
   function switchMode(next: "phone" | "email") {
     setMode(next); setIdentity(next === "phone" ? "+91" : ""); setOtp(""); setStep("identity"); setResendSecs(0);
+    setSendError(""); setVerifyError(""); setDevCode("");
     if (resendTimer.current) clearInterval(resendTimer.current);
   }
 
@@ -978,18 +1116,53 @@ function LoginScreen({ onLogin }: { onLogin: (identity: { phone?: string; email?
     }, 1000);
   }
 
-  function sendCode() {
+  // The identity value we key OTP send/verify on — must be IDENTICAL between
+  // sendCode/resend and the final verify call, or the backend won't find a match.
+  const otpIdentity = mode === "phone" ? mobileDigits : identity.trim();
+
+  async function sendCode() {
     if (!identityOk) return;
     setStep("sending");
-    // Simulate network delay (1.2s) then show OTP screen
-    setTimeout(() => { setStep("otp"); startResendCountdown(); }, 1200);
+    setSendError("");
+    try {
+      const res = await authApi.sendOTP(otpIdentity, mode);
+      setDevCode(res.devCode || "");
+      setStep("otp");
+      startResendCountdown();
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Couldn't send the code. Try again.");
+      setStep("identity");
+    }
   }
 
-  function resend() {
+  async function resend() {
     if (resendSecs > 0) return;
     setOtp("");
+    setVerifyError("");
     setStep("sending");
-    setTimeout(() => { setStep("otp"); startResendCountdown(); }, 800);
+    try {
+      const res = await authApi.sendOTP(otpIdentity, mode);
+      setDevCode(res.devCode || "");
+      setStep("otp");
+      startResendCountdown();
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Couldn't resend the code. Try again.");
+      setStep("otp");
+    }
+  }
+
+  async function verifyAndLogin() {
+    if (!otpReady || verifying) return;
+    setVerifying(true);
+    setVerifyError("");
+    try {
+      const res = await authApi.verifyOTP(otpIdentity, otp.replace(/\s/g, ""), mode);
+      onLogin(mode === "phone" ? { phone: fmtPhone(identity) } : { email: identity.trim() }, res.user);
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : "That code didn't match. Try again.");
+    } finally {
+      setVerifying(false);
+    }
   }
 
   return (
@@ -1072,6 +1245,9 @@ function LoginScreen({ onLogin }: { onLogin: (identity: { phone?: string; email?
             </p>
           )}
           {(!identityHasInput || identityOk) && <div style={{ marginBottom: 12 }}/>}
+          {sendError && (
+            <p style={{ fontSize: 11, color: "var(--error)", marginBottom: 12, marginTop: -8 }}>{sendError}</p>
+          )}
           <button
             onClick={sendCode}
             disabled={!identityOk || step === "sending"}
@@ -1098,31 +1274,39 @@ function LoginScreen({ onLogin }: { onLogin: (identity: { phone?: string; email?
             Code sent to <strong style={{ color: "var(--foreground)" }}>{identity}</strong>
           </p>
 
-          {/* Demo banner */}
-          <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-4"
-            style={{ background: "rgba(200,169,126,0.12)", border: "1px solid rgba(200,169,126,0.4)" }}>
-            <ShieldCheck size={14} style={{ color:"#7c5419", flexShrink:0 }}/>
-            <div>
-              <p style={{ fontSize: 11, fontWeight: 600, color: "#7c5419" }}>Prototype mode</p>
-              <p style={{ fontSize: 11, color: "#92400e", lineHeight: 1.4 }}>
-                No real SMS is sent. Type any 6 digits to continue.
-              </p>
+          {/* Dev-mode banner — shown only until a real SMS/email gateway is
+              wired server-side. Codes are verified for real against the
+              backend; this just surfaces the code since nothing sends it yet. */}
+          {devCode && (
+            <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-4"
+              style={{ background: "rgba(200,169,126,0.12)", border: "1px solid rgba(200,169,126,0.4)" }}>
+              <ShieldCheck size={14} style={{ color:"#7c5419", flexShrink:0 }}/>
+              <div>
+                <p style={{ fontSize: 11, fontWeight: 600, color: "#7c5419" }}>Dev mode — no SMS/email gateway connected yet</p>
+                <p style={{ fontSize: 11, color: "#92400e", lineHeight: 1.4 }}>
+                  Your code is <strong>{devCode}</strong>. It's checked for real — wrong codes are rejected.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
 
           <OTPInput value={otp} onChange={setOtp}/>
 
+          {verifyError && (
+            <p style={{ fontSize: 11, color: "var(--error)", marginTop: 8, marginBottom: 4 }}>{verifyError}</p>
+          )}
+
           {/* Progress dots */}
-          <div className="flex justify-center gap-1.5 mb-5">
+          <div className="flex justify-center gap-1.5 mb-5 mt-3">
             {Array(6).fill(null).map((_, i) => (
               <div key={i} className="w-1.5 h-1.5 rounded-full transition-all"
                 style={{ background: i < otp.replace(/\s/g,"").length ? DARK : "var(--border)" }}/>
             ))}
           </div>
 
-          <button onClick={() => onLogin(mode === "phone" ? { phone: fmtPhone(identity) } : { email: identity.trim() })} disabled={!otpReady}
-            style={otpReady ? { ...btnPrimary, marginBottom: 10 } : { ...btnPrimaryDisabled, marginBottom: 10 }}>
-            Verify & sign in
+          <button onClick={verifyAndLogin} disabled={!otpReady || verifying}
+            style={otpReady && !verifying ? { ...btnPrimary, marginBottom: 10 } : { ...btnPrimaryDisabled, marginBottom: 10 }}>
+            {verifying ? "Verifying…" : "Verify & sign in"}
           </button>
 
           {/* Resend */}
@@ -1168,7 +1352,7 @@ const orgNamePlaceholders: Record<string, string> = {
   ngo: "e.g. Smile Foundation Trust",
 };
 
-function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) => void }) {
+function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile, delivery?: { address: string; city: string; pin: string }) => void }) {
   const [step, setStep] = useState<"name" | "type" | "org-details" | "personal-details">("name");
   const [fullName, setFullName] = useState("");
   const [accountType, setAccountType] = useState<AccountType>(null);
@@ -1230,7 +1414,10 @@ function OnboardingScreen({ onComplete }: { onComplete: (profile: UserProfile) =
   }
 
   function handleComplete() {
-    onComplete({ name: fullName, avatar: null, accountType: accountType || "personal", orgName, orgType, gstNumber });
+    onComplete(
+      { name: fullName, avatar: null, accountType: accountType || "personal", orgName, orgType, gstNumber },
+      accountType === "personal" ? { address, city, pin } : undefined,
+    );
   }
 
   const steps = ["name", "type", "details"];
@@ -1806,7 +1993,19 @@ export default function App() {
   const [authStep, setAuthStep]               = useState<"welcome" | "login" | "onboarding" | "app">("welcome");
   const [activeTab, setActiveTab]             = useState<Tab>("home");
   const [showNotifications, setShowNotifications] = useState(false);
+  // Real unread count for the bell badge — from the same derivation the
+  // Notifications screen uses (src/lib/notifCenter.ts), refreshed every 60s
+  // and whenever the Notifications screen closes (reads happened inside).
+  const [notifUnread, setNotifUnread] = useState(0);
   const [showNewOrder, setShowNewOrder]       = useState(false);
+  useEffect(() => {
+    if (authStep !== "app" || showNotifications) return;
+    let alive = true;
+    const refresh = () => { fetchUnreadCount().then((n) => { if (alive) setNotifUnread(n); }); };
+    refresh();
+    const t = setInterval(refresh, 60000);
+    return () => { alive = false; clearInterval(t); };
+  }, [authStep, showNotifications]);
   const [newOrderSummary, setNewOrderSummary] = useState<SubmittedOrderSummary | null>(null);
   const [showRatingPopup, setShowRatingPopup] = useState(false);
   const [ratingVal, setRatingVal]             = useState(0);
@@ -1814,6 +2013,9 @@ export default function App() {
   const [ratingDone, setRatingDone]           = useState(false);
   const [targetOrderId, setTargetOrderId]     = useState<string | null>(null);
   const [userProfile, setUserProfile]         = useState<UserProfile>({ name: "", avatar: null, accountType: "personal" });
+  // The user's default saved delivery address, so New Order can pre-fill it instead of
+  // asking again for an address the user already gave us (at onboarding or in Account).
+  const [defaultAddress, setDefaultAddress]   = useState<{ address: string; city: string; pin: string } | null>(null);
   // Captured at login (phone or email, whichever the user verified with) and merged
   // into the profile once onboarding finishes, so it's not lost between the two steps.
   const [loginIdentity, setLoginIdentity]     = useState<{ phone?: string; email?: string }>({});
@@ -1918,6 +2120,30 @@ export default function App() {
     setResumeDraft(null); // editing finished — don't silently reopen this edit in the New order tab
     setActiveTab("track");
     // ⚠️ Do NOT show rating popup here — only show after order is delivered
+
+    // ── Submit the real order to the backend ──────────────────────────────
+    // This is what makes the order land in the Garm Admin Portal (shared
+    // MongoDB). The admin then Accepts & Confirms it there, which unlocks the
+    // payment step here for individuals. The rich display summary is stored
+    // locally keyed by orderRef so Track can show every configured detail
+    // alongside the live status from the server.
+    if (summary) {
+      const payload = summaryToOrderPayload(summary, userProfile);
+      ordersApi.create(payload).then(({ order }) => {
+        if (order.orderRef) {
+          rememberOrderSummary(order.orderRef, summary);
+          // Swap the local placeholder ref for the real one so the "just
+          // submitted" card and the live order line up as one — the SAME
+          // reference the admin portal shows.
+          setNewOrderSummary({ ...summary, id: order.orderRef });
+        }
+      }).catch(() => {
+        // Backend unreachable / session expired: queue it. TrackTab retries
+        // automatically and shows a visible "waiting to sync" notice — the
+        // order is never silently dropped.
+        writePendingOrders([...readPendingOrders(), { payload, summary, queuedAt: Date.now() }]);
+      });
+    }
   }
   // Org payment "Paid" must survive card collapse/remount, so it lives here (by order id).
   function handleMarkOrderPaid(id: string) {
@@ -1947,6 +2173,11 @@ export default function App() {
   function handleProfileUpdate(p: UserProfile) {
     setUserProfile(p);
     rememberIdentity({ phone: p.phone, email: p.email }, p);
+    accountApi.updateProfile({
+      name: p.name, phone: p.phone, email: p.email,
+      accountType: p.accountType, orgName: p.orgName, orgType: p.orgType,
+      twoFAEnabled: p.twoFAEnabled,
+    }).catch(() => {});
   }
   function handleSignOut() {
     setAuthStep("login");
@@ -1987,20 +2218,61 @@ export default function App() {
 
   // ── Auth screens ──────────────────────────────────────────────────────────
   if (authStep === "welcome")     return phoneShell(<WelcomeScreen onDone={() => setAuthStep("login")}/>);
-  if (authStep === "login")       return phoneShell(<LoginScreen onLogin={identity => {
+  if (authStep === "login")       return phoneShell(<LoginScreen onLogin={(identity, remoteProfile) => {
     setLoginIdentity(identity);
-    // Returning identity? Restore the exact account (and type) it registered as,
-    // instead of re-asking onboarding and risking a different account type this time.
-    const key = identityKey(identity);
-    const existing = key ? loadIdentityRegistry()[key] : undefined;
-    if (existing) { setUserProfile({ ...existing, ...identity }); setAuthStep("app"); }
-    else          { setAuthStep("onboarding"); }
+    if (remoteProfile) {
+      // Real, backend-verified account (find-or-create already happened server-side
+      // during OTP verification) — this replaces the old localStorage-only lookup.
+      const mapped: UserProfile = {
+        name: remoteProfile.name || "",
+        avatar: null,
+        accountType: remoteProfile.accountType === "organisation" ? "organisation" : "personal",
+        orgName: remoteProfile.orgName,
+        orgType: remoteProfile.orgType,
+        phone: remoteProfile.phone,
+        email: remoteProfile.email,
+        twoFAEnabled: remoteProfile.twoFAEnabled,
+      };
+      setUserProfile(mapped);
+      rememberIdentity(identity, mapped); // offline fallback cache only
+      setAuthStep(remoteProfile.onboardingComplete && remoteProfile.name ? "app" : "onboarding");
+      // Load the saved default delivery address (if any) so New Order can pre-fill it
+      // instead of asking the returning user for it again. Best-effort.
+      accountApi.getAddresses().then(res => {
+        const def = res.addresses.find(a => a.isDefault) ?? res.addresses[0];
+        if (def) setDefaultAddress({ address: def.line1, city: def.city, pin: def.pin });
+      }).catch(() => {});
+    } else {
+      // Safety net only — shouldn't happen now that OTP verification is real.
+      const key = identityKey(identity);
+      const existing = key ? loadIdentityRegistry()[key] : undefined;
+      if (existing) { setUserProfile({ ...existing, ...identity }); setAuthStep("app"); }
+      else          { setAuthStep("onboarding"); }
+    }
   }}/>);
-  if (authStep === "onboarding")  return phoneShell(<OnboardingScreen onComplete={p => {
+  if (authStep === "onboarding")  return phoneShell(<OnboardingScreen onComplete={(p, delivery) => {
     const merged = { ...p, ...loginIdentity };
     setUserProfile(merged);
     rememberIdentity(loginIdentity, merged);
     setAuthStep("app");
+    // Persist to the real backend so this account is recognised as onboarded on
+    // future logins (from this device or any other). Best-effort — local state
+    // already reflects the update either way.
+    accountApi.updateProfile({
+      name: merged.name, phone: merged.phone, email: merged.email,
+      accountType: merged.accountType, orgName: merged.orgName, orgType: merged.orgType,
+      onboardingComplete: true,
+    }).catch(() => {});
+    // Save the address the user just gave us as their default delivery address, so
+    // New Order can pre-fill it instead of asking again. Update local state
+    // immediately (so it's ready the moment they land on New Order); persist to the
+    // backend best-effort.
+    if (delivery && delivery.address.trim() && delivery.city.trim()) {
+      setDefaultAddress(delivery);
+      accountApi.addAddress({
+        label: "Home", line1: delivery.address, city: delivery.city, state: "", pin: delivery.pin, isDefault: true,
+      }).catch(() => {});
+    }
     // Tutorial/coach-mark trigger lives in the authStep === "app" effect above, so it
     // fires here AND for returning users who skip straight past onboarding.
   }}/>);
@@ -2028,7 +2300,10 @@ export default function App() {
             <button onClick={() => setShowNotifications(true)}
               className="w-8 h-8 rounded-full bg-card flex items-center justify-center border border-border relative">
               <Bell size={14} strokeWidth={1.5}/>
-              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full" style={{ background: ACCENT }}/>
+              {notifUnread > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-1 rounded-full flex items-center justify-center"
+                  style={{ background: ACCENT, color: "#fff", fontSize: 8.5, fontWeight: 700 }}>{notifUnread > 99 ? "99+" : notifUnread}</span>
+              )}
             </button>
           </div>
         </div>
@@ -2040,8 +2315,8 @@ export default function App() {
           <HelpSupportScreen onBack={() => setShowHelp(false)} onReplayTour={() => { setShowHelp(false); handleReplayTour(); }}/>
         ) : (
           <>
-            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} draftCount={drafts.length} profile={userProfile}/>}
-            {activeTab === "order"   && <NewOrderTab key={resumeDraft?.id ?? "new"} onNavigate={handleNavigate} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>}
+            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
+            {activeTab === "order"   && <NewOrderTab key={resumeDraft?.id ?? "new"} onNavigate={handleNavigate} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>}
             {activeTab === "track"   && (
               <TrackTab
                 showNew={showNewOrder}

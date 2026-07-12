@@ -1,53 +1,67 @@
-import { useState } from "react";
-import { ArrowLeft, Check, CheckCheck, Scissors, Microscope, Truck, Package, Shield, AlertCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Check, CheckCheck, Scissors, Microscope, Truck, Package, AlertCircle, FileText, IndianRupee, MessageSquare } from "lucide-react";
+import { fetchNotifs, readSet, saveReadSet, type Notif, type NType } from "../../lib/notifCenter";
 
 const ACCENT = "#C8A97E";
 
-type NType = "quote" | "production" | "quality" | "shipping" | "delivered" | "system";
+// Notification data + read state all live in src/lib/notifCenter.ts — shared
+// with App's bell badge so the unread count and this list can never disagree.
 
-interface Notif {
-  id: number; type: NType; title: string; body: string; time: string; read: boolean; orderId?: string;
+function timeLabel(at: number): string {
+  if (!at) return "";
+  const diff = Date.now() - at;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "Just now";
+  if (min < 60) return `${min} min ago`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `${hrs} hr${hrs > 1 ? "s" : ""} ago`;
+  const d = new Date(at);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (at >= today.getTime() - 86400000) return "Yesterday";
+  return d.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+}
+function isTodayGroup(at: number): boolean {
+  return at > 0 && Date.now() - at < 48 * 3600 * 1000;
 }
 
-const allNotifs: Notif[] = [
-  { id: 1,  type: "quote",      title: "Quote ready — #FL-2045",       body: "₹57,700 for Heavy Denim (1000 pcs). Tap to review & approve.",         time: "2 min ago",  read: false, orderId: "#FL-2045" },
-  { id: 2,  type: "production", title: "In production — #FL-2041",      body: "Cotton Twill batch started weaving. ~40% complete, on track for Jul 14.", time: "3 hrs ago",  read: false, orderId: "#FL-2041" },
-  { id: 4,  type: "quality",    title: "Quality check — #FL-2038",      body: "Linen Blend Fabric entered quality inspection. Est. complete Jul 8.",    time: "Yesterday",  read: true,  orderId: "#FL-2038" },
-  { id: 5,  type: "delivered",  title: "Delivered — #FL-2035",          body: "Your Cotton Jersey order was delivered successfully. Rate your order.",   time: "Jun 10",     read: true  },
-  { id: 6,  type: "system",     title: "2FA reminder",                  body: "Secure your account with two-factor authentication. Takes 30 seconds.",  time: "Jun 8",      read: true  },
-  { id: 7,  type: "shipping",   title: "Shipped — #FL-2033",            body: "Your order is on the way! Tracking ID: DTDC-9823441.",                   time: "Jun 5",      read: true  },
-  { id: 8,  type: "quote",      title: "Quote updated — #FL-2045",      body: "OEKO-TEX cost added: ₹1,200. Tap to review the latest quote.",           time: "Jun 4",      read: true,  orderId: "#FL-2045" },
-];
-
 const typeIcon: Record<NType, { icon: React.ReactNode; bg: string; color: string }> = {
+  placed:     { icon: <FileText     size={14} strokeWidth={1.5}/>, bg: "#f3f4f6",                color: "#374151" },
   quote:      { icon: <AlertCircle  size={14} strokeWidth={1.5}/>, bg: "rgba(200,169,126,0.15)", color: ACCENT },
+  confirmed:  { icon: <Check        size={14} strokeWidth={1.5}/>, bg: "#e8f5e9",                color: "#2e7d32" },
+  payment:    { icon: <IndianRupee  size={14} strokeWidth={1.5}/>, bg: "#e8f5e9",                color: "#2e7d32" },
   production: { icon: <Scissors     size={14} strokeWidth={1.5}/>, bg: "#e8f5e9",                color: "#2e7d32" },
   quality:    { icon: <Microscope   size={14} strokeWidth={1.5}/>, bg: "#fff8e1",                color: "#e65100" },
   shipping:   { icon: <Truck        size={14} strokeWidth={1.5}/>, bg: "#e3f2fd",                color: "#1565c0" },
   delivered:  { icon: <Package      size={14} strokeWidth={1.5}/>, bg: "#e8f5e9",                color: "#2e7d32" },
-  system:     { icon: <Shield       size={14} strokeWidth={1.5}/>, bg: "#f3f4f6",                color: "#374151" },
+  support:    { icon: <MessageSquare size={14} strokeWidth={1.5}/>, bg: "rgba(200,169,126,0.15)", color: ACCENT },
 };
 
 type Filter = "all" | "unread" | "updates";
 
 export function NotificationsScreen({ onClose, onNavigate }: { onClose: () => void; onNavigate?: (tab: string, orderId?: string) => void }) {
   const [filter, setFilter] = useState<Filter>("all");
-  const [notifs, setNotifs] = useState<Notif[]>(allNotifs);
+  const [notifs, setNotifs] = useState<Notif[] | null>(null); // null = loading
+  const [read, setRead] = useState<Set<string>>(readSet);
 
-  function markRead(id: number) {
-    setNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  useEffect(() => {
+    let alive = true;
+    fetchNotifs().then((all) => { if (alive) setNotifs(all); });
+    return () => { alive = false; };
+  }, []);
+
+  function markRead(key: string) {
+    setRead((prev) => { const next = new Set(prev); next.add(key); saveReadSet(next); return next; });
   }
   function markAllRead() {
-    setNotifs(prev => prev.map(n => ({ ...n, read: true })));
+    setRead((prev) => { const next = new Set(prev); (notifs ?? []).forEach((n) => next.add(n.key)); saveReadSet(next); return next; });
   }
 
-  const filtered = notifs.filter(n => {
-    if (filter === "unread") return !n.read;
-    if (filter === "updates") return n.type !== "system";
-    return true;
+  const list = notifs ?? [];
+  const filtered = list.filter((n) => {
+    if (filter === "unread") return !read.has(n.key);
+    return true; // "updates" — every live notification IS an order update now
   });
-
-  const unreadCount = notifs.filter(n => !n.read).length;
+  const unreadCount = list.filter((n) => !read.has(n.key)).length;
 
   return (
     <div className="absolute inset-0 z-50 flex flex-col bg-background">
@@ -92,23 +106,27 @@ export function NotificationsScreen({ onClose, onNavigate }: { onClose: () => vo
 
       {/* Notifications list */}
       <div className="flex-1 overflow-y-auto pt-3 pb-4 min-h-0" style={{ scrollbarWidth: "none" }}>
-        {filtered.length === 0 && (
+        {notifs === null && (
+          <div className="flex flex-col items-center justify-center h-48 text-center px-8">
+            <p className="text-muted-foreground text-xs">Loading your order updates…</p>
+          </div>
+        )}
+
+        {notifs !== null && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center h-48 text-center px-8">
             <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
               <Check size={20} className="text-muted-foreground" strokeWidth={1.5}/>
             </div>
             <p className="text-foreground text-sm" style={{ fontWeight: 500 }}>All caught up</p>
-            <p className="text-muted-foreground text-xs mt-1">No {filter === "unread" ? "unread " : ""}notifications</p>
+            <p className="text-muted-foreground text-xs mt-1">
+              {list.length === 0 ? "Updates about your orders will appear here" : `No ${filter === "unread" ? "unread " : ""}notifications`}
+            </p>
           </div>
         )}
 
-        {/* Group today vs earlier */}
+        {/* Group today (last 48h) vs earlier */}
         {["Today", "Earlier"].map(group => {
-          const items = filtered.filter(n =>
-            group === "Today"
-              ? n.time.includes("min") || n.time.includes("hrs") || n.time === "Yesterday"
-              : !n.time.includes("min") && !n.time.includes("hrs") && n.time !== "Yesterday"
-          );
+          const items = filtered.filter(n => (group === "Today") === isTodayGroup(n.at));
           if (items.length === 0) return null;
           return (
             <div key={group}>
@@ -117,30 +135,30 @@ export function NotificationsScreen({ onClose, onNavigate }: { onClose: () => vo
               </p>
               {items.map(n => {
                 const vis = typeIcon[n.type];
+                const isRead = read.has(n.key);
                 return (
                   <button
-                    key={n.id}
+                    key={n.key}
                     onClick={() => {
-                      markRead(n.id);
-                      if (n.type === "system") onNavigate?.("account");
-                      else if (n.orderId)      onNavigate?.("track", n.orderId);
-                      else                     onNavigate?.("track");
+                      markRead(n.key);
+                      // Support replies live under Account › Help & support;
+                      // order events open in Track.
+                      if (n.type === "support") onNavigate?.("account", n.ticketId);
+                      else onNavigate?.("track", n.orderId);
                     }}
                     className="w-full flex items-start gap-3 px-5 py-3.5 text-left transition-colors"
-                    style={{ background: n.read ? "transparent" : "rgba(200,169,126,0.05)", border: "none", cursor: "pointer" }}
+                    style={{ background: isRead ? "transparent" : "rgba(200,169,126,0.05)", border: "none", cursor: "pointer" }}
                   >
-                    {/* Icon */}
                     <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5" style={{ background: vis.bg, color: vis.color }}>
                       {vis.icon}
                     </div>
 
-                    {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-foreground text-sm leading-snug" style={{ fontWeight: n.read ? 400 : 600 }}>
+                        <p className="text-foreground text-sm leading-snug" style={{ fontWeight: isRead ? 400 : 600 }}>
                           {n.title}
                         </p>
-                        <span className="text-muted-foreground flex-shrink-0" style={{ fontSize: 10, marginTop: 1 }}>{n.time}</span>
+                        <span className="text-muted-foreground flex-shrink-0" style={{ fontSize: 10, marginTop: 1 }}>{timeLabel(n.at)}</span>
                       </div>
                       <p className="text-muted-foreground text-xs leading-relaxed mt-0.5">{n.body}</p>
                       {n.orderId && (
@@ -148,8 +166,7 @@ export function NotificationsScreen({ onClose, onNavigate }: { onClose: () => vo
                       )}
                     </div>
 
-                    {/* Unread dot */}
-                    {!n.read && (
+                    {!isRead && (
                       <div className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5" style={{ background: ACCENT }}/>
                     )}
                   </button>

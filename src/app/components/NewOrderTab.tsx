@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 import { tryon as tryonApi } from "../../lib/api";
+import { useCatalogAvailability, adminStylesFor, adminMaterialsFor, adminPaletteFor } from "../../lib/useCatalogAvailability";
+import { useOrderFormConfig, calcServiceFee, surplusDiscountPct } from "../../lib/useOrderFormConfig";
 
 const ACCENT      = "#C8A97E";
 const ACCENT_BG   = "rgba(200,169,126,0.12)";
@@ -344,16 +346,32 @@ type RefOption  = "upload_logo" | "inspiration" | "match_uniform" | "swatch_box"
 type DigiStatus = "pending" | "processing" | "done";
 
 interface ColorEntry { id: number; hex: string; pantone: string; label: string; position: string }
-interface RefImg { id: number; url: string; name: string; size: number; caption: string; tag: string; digiStatus?: DigiStatus; needsDigi?: boolean }
+interface RefImg { id: number; url: string; name: string; size: number; caption: string; tag: string; digiStatus?: DigiStatus; needsDigi?: boolean; dataUrl?: string }
+
+// Read an uploaded reference file as a base64 data URL so it can travel with
+// the order to the backend — the admin team downloads it from the portal's
+// order Documents card. Files over 4MB are kept name-only (too big to embed).
+const REF_FILE_MAX = 4 * 1024 * 1024;
+function refFileToDataUrl(file: File): Promise<string | undefined> {
+  if (file.size > REF_FILE_MAX) return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => resolve(undefined);
+    reader.readAsDataURL(file);
+  });
+}
 
 // Fallback demo profile — overwritten with the real onboarding profile (name, org
-// name/type, phone, email) at the top of NewOrderTab() on every mount, so the rest of
-// this file can keep reading `currentUser.X` as a simple, always-in-scope default.
+// name/type, phone, email, saved default delivery address) at the top of
+// NewOrderTab() on every mount, so the rest of this file can keep reading
+// `currentUser.X` as a simple, always-in-scope default.
 let currentUser = {
-  name: "Arjun Kumar", org: "Sri Vidya Mandir School",
+  name: "", org: "",
   accountType: "institution" as "institution" | "individual",
   orgType: "school" as OrgType,
-  email: "arjun@srividyamandir.edu.in", phone: "+91 98765 43210",
+  email: "", phone: "",
+  address: "", city: "", pin: "",
 };
 
 // ─── Org configs ──────────────────────────────────────────────────────────────
@@ -779,9 +797,13 @@ function fabricPriceMultiplier(fabric?: string): number {
 }
 // Per-piece garment price = catalog base × fabric multiplier + weave add-on.
 // When no garment is selected (legacy), fall back to the fabric-only rate.
-function garmentPriceForFabric(garment: SelectedGarment | null, fabric?: string, weave?: string): number {
-  if (!garment) return garmentRatePerPc(fabric, weave);
-  return Math.round(garment.basePrice * fabricPriceMultiplier(fabric)) + weaveAddOnPerPc(weave);
+function garmentPriceForFabric(garment: SelectedGarment | null, fabric?: string, weave?: string, source?: "fresh" | "surplus"): number {
+  const base = !garment
+    ? garmentRatePerPc(fabric, weave)
+    : Math.round(garment.basePrice * fabricPriceMultiplier(fabric)) + weaveAddOnPerPc(weave);
+  // Surplus (mill leftover) fabric is genuinely cheaper — apply the discount
+  // set in the Garm Admin Portal (Settings → Order Form → Service Fee).
+  return source === "surplus" ? Math.max(1, Math.round(base * (1 - surplusDiscountPct() / 100))) : base;
 }
 
 // ─── Garment style options ────────────────────────────────────────────────────
@@ -789,6 +811,11 @@ function garmentPriceForFabric(garment: SelectedGarment | null, fabric?: string,
 // shirt, leggings vs jeans, …). Chosen per product inside the garment card.
 // Keyword-matched against the catalog item name so it works across men/women/kids.
 function garmentStyleOptions(name: string): string[] {
+  // Admin-managed Style list for this product (Garm Admin Portal → Catalog).
+  // Present ⇒ it replaces the built-in list below; missing/empty/server
+  // unreachable ⇒ the app's own hardcoded options keep working unchanged.
+  const admin = adminStylesFor(name);
+  if (admin) return admin;
   const n = name.toLowerCase();
   // ── Tops ──
   if (/polo/.test(n))                        return ["Classic collar", "Tipped collar", "Zip placket", "Mandarin collar"];
@@ -879,9 +906,19 @@ function garmentAllowedForOrg(orgType: OrgType | undefined, name: string): boole
 // Maps a catalog item name to a sensible fabric/GSM set so a T-shirt and a shirt
 // in the same order each get their own material choices.
 function materialOptionsForGarment(name: string): { fabricOptions: string[]; gsmOptions: string[]; weaveOptions: string[] } {
+  // Admin-managed Fabric/GSM/Weave lists for this product (Garm Admin Portal →
+  // Catalog) override the built-in mapping below — list by list, so an admin
+  // can customise just the fabrics and keep the app's GSM/weave defaults.
+  // Missing/empty/server unreachable ⇒ built-in lists, exactly as before.
+  const admin = adminMaterialsFor(name);
+  const withAdmin = (built: { fabricOptions: string[]; gsmOptions: string[]; weaveOptions: string[] }) => ({
+    fabricOptions: admin.fabricOptions ?? built.fabricOptions,
+    gsmOptions: admin.gsmOptions ?? built.gsmOptions,
+    weaveOptions: admin.weaveOptions ?? built.weaveOptions,
+  });
   const n = name.toLowerCase();
   const weave = ["Plain", "Twill", "Jersey knit", "Pique", "Custom"];
-  const pick = (k: keyof typeof garmentFabricMap) => ({ ...garmentFabricMap[k], weaveOptions: weave });
+  const pick = (k: keyof typeof garmentFabricMap) => withAdmin({ ...garmentFabricMap[k], weaveOptions: weave });
   if (/hoodie|sweatshirt/.test(n))                 return pick("hoodie");
   if (/polo/.test(n))                              return pick("polo");
   if (/t-?shirt|tee\b|oversized|round neck/.test(n)) return pick("tshirt");
@@ -890,7 +927,7 @@ function materialOptionsForGarment(name: string): { fabricOptions: string[]; gsm
   if (/track|jogger|jersey|short|legging/.test(n)) return pick("sportswear");
   if (/dress|frock|gown|kurti|kurta|saree|tunic|top|palazzo/.test(n)) return pick("dress");
   if (/uniform|lab coat|apron|scrub|safety/.test(n)) return pick("school_uniform");
-  return { fabricOptions: garmentFabricMap.tshirt.fabricOptions, gsmOptions: garmentFabricMap.tshirt.gsmOptions, weaveOptions: weave };
+  return withAdmin({ fabricOptions: garmentFabricMap.tshirt.fabricOptions, gsmOptions: garmentFabricMap.tshirt.gsmOptions, weaveOptions: weave });
 }
 
 // ─── Garment glyph icons ──────────────────────────────────────────────────────
@@ -1424,6 +1461,13 @@ const individualColorPresets = [
   { hex:"#8b3a3a", label:"Burgundy"    },
 ];
 
+// Palette for one garment: the admin's colour swatches for that product when
+// configured (Garm Admin Portal → Catalog), otherwise the 8 presets above.
+// Fails open — server missing/unreachable ⇒ presets, exactly as before.
+function individualPaletteFor(name: string): { hex: string; label: string }[] {
+  return adminPaletteFor(name) ?? individualColorPresets;
+}
+
 function IndividualColorSection({ onStateChange, initial, paletteOnly }: { onStateChange?: (s: { selected: string[]; desc: string; qtys: Record<string, number> }) => void; initial?: { selected: string[]; desc: string; qtys?: Record<string, number> }; paletteOnly?: boolean }) {
   const [selected, setSelected] = useState<string[]>(initial?.selected ?? []);
   const [desc, setDesc]         = useState(initial?.desc ?? "");
@@ -1527,8 +1571,12 @@ function IndividualColorSection({ onStateChange, initial, paletteOnly }: { onSta
 // ─── Garment Catalog (what kind of dress) ─────────────────────────────────────
 
 function GarmentCatalog({ selected, onSelect, lockedCategory, allowedCategories, orgType }: { selected: SelectedGarment | null; onSelect: (g: SelectedGarment) => void; lockedCategory?: GarmentCategoryId; allowedCategories?: GarmentCategoryId[]; orgType?: OrgType }) {
+  // Which categories/items are currently orderable (admin-controlled availability).
+  const { isCategoryActive, isItemActive, isItemInStock, extraItemsForCategory } = useCatalogAvailability();
+  // Admin-controlled order-form sections (style options can be switched off).
+  const orderFormCfg = useOrderFormConfig();
   // Which category tabs to show (e.g. organisations hide Kids unless they're a school).
-  const cats = garmentCatalog.filter(c => !allowedCategories || allowedCategories.includes(c.id));
+  const cats = garmentCatalog.filter(c => (!allowedCategories || allowedCategories.includes(c.id)) && isCategoryActive(c.label));
   const firstCat = lockedCategory ?? selected?.categoryId ?? cats[0]?.id ?? "mens";
   const [cat, setCat] = useState<GarmentCategoryId>(firstCat);
   // When the audience is already known, keep the catalog locked to that category.
@@ -1540,7 +1588,11 @@ function GarmentCatalog({ selected, onSelect, lockedCategory, allowedCategories,
   const [kidGender, setKidGender] = useState<"boy" | "girl">("boy");
   // Different org types buy different garments — filter the list to what's relevant.
   const genderItems = cat === "kids" ? active.items.filter(it => !it.gender || it.gender === kidGender) : active.items;
-  const visibleItems = genderItems.filter(it => garmentAllowedForOrg(orgType, it.name));
+  const visibleItems = genderItems.filter(it => garmentAllowedForOrg(orgType, it.name) && isItemActive(it.name));
+  // Products the admin added to this category in the portal (not in the
+  // hand-built list) — shown with the admin-set price.
+  const adminExtras = extraItemsForCategory(active.label, active.items.map(i => i.name), "GARMENT").filter(e => isItemActive(e.name));
+  const allItems = [...visibleItems, ...adminExtras.map(e => ({ name: e.name, basePrice: e.price || 190 } as CatalogGarment))];
   // When a garment is picked, default its style to the first available style option.
   function selectGarment(it: CatalogGarment) {
     const styleOpts = garmentStyleOptions(it.name);
@@ -1579,17 +1631,22 @@ function GarmentCatalog({ selected, onSelect, lockedCategory, allowedCategories,
         </div>
       )}
 
-      {/* Card list — same design as the individual picker, single-select */}
+      {/* Card list — same design as the individual picker, single-select.
+          Out-of-stock items (toggled live from the admin portal) stay visible
+          but greyed out and can't be selected. */}
       <div className="flex flex-col gap-2">
-        {visibleItems.map(it => {
+        {allItems.map(it => {
           const isSel = !!selected && selected.categoryId === cat && selected.name === it.name;
+          const inStock = isItemInStock(it.name);
           return (
-            <button key={it.name} onClick={() => selectGarment(it)}
+            <button key={it.name} onClick={() => inStock && selectGarment(it)} disabled={!inStock}
               className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left"
-              style={{ border:`1.5px solid ${isSel ? DARK : "var(--border)"}`, background: isSel ? "rgba(13,13,13,0.04)" : "var(--card)", cursor:"pointer" }}>
+              style={{ border:`1.5px solid ${isSel ? DARK : "var(--border)"}`, background: isSel ? "rgba(13,13,13,0.04)" : "var(--card)", cursor: inStock ? "pointer" : "not-allowed", opacity: inStock ? 1 : 0.45 }}>
               <div className="flex-1 min-w-0">
                 <p style={{ fontSize: 13, fontWeight: isSel ? 700 : 500, color: isSel ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
-                <p style={{ fontSize: 11, color: isSel ? "#1a4a8a" : "#9ca3af", fontWeight: isSel ? 600 : 400 }}>From {inr(it.basePrice)}/pc</p>
+                {inStock
+                  ? <p style={{ fontSize: 11, color: isSel ? "#1a4a8a" : "#9ca3af", fontWeight: isSel ? 600 : 400 }}>From {inr(it.basePrice)}/pc</p>
+                  : <p style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>Out of stock — back soon</p>}
               </div>
               <div className="w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border:`2px solid ${isSel ? DARK : "#d1d5db"}`, background: isSel ? DARK : "var(--card)" }}>
                 {isSel && <Check size={12} strokeWidth={3} color="#fff"/>}
@@ -1599,8 +1656,9 @@ function GarmentCatalog({ selected, onSelect, lockedCategory, allowedCategories,
         })}
       </div>
 
-      {/* Style — round neck / collared, formal / printed, leggings / jeans … */}
-      {!!selected && selectedStyleOpts.length > 0 && (
+      {/* Style — round neck / collared, formal / printed, leggings / jeans …
+          (hidden entirely when the admin switches Style options off) */}
+      {!!selected && selectedStyleOpts.length > 0 && orderFormCfg.style && (
         <div className="mt-3">
           <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Style</p>
           <SelectField
@@ -1643,9 +1701,21 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
   const [cat, setCat] = useState<GarmentCategoryId>(lockedCategory ?? "mens");
   useEffect(() => { if (lockedCategory) setCat(lockedCategory); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [lockedCategory]);
   const active = garmentCatalog.find(c => c.id === cat)!;
+  // Individual flow is B2C — consult the admin's Catalog so products the admin
+  // added (e.g. a new "Towel" under Men's Wear) appear here too, deactivated
+  // ones are hidden, and out-of-stock ones show greyed out. Fails open: until
+  // the admin data loads (or if the backend is unreachable) nothing is hidden
+  // and no extras show — the built-in list keeps working exactly as before.
+  const { isItemActive, isItemInStock, extraItemsForCategory } = useCatalogAvailability({ audience: "B2C" });
   // For kids, split the catalog by Boys / Girls so it's clear which item is which.
   const [kidGender, setKidGender] = useState<"boy" | "girl">("boy");
-  const visibleItems = cat === "kids" ? active.items.filter(it => !it.gender || it.gender === kidGender) : active.items;
+  const baseItems = (cat === "kids" ? active.items.filter(it => !it.gender || it.gender === kidGender) : active.items)
+    .filter(it => isItemActive(it.name));
+  // New garment products the admin added to THIS category in the portal.
+  const adminExtras = extraItemsForCategory(active.label, active.items.map(i => i.name), "GARMENT")
+    .filter(e => isItemActive(e.name))
+    .map(e => ({ name: e.name, basePrice: e.price || 190 } as CatalogGarment));
+  const visibleItems = [...baseItems, ...adminExtras];
   // Which garment card is expanded. One open at a time → finished cards collapse to a summary.
   const [openItem, setOpenItem] = useState<string | null>(null);
 
@@ -1684,7 +1754,8 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
   // Add the garment in the first colour not already used for it (so each tap adds a new colour line).
   function addGarment(it: CatalogGarment) {
     const used = new Set(linesFor(it.name).map(l => l.colorHex));
-    const preset = individualColorPresets.find(p => !used.has(p.hex)) ?? individualColorPresets[0];
+    const palette = individualPaletteFor(it.name);
+    const preset = palette.find(p => !used.has(p.hex)) ?? palette[0];
     const styleOpts = garmentStyleOptions(it.name);
     const style = linesFor(it.name)[0]?.style ?? styleOpts[0];
     onChange([...cart, { categoryId: cat, name: it.name, basePrice: it.basePrice, qty: 1, colorHex: preset.hex, colorLabel: preset.label, ...(lineGender ? { gender: lineGender } : {}), ...(style ? { style } : {}) }]);
@@ -1837,15 +1908,19 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
           const lines = linesFor(it.name);
           const added = lines.length > 0;
           const usedHexes = new Set(lines.map(l => l.colorHex));
-          const canAddColor = individualColorPresets.some(p => !usedHexes.has(p.hex));
+          const palette = individualPaletteFor(it.name);
+          const canAddColor = palette.some(p => !usedHexes.has(p.hex));
           const setPieces = garmentSetPieces(it.name);
           const topOnly = garmentTopOnly(it.name);
+          // Out-of-stock (admin toggle): visible but greyed out and not orderable.
+          const inStock = isItemInStock(it.name);
           return (
             <div key={it.name} className="px-3.5 py-2.5 rounded-xl transition-colors"
               style={{
                 border:`1.5px solid ${added ? ACCENT : "var(--border)"}`,
                 background: added ? "rgba(200,169,126,0.06)" : "var(--card)",
                 boxShadow: added ? "0 2px 8px rgba(200,169,126,0.15)" : "none",
+                opacity: inStock ? 1 : 0.5,
               }}>
               <div className="flex items-center gap-3">
                 <button
@@ -1877,11 +1952,14 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                       if (openItem === it.name) setOpenItem(null);
                     }}/>
                 )}
-                {!added && (
+                {!added && inStock && (
                   <button onClick={() => addGarment(it)} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0"
                     style={{ border:`1px solid ${DARK}`, background:"var(--card)", color:DARK, cursor:"pointer", fontSize:12, fontWeight:600 }}>
                     <Plus size={13}/> Add
                   </button>
+                )}
+                {!added && !inStock && (
+                  <span className="px-3 py-1.5 rounded-full flex-shrink-0" style={{ border:"1px solid var(--border)", color:"#9ca3af", fontSize:11, fontWeight:600 }}>Out of stock</span>
                 )}
               </div>
 
@@ -1929,7 +2007,7 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                         <p className="pl-7" style={{ fontSize: 10.5, fontWeight: 600, color: "#6b7280" }}>{setPieces[0]} colour</p>
                       )}
                       <div className="flex flex-wrap gap-1.5 pl-7">
-                        {individualColorPresets.map(p => {
+                        {palette.map(p => {
                           const isThis = p.hex === line.colorHex;
                           const takenByOther = usedHexes.has(p.hex) && !isThis;
                           return (
@@ -1961,7 +2039,7 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                                     }}>
                                     Match {setPieces[0].toLowerCase()}
                                   </button>
-                                  {individualColorPresets.map(p => (
+                                  {palette.map(p => (
                                     <button key={p.hex} title={p.label}
                                       onClick={() => setLinePieceColor(it.name, line.colorHex, piece, p.hex, p.label)}
                                       className="w-5 h-5 rounded-full"
@@ -2512,6 +2590,9 @@ export interface OrgGarmentLine {
   refChosen: RefOption | null;
   refLogoNames: string[];
   refInspNames: string[];
+  // Embedded reference files (base64) so they travel with the order to the
+  // admin portal, where the team downloads them from the Documents card.
+  refFiles?: { name: string; dataUrl: string }[];
 }
 
 function orgSizeCatFor(categoryId: GarmentCategoryId): SizeCat {
@@ -2525,10 +2606,11 @@ function orgAudienceLabel(categoryId: GarmentCategoryId, gender?: "boy" | "girl"
 }
 const orgLineAllocated = (l: OrgGarmentLine) => Object.values(l.sizes ?? {}).reduce((a, b) => a + b, 0);
 
-function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhotos, view, onViewChange }: {
+function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhotos, view, onViewChange, fabricSource }: {
   cart: OrgGarmentLine[];
   onChange: (next: OrgGarmentLine[]) => void;
   orgType?: OrgType;
+  fabricSource?: "fresh" | "surplus";
   allowedCategories?: GarmentCategoryId[];
   onViewPhotos?: (name: string) => void;
   // Two pages: "add" = pick garments; "list" = configure each garment (its own page
@@ -2538,7 +2620,8 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
   view: "add" | "list";
   onViewChange: (v: "add" | "list") => void;
 }) {
-  const cats = garmentCatalog.filter(c => !allowedCategories || allowedCategories.includes(c.id));
+  const { isCategoryActive, isItemActive, isItemInStock, extraItemsForCategory } = useCatalogAvailability();
+  const cats = garmentCatalog.filter(c => (!allowedCategories || allowedCategories.includes(c.id)) && isCategoryActive(c.label));
   const [cat, setCat] = useState<GarmentCategoryId>(cats[0]?.id ?? "mens");
   const [kidGender, setKidGender] = useState<"boy" | "girl">("boy");
   const [openId, setOpenId] = useState<number | null>(null);
@@ -2553,7 +2636,11 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
   const active = garmentCatalog.find(c => c.id === cat)!;
   const lineGender = cat === "kids" ? kidGender : undefined;
   const genderItems = cat === "kids" ? active.items.filter(it => !it.gender || it.gender === kidGender) : active.items;
-  const visibleItems = genderItems.filter(it => garmentAllowedForOrg(orgType, it.name));
+  const visibleItems = genderItems.filter(it => garmentAllowedForOrg(orgType, it.name) && isItemActive(it.name));
+  // Products the admin added to this category in the portal (not in the
+  // hand-built list) — shown with the admin-set price.
+  const adminExtras = extraItemsForCategory(active.label, active.items.map(i => i.name), "GARMENT").filter(e => isItemActive(e.name));
+  const allItems = [...visibleItems, ...adminExtras.map(e => ({ name: e.name, basePrice: e.price || 190 } as CatalogGarment))];
 
   const sameLine = (l: OrgGarmentLine, name: string) => l.categoryId === cat && l.name === name && (cat !== "kids" || l.gender === lineGender);
   const isAdded = (name: string) => cart.some(l => sameLine(l, name));
@@ -2629,21 +2716,26 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
           </div>
         )}
 
-        {/* Add-garment list for the active category/gender */}
+        {/* Add-garment list for the active category/gender. Out-of-stock items
+            stay visible but greyed out (admin-controlled, live). */}
         <div className="flex flex-col gap-1.5">
-          {visibleItems.map(it => {
+          {allItems.map(it => {
             const added = isAdded(it.name);
+            const inStock = isItemInStock(it.name);
             return (
               <div key={it.name} className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl transition-colors"
                 style={{
                   border:`1.5px solid ${added ? "#1a4a8a" : "var(--border)"}`,
                   background: added ? "#F5F9FF" : "var(--card)",
                   boxShadow: added ? "0 2px 8px rgba(26,74,138,0.10)" : "none",
+                  opacity: inStock || added ? 1 : 0.45,
                 }}>
                 <GarmentThumb name={it.name} size={40} onOpen={n => onViewPhotos?.(n)}/>
                 <div className="flex-1 min-w-0">
                   <p style={{ fontSize: 13, fontWeight: added ? 700 : 500, color: added ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
-                  <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>From {inr(it.basePrice)}/pc</p>
+                  {inStock || added
+                    ? <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>From {inr(it.basePrice)}/pc</p>
+                    : <p style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>Out of stock — back soon</p>}
                 </div>
                 {added ? (
                   armRemove === `${cat}-${lineGender ?? ""}-${it.name}` ? (
@@ -2661,7 +2753,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                     </button>
                   )
                 ) : (
-                  <button onClick={() => addGarment(it)} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0" style={{ border:"1px solid #1a4a8a", background:"var(--card)", color:"#1a4a8a", cursor:"pointer", fontSize:12, fontWeight:600 }}><Plus size={13}/> Add</button>
+                  <button onClick={() => inStock && addGarment(it)} disabled={!inStock} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0" style={{ border:"1px solid #1a4a8a", background:"var(--card)", color:"#1a4a8a", cursor: inStock ? "pointer" : "not-allowed", fontSize:12, fontWeight:600 }}><Plus size={13}/> Add</button>
                 )}
               </div>
             );
@@ -2688,7 +2780,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
         {cart.map(l => {
           const open = openId === l.id;
           const mo = materialOptionsForGarment(l.name);
-          const rate = garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice }, l.material.fabric, l.material.weave);
+          const rate = garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice }, l.material.fabric, l.material.weave, fabricSource);
           const allocated = orgLineAllocated(l);
           const sizeDone = allocated === l.qty;
           const catLabel = garmentCatalog.find(c => c.id === l.categoryId)?.label ?? "";
@@ -2791,7 +2883,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                     </p>
                     <RefImagesSection key={`ref-${l.id}`} persona="organisation"
                       initialChosen={l.refChosen} previewMaterial={l.material.fabric}
-                      onStateChange={s => updateLine(l.id, { refChosen: s.chosen, refLogoNames: s.logoNames, refInspNames: s.inspNames })}/>
+                      onStateChange={s => updateLine(l.id, { refChosen: s.chosen, refLogoNames: s.logoNames, refInspNames: s.inspNames, refFiles: s.files })}/>
                   </div>
                 </div>
               )}
@@ -3296,7 +3388,7 @@ function GarmentPreview({ lines, audience, designUrl, material }: { lines: Previ
   );
 }
 
-function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, initialChosen, previewLines, previewAudience, previewMaterial }: { persona: Persona; isAccessoryOrder?: boolean; onStateChange?: (s: { chosen: RefOption | null; logoNames: string[]; inspNames: string[] }) => void; initialChosen?: RefOption | null; previewLines?: PreviewLine[]; previewAudience?: string; previewMaterial?: string }) {
+function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, initialChosen, previewLines, previewAudience, previewMaterial }: { persona: Persona; isAccessoryOrder?: boolean; onStateChange?: (s: { chosen: RefOption | null; logoNames: string[]; inspNames: string[]; files?: { name: string; dataUrl: string }[] }) => void; initialChosen?: RefOption | null; previewLines?: PreviewLine[]; previewAudience?: string; previewMaterial?: string }) {
   const [chosen, setChosen] = useState<RefOption | null>(initialChosen ?? null);
   const [logoFiles, setLogoFiles] = useState<RefImg[]>([]);
   const [showDigiBanner, setShowDigiBanner] = useState(false);
@@ -3305,7 +3397,16 @@ function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, in
   const [showSwatchModal, setShowSwatchModal] = useState(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { onStateChange?.({ chosen, logoNames: logoFiles.map(f => f.name), inspNames: inspirationFiles.map(f => f.name) }); }, [chosen, logoFiles, inspirationFiles]);
+  useEffect(() => {
+    onStateChange?.({
+      chosen,
+      logoNames: logoFiles.map(f => f.name),
+      inspNames: inspirationFiles.map(f => f.name),
+      files: [...logoFiles, ...inspirationFiles]
+        .filter((f): f is RefImg & { dataUrl: string } => !!f.dataUrl)
+        .map(f => ({ name: f.name, dataUrl: f.dataUrl })),
+    });
+  }, [chosen, logoFiles, inspirationFiles]);
 
   const logoCamRef = useRef<HTMLInputElement>(null);
   const logoGalRef = useRef<HTMLInputElement>(null);
@@ -3321,15 +3422,24 @@ function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, in
   function processLogoFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     const file = files[0]; imgId++;
+    const id = imgId;
     const needsDigi = file.size < 80_000;
-    setLogoFiles([{ id: imgId, url: URL.createObjectURL(file), name: file.name, size: file.size, caption:"", tag:"logo", needsDigi, digiStatus: needsDigi ? "pending" : undefined }]);
+    setLogoFiles([{ id, url: URL.createObjectURL(file), name: file.name, size: file.size, caption:"", tag:"logo", needsDigi, digiStatus: needsDigi ? "pending" : undefined }]);
+    // Embed the actual file so it reaches the admin portal with the order.
+    refFileToDataUrl(file).then(dataUrl => {
+      if (dataUrl) setLogoFiles(p => p.map(f => (f.id === id ? { ...f, dataUrl } : f)));
+    });
     if (needsDigi) setShowDigiBanner(true);
   }
   function processInspirationFiles(files: FileList | null) {
     if (!files) return;
     Array.from(files).slice(0, 4 - inspirationFiles.length).forEach(f => {
       imgId++;
-      setInspirationFiles(p => [...p, { id: imgId, url: URL.createObjectURL(f), name: f.name, size: f.size, caption:"", tag:"garment" }]);
+      const id = imgId;
+      setInspirationFiles(p => [...p, { id, url: URL.createObjectURL(f), name: f.name, size: f.size, caption:"", tag:"garment" }]);
+      refFileToDataUrl(f).then(dataUrl => {
+        if (dataUrl) setInspirationFiles(p => p.map(x => (x.id === id ? { ...x, dataUrl } : x)));
+      });
     });
   }
   function acceptDigi() {
@@ -3606,6 +3716,7 @@ export interface OrderPrice {
   kind: "fixed" | "estimate";
   rateLine: string;        // e.g. "₹350/pc × 2 pcs"
   addOnLine?: string;      // org only, e.g. "+₹8/pc"
+  serviceFeeLine?: string; // e.g. "₹25 (5%)" — admin-configured service fee
   totalLabel: string;      // "Total paid" | "Estimated total"
   totalValue: string;      // "₹700" | "₹6,300 – ₹7,700"
   note?: string;
@@ -3637,6 +3748,10 @@ export interface SubmittedOrderSummary {
   packaging?: string;
   referenceMethod?: string;
   referenceFiles?: number;
+  // Actual uploaded design/logo reference files (base64) — sent with the
+  // order so the admin team can download them from the portal.
+  referenceAttachments?: { name: string; dataUrl: string }[];
+  serviceFee?: number; // ₹ service fee included in the payable total
   paymentMethod?: string;
   price?: OrderPrice;
   delivery?: OrderSummaryDelivery;
@@ -3701,7 +3816,10 @@ function buildSubmittedOrderSummary(orgDetails: OrgDetails): SubmittedOrderSumma
       : "Accessories";
 
     return {
-      id: "#FL-2046",
+      // Placeholder until the backend assigns the real reference (FL-xxxx) —
+      // Track swaps this for the server ref the moment the order syncs, so the
+      // app and the admin portal always show the SAME order number.
+      id: "FL-PENDING",
       name: `Accessories — ${catSummary} (${totalPcs} pcs)`,
       isAccessoryOrder: true,
       serviceLabel: "Accessories",
@@ -3711,7 +3829,7 @@ function buildSubmittedOrderSummary(orgDetails: OrgDetails): SubmittedOrderSumma
   }
 
   return {
-    id: "#FL-2046",
+    id: "FL-PENDING",
     name: `${serviceLabel} — Just submitted`,
     isAccessoryOrder: false,
     serviceLabel,
@@ -3760,6 +3878,9 @@ function OrgTypeSelect({ value, onChange }: { value: OrgType; onChange: (v: OrgT
 }
 
 function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initialOrgType }: { onContinue: (d: OrgDetails) => void; onBack?: () => void; onCustomOrder?: () => void; switchBanner?: React.ReactNode; initialOrgType?: OrgType }) {
+  const { isCategoryActive, isItemActive, isItemInStock, extraAccessoryCategories, extraItemsForCategory } = useCatalogAvailability({
+    knownLabels: universalAccessoryCategories.map(c => c.label), audience: "B2B",
+  });
   const ACCESSORY_MOQ = ORG_ACCESSORY_MOQ, ACCESSORY_STEP = ORG_ACCESSORY_STEP;
   // Organisation type is chosen once, during onboarding — it isn't re-asked or
   // switchable here. Falls back to the demo profile's org type if none was set.
@@ -3826,7 +3947,9 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initi
   }
 
   // ─── Dedicated category product page (Accessories Category → Product Listing) ──
-  const activeCat = activeCategoryId ? universalAccessoryCategories.find(c => c.id === activeCategoryId) : null;
+  const activeCat = activeCategoryId
+    ? universalAccessoryCategories.find(c => c.id === activeCategoryId) ?? extraAccessoryCategories.find(c => c.id === activeCategoryId)
+    : null;
   if (isAccessoryOrder && accessoryView === "products" && activeCat) {
     const catPcs   = countAccessoryQtyForCategory(activeCat.id, accessoryQty);
     const catCount = activeCat.items.filter(it => (accessoryQty[`${activeCat.id}-${it}`] ?? 0) > 0).length;
@@ -3860,16 +3983,19 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initi
 
           <p className="text-muted-foreground mb-2" style={{ fontSize:12, fontWeight:500 }}>{activeCat.label} products</p>
           <div className="flex flex-col gap-2">
-            {activeCat.items.map(item => {
+            {[...activeCat.items.filter(isItemActive), ...(activeCat.id.startsWith("admin_") ? [] : extraItemsForCategory(activeCat.label, activeCat.items, "ACCESSORY").map(e => e.name))].map(item => {
               const key = `${activeCat.id}-${item}`;
               const q = accessoryQty[key] ?? 0;
               const active = q > 0;
+              const inStock = isItemInStock(item);
               return (
                 <div key={key} className="flex items-center gap-3 rounded-xl pl-3.5 pr-2 py-2.5"
-                  style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, background: active ? ACCENT_BG : "var(--card)" }}>
+                  style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, background: active ? ACCENT_BG : "var(--card)", opacity: inStock || active ? 1 : 0.45 }}>
                   <div className="flex-1 min-w-0">
                     <p style={{ fontSize:13, fontWeight: active ? 600 : 500, color: active ? "#7c5419" : DARK, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item}</p>
-                    <p style={{ fontSize:10.5, color: active ? ACCENT_TEXT : "#9ca3af", marginTop:1 }}>{inr(accessoryRatePerPc(activeCat.id, item))}/pc{active ? ` · ${q} pcs · ${inr(q * accessoryRatePerPc(activeCat.id, item))}` : ` · min ${ACCESSORY_MOQ}`}</p>
+                    {inStock || active
+                      ? <p style={{ fontSize:10.5, color: active ? ACCENT_TEXT : "#9ca3af", marginTop:1 }}>{inr(accessoryRatePerPc(activeCat.id, item))}/pc{active ? ` · ${q} pcs · ${inr(q * accessoryRatePerPc(activeCat.id, item))}` : ` · min ${ACCESSORY_MOQ}`}</p>
+                      : <p style={{ fontSize:10.5, color:"#dc2626", fontWeight:600, marginTop:1 }}>Out of stock — back soon</p>}
                   </div>
                   <div className="flex items-center flex-shrink-0"
                     style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, borderRadius:9, overflow:"hidden", background:"var(--card)" }}>
@@ -3878,8 +4004,8 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initi
                       <Minus size={14} style={{ color: active ? "#7c5419" : "#6b7280" }}/>
                     </button>
                     <span style={{ fontSize:13, fontWeight:700, minWidth:42, textAlign:"center", color: active ? "#7c5419" : "#9ca3af", borderLeft:`1px solid ${active ? ACCENT : "var(--border)"}`, borderRight:`1px solid ${active ? ACCENT : "var(--border)"}`, lineHeight:"32px" }}>{q}</span>
-                    <button onClick={() => stepAccessoryQty(key, 1)}
-                      className="flex items-center justify-center" style={{ width:32, height:32, background: active ? ACCENT : DARK, border:"none", cursor:"pointer" }}>
+                    <button onClick={() => inStock && stepAccessoryQty(key, 1)} disabled={!inStock}
+                      className="flex items-center justify-center" style={{ width:32, height:32, background: active ? ACCENT : DARK, border:"none", cursor: inStock ? "pointer" : "not-allowed" }}>
                       <Plus size={14} style={{ color:"#fff" }}/>
                     </button>
                   </div>
@@ -3937,7 +4063,7 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initi
           </div>
 
           <div className="flex flex-col gap-2">
-            {universalAccessoryCategories.map(cat => {
+            {[...universalAccessoryCategories.filter(c => isCategoryActive(c.label)), ...extraAccessoryCategories].map(cat => {
               const catQty = countAccessoryQtyForCategory(cat.id, accessoryQty);
               const catItemCount = Object.entries(accessoryQty).filter(([key, q]) => q > 0 && parseAccessoryQtyKey(key).categoryId === cat.id).length;
               return (
@@ -4898,10 +5024,10 @@ function PersonaOrderForm({
     resume?.garmentCart && resume.garmentCart.length > 0
       ? resume.garmentCart.map(g => ({
           ...g,
-          colorHex: (g as Partial<GarmentLine>).colorHex ?? individualColorPresets[0].hex,
-          colorLabel: (g as Partial<GarmentLine>).colorLabel ?? individualColorPresets[0].label,
+          colorHex: (g as Partial<GarmentLine>).colorHex ?? individualPaletteFor(g.name)[0].hex,
+          colorLabel: (g as Partial<GarmentLine>).colorLabel ?? individualPaletteFor(g.name)[0].label,
         }))
-      : resume?.selectedGarment ? [{ ...resume.selectedGarment, qty: resume?.qty ?? 1, colorHex: individualColorPresets[0].hex, colorLabel: individualColorPresets[0].label }] : []
+      : resume?.selectedGarment ? [{ ...resume.selectedGarment, qty: resume?.qty ?? 1, colorHex: individualPaletteFor(resume.selectedGarment.name)[0].hex, colorLabel: individualPaletteFor(resume.selectedGarment.name)[0].label }] : []
   );
   const garmentCartQty = garmentCart.reduce((s, g) => s + g.qty, 0);
 
@@ -4916,7 +5042,7 @@ function PersonaOrderForm({
   // and size distribution alone used to be enough to "complete" a line, which let
   // someone reach Review having never chosen a colour.
   const orgCartComplete = orgCart.length > 0 && orgCart.every(l => l.qty >= ORG_GARMENT_MOQ && orgLineAllocated(l) === l.qty && l.colors.length > 0);
-  const orgCartRate = (l: OrgGarmentLine) => garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice }, l.material.fabric, l.material.weave);
+  const orgCartRate = (l: OrgGarmentLine) => garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice }, l.material.fabric, l.material.weave, fabricSource);
   const orgCartSubtotal = orgCart.reduce((s, l) => s + orgCartRate(l) * l.qty, 0);
   // Stitching/packaging is chosen per garment now, so the finishing add-on is
   // totalled up per line (each garment can have a different finishing cost).
@@ -5012,7 +5138,7 @@ function PersonaOrderForm({
     ? (selectedGarment.categoryId === "womens" ? "womens" : selectedGarment.categoryId === "kids" ? "school" : "mens")
     : cfg.defaultSizeCat;
   const [packaging, setPackaging] = useState<{ stitch: string; packing: string }>(resume?.packaging ?? { stitch: "single_needle", packing: "bulk_loose" });
-  const [refState, setRefState] = useState<{ chosen: RefOption | null; logoNames: string[]; inspNames: string[] }>(resume?.refState ?? { chosen: null, logoNames: [], inspNames: [] });
+  const [refState, setRefState] = useState<{ chosen: RefOption | null; logoNames: string[]; inspNames: string[]; files?: { name: string; dataUrl: string }[] }>(resume?.refState ?? { chosen: null, logoNames: [], inspNames: [] });
   // Footer price card — tap to expand the full cost breakdown.
   const [priceExpanded, setPriceExpanded] = useState(false);
   // Accessory per-item specs, keyed by accessory item key → { fieldLabel: value, __notes: notes }
@@ -5026,11 +5152,11 @@ function PersonaOrderForm({
     name: customDetails?.name || currentUser.name,
     phone: customDetails?.phone || currentUser.phone,
     email: customDetails?.email || currentUser.email,
-    address: customDetails?.address || "",
-    city: customDetails?.city || "",
-    pin: customDetails?.pin || "",
+    address: customDetails?.address || currentUser.address,
+    city: customDetails?.city || currentUser.city,
+    pin: customDetails?.pin || currentUser.pin,
   });
-  const [editingDelivery, setEditingDelivery] = useState(!resume);
+  const [editingDelivery, setEditingDelivery] = useState(false);
   const [payment, setPayment] = useState<"upi" | "card">(resume?.payment ?? "upi");
 
   // Quick-pay UPI app (matches Payment details in account) — selected app for instant pay
@@ -5105,14 +5231,29 @@ function PersonaOrderForm({
   // ── Derived pricing (shared by the Sizes estimate, Review, footer & submit) ──
   // Garment per-pc rate comes from the chosen fabric + weave; finishing adds the
   // selected stitching + packaging. Accessory orders are priced from the catalog.
-  const garmentRate    = garmentPriceForFabric(selectedGarment, material.fabric, material.weave);
+  const garmentRate    = garmentPriceForFabric(selectedGarment, material.fabric, material.weave, fabricSource);
   const finishingPerPc = perPcCost(stitchingOpts.find(s => s.id === packaging.stitch)?.cost)
     + perPcCost(packagingOpts.find(p => p.id === packaging.packing)?.cost);
   const accessoryTotalAmt = accessoryOrderTotal(accessoryQtyData, accSpecState);
   // Individual cart subtotal — every garment line priced for the chosen fabric/weave.
-  const garmentCartSubtotal = garmentCart.reduce((s, g) => s + g.qty * garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave), 0);
-  // The amount an individual pays now (fixed) — garments + finishing, or accessory total.
-  const individualPayable = isAccessoryOrder ? accessoryTotalAmt : garmentCartSubtotal + garmentCartQty * finishingPerPc;
+  const garmentCartSubtotal = garmentCart.reduce((s, g) => s + g.qty * garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource), 0);
+  // The amount an individual pays (fixed) — garments + finishing, or accessory
+  // total — PLUS the admin-configured service fee, shown as its own line.
+  const orderFormCfg = useOrderFormConfig();
+  const individualPayableBase = isAccessoryOrder ? accessoryTotalAmt : garmentCartSubtotal + garmentCartQty * finishingPerPc;
+  const individualServiceFee = calcServiceFee(individualPayableBase, isAccessoryOrder ? Object.values(accessoryQtyData).reduce((a, b) => a + b, 0) : garmentCartQty, "B2C", orderFormCfg.fee);
+  const individualPayable = individualPayableBase > 0 ? individualPayableBase + individualServiceFee : 0;
+
+  // Admin product record (colours, spec fields) for accessory items — when the
+  // admin defined spec fields for a product they REPLACE the app's built-in
+  // per-category defaults; admin colour swatches always add a Colour choice.
+  const { productMeta } = useCatalogAvailability({ audience: persona === "organisation" ? "B2B" : "B2C" });
+  function accFieldsFor(categoryId: string, itemName: string): { label: string; options: string[]; hint?: string }[] {
+    const meta = productMeta(itemName);
+    const base = meta?.specFields?.length ? meta.specFields : (getAccessoryCategorySpecs(categoryId)?.fields ?? []);
+    const colorOpts = (meta?.colors ?? []).map(c => c.label);
+    return colorOpts.length ? [{ label: "Colour", options: colorOpts }, ...base] : [...base];
+  }
 
   // Snapshot the order as it was reopened, so Review can flag which sections changed.
   function sectionFingerprints() {
@@ -5148,13 +5289,21 @@ function PersonaOrderForm({
   // Organisations: stitching/packaging and references now live inside the single
   // "Garment" step (right under each garment's size distribution) instead of as
   // separate steps, so there's one place to set everything up per garment.
-  const subStepLabels = isAccessoryOrgOrder
+  // Steps are ADMIN-CONFIGURABLE (Garm Admin Portal → Settings → Order Form):
+  // switched-off sections vanish from the flow entirely and the order simply
+  // skips them (fabric/sizes fall back to sensible defaults the coordinator
+  // confirms). Garment, colours, quantity and Review are always on.
+  const stepEnabled = (l: string) =>
+    (l !== "Material" || orderFormCfg.materials) &&
+    (l !== "Sizes" || orderFormCfg.sizes) &&
+    (l !== "References" || orderFormCfg.referenceUpload);
+  const subStepLabels = (isAccessoryOrgOrder
     ? ["Specs", "References", "Review"]
     : !isUniformOrder
       ? persona === "individual"
         ? ["Garment", "Material", "Sizes", "References", "Review"]
         : ["Garment", "Review"]
-      : ["References", "Review"];
+      : ["References", "Review"]).filter(stepEnabled);
 
   const totalSubSteps = subStepLabels.length;
   const currentSubStepLabel = subStepLabels[subStep - 1];
@@ -5246,8 +5395,7 @@ function PersonaOrderForm({
       .filter(([, q]) => q > 0)
       .map(([key, q]) => {
         const { categoryId, itemName } = parseAccessoryQtyKey(key);
-        const specs = getAccessoryCategorySpecs(categoryId);
-        const fields = specs ? specs.fields.map(f => ({ label: f.label, value: accSpecState[key]?.[f.label] ?? f.options[0] })) : [];
+        const fields = accFieldsFor(categoryId, itemName).map(f => ({ label: f.label, value: accSpecState[key]?.[f.label] ?? f.options[0] }));
         const notes = accSpecState[key]?.__notes ?? accSpecState[`cat:${categoryId}`]?.__notes ?? "";
         return { key, name: itemName, qty: q, fields, notes };
       });
@@ -5300,17 +5448,19 @@ function PersonaOrderForm({
       const itemCount = accessoryItems?.length ?? 0;
       const rateLine = `${accTotal} pcs · ${itemCount} product${itemCount !== 1 ? "s" : ""}`;
       price = persona === "individual"
-        ? { kind: "fixed", rateLine, totalLabel: "Total paid", totalValue: inr(accessoryTotalAmt),
-            note: `Fixed price, paid by ${payment === "upi" ? "UPI" : "card"} to place this order.` }
+        ? { kind: "fixed", rateLine, totalLabel: "Total paid", totalValue: inr(individualPayable),
+            serviceFeeLine: individualServiceFee > 0 ? `${inr(individualServiceFee)} (${orderFormCfg.fee.b2cPercent}% + ${inr(orderFormCfg.fee.b2cPerPiece)}/pc)` : undefined,
+            note: "Fixed price — payable in Track once Garm confirms your order." }
         : { kind: "estimate", rateLine, totalLabel: "Estimated total", totalValue: inr(accessoryTotalAmt),
             note: "Indicative — your coordinator confirms the final price before production." };
     } else if (persona === "individual") {
       price = {
         kind: "fixed",
         rateLine: `${qty} ${qty > 1 ? "pieces" : "piece"} · ${garmentCart.length} garment${garmentCart.length !== 1 ? "s" : ""}`,
+        serviceFeeLine: individualServiceFee > 0 ? `${inr(individualServiceFee)} (${orderFormCfg.fee.b2cPercent}% + ${inr(orderFormCfg.fee.b2cPerPiece)}/pc)` : undefined,
         totalLabel: "Total paid",
         totalValue: inr(individualPayable),
-        note: `Fixed price, paid by ${payment === "upi" ? "UPI" : "card"} to place this order.`,
+        note: "Fixed price — payable in Track once Garm confirms your order.",
       };
     } else {
       const orgBase = orgCartSubtotal > 0 ? orgCartSubtotal : qty * garmentRate;
@@ -5320,6 +5470,7 @@ function PersonaOrderForm({
         // Each garment can have its own stitching & packaging now, so this is a
         // lump total across all garments rather than a single per-piece rate.
         addOnLine: orgFinishingTotal > 0 ? `+${inr(orgFinishingTotal)} total finishing (stitching & packaging)` : undefined,
+        serviceFeeLine: `${orderFormCfg.fee.b2bPercent}% (${orderFormCfg.fee.bulkPercent}% for ${orderFormCfg.fee.bulkQtyThreshold}+ pcs) — added in the final quote`,
         totalLabel: "Estimated total",
         totalValue: `${inr(orgBase * 0.9 + orgFinishingTotal)} – ${inr(orgBase * 1.1 + orgFinishingTotal)}`,
         note: "Indicative — your coordinator confirms the final price before production.",
@@ -5327,7 +5478,10 @@ function PersonaOrderForm({
     }
 
     return {
-      id: "#FL-2046",
+      // Placeholder until the backend assigns the real reference (FL-xxxx) —
+      // Track swaps this for the server ref the moment the order syncs, so the
+      // app and the admin portal always show the SAME order number.
+      id: "FL-PENDING",
       name,
       isAccessoryOrder,
       serviceLabel: serviceLabel ?? undefined,
@@ -5398,11 +5552,15 @@ function PersonaOrderForm({
       // which have no garment cart and still use the single global choice).
       referenceMethod: (persona === "organisation" && !isAccessoryOrder) ? undefined : refDef?.label,
       referenceFiles: (persona === "organisation" && !isAccessoryOrder) ? undefined : refState.logoNames.length + refState.inspNames.length,
-      paymentMethod: persona === "individual"
-        ? (payment === "upi"
-            ? (selectedUpi ? `UPI · ${selectedUpi}` : "UPI")
-            : (cardData.number ? `Card · ${maskCardNum(cardData.number)}` : "Card"))
-        : undefined,
+      // Real uploaded files: summary-level picker for individuals/accessories,
+      // per-garment pickers for organisation garment carts. Capped at 6 files.
+      referenceAttachments: ((persona === "organisation" && !isAccessoryOrder)
+        ? orgCart.flatMap(l => l.refFiles ?? [])
+        : (refState.files ?? [])).slice(0, 6),
+      // No payment method at submit — individuals choose UPI/card in Track
+      // AFTER Garm confirms the order (the pay step records the real method).
+      paymentMethod: undefined,
+      serviceFee: persona === "individual" ? individualServiceFee : undefined,
       price,
       delivery: deliveryInfo,
       accessorySpecs,
@@ -5595,7 +5753,7 @@ function PersonaOrderForm({
                   <>
                     {garmentCart.map(g => line(
                       `${indivCartMixed ? `${indivAudienceShort(g.categoryId)} · ` : ""}${g.name}${g.style ? ` · ${g.style}` : ""} · ${lineColourSummary(g)} × ${g.qty}`,
-                      `${inr(garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave))}/pc`
+                      `${inr(garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource))}/pc`
                     ))}
                     {line("Total pieces", `${garmentCartQty} pcs`)}
                   </>
@@ -5869,7 +6027,7 @@ function PersonaOrderForm({
                     </div>
                     <button onClick={() => { if (!deliveryIncomplete) setEditingDelivery(false); }} disabled={deliveryIncomplete}
                       style={{ ...(deliveryIncomplete ? btnPrimaryDisabled : btnPrimary), padding: "11px 20px" }}>
-                      <Check size={14}/> Save delivery address
+                      <Check size={14}/> Use this address
                     </button>
                   </div>
                 ) : (
@@ -5880,165 +6038,40 @@ function PersonaOrderForm({
                     {line("Address", `${delivery.address}, ${delivery.city} ${delivery.pin}`)}
                     <div className="mt-2 flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: "#ecfdf5", border: "0.5px solid #a7f3d0" }}>
                       <Check size={11} style={{ color: "#059669", flexShrink: 0, marginTop: 1 }}/>
-                      <p style={{ fontSize: 11, color: "#065f46", lineHeight: 1.5 }}>Delivery address saved. Tap Change to edit or use current location.</p>
+                      <p style={{ fontSize: 11, color: "#065f46", lineHeight: 1.5 }}>Using your saved address — nothing to do here. Tap Change only if you want a different delivery address for this order.</p>
                     </div>
                   </>
                 )}
               </div>
             </div>
 
-            {/* Payment */}
+            {/* How payment works — individuals do NOT pay at submit. The order
+                goes to the Garm team first; once they Accept & Confirm it, the
+                payment step unlocks in Track (with a notification), and
+                production starts only after payment. */}
             <div className={card}>
               <div className="flex items-center gap-2 px-3.5 py-2.5" style={{ background: "var(--muted)", borderBottom: "0.5px solid var(--border)" }}>
-                <QrCode size={13} style={{ color: ACCENT }}/>
-                <p style={{ fontSize: 12, fontWeight: 700, color: DARK }}>Payment method</p>
+                <Wallet size={13} style={{ color: ACCENT }}/>
+                <p style={{ fontSize: 12, fontWeight: 700, color: DARK }}>Payment — after confirmation</p>
               </div>
               <div className="px-3.5 py-3">
-                {([["upi", "UPI", "Google Pay, PhonePe, Paytm & more", QrCode], ["card", "Card", "Credit or debit card", Box]] as const).map(([id, lbl2, sub, Ic]) => {
-                  const sel = payment === id;
-                  return (
-                    <button key={id} onClick={() => setPayment(id)} className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border text-left mb-2 last:mb-0 transition-all"
-                      style={{ border: `1.5px solid ${sel ? DARK : "var(--border)"}`, background: sel ? "rgba(13,13,13,0.03)" : "var(--card)", cursor: "pointer" }}>
-                      <div className="w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border: `2px solid ${sel ? DARK : "#d1d5db"}`, background: sel ? DARK : "var(--card)" }}>
-                        {sel && <div className="w-1.5 h-1.5 rounded-full bg-white"/>}
-                      </div>
-                      <Ic size={16} strokeWidth={1.5} style={{ color: sel ? DARK : "#6b7280" }}/>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-foreground text-sm" style={{ fontWeight: sel ? 600 : 400 }}>{lbl2}</p>
-                        <p className="text-muted-foreground" style={{ fontSize: 11 }}>{sub}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-
-                {/* ── Quick-pay UPI apps (same as Payment details in account) ── */}
-                {payment === "upi" && (
-                  <>
-                    <p className="text-muted-foreground mt-1 mb-2" style={{ fontSize: 11, fontWeight: 500 }}>Pay instantly via</p>
-                    <div className="grid grid-cols-4 gap-2 mb-2">
-                      {(Object.keys(upiProviderDefs) as UpiProvider[]).map(key => {
-                        const sel = upiApp === key;
-                        return (
-                          <button key={key} onClick={() => setUpiApp(key)}
-                            className="flex flex-col items-center gap-1.5 py-3 rounded-2xl transition-transform active:scale-95"
-                            style={{ cursor: "pointer", background: sel ? ACCENT_BG : "var(--card)", border: `1.5px solid ${sel ? DARK : "var(--border)"}` }}>
-                            <UpiLogo provider={key} size={32}/>
-                            <span style={{ fontSize: 10, fontWeight: sel ? 600 : 500, color: "var(--foreground)" }}>{upiProviderDefs[key].label.split(" ")[0]}</span>
-                          </button>
-                        );
-                      })}
+                {([
+                  ["1", "Submit your order", "No payment now — your order goes to the Garm team for review."],
+                  ["2", "Garm confirms it", `You'll be notified in Track when it's confirmed, with the final price${individualPayable ? ` (${inr(individualPayable)})` : ""}.`],
+                  ["3", "Pay to start production", "Pay by UPI or card right from Track — production begins the moment payment is received."],
+                ] as const).map(([n, title, sub]) => (
+                  <div key={n} className="flex items-start gap-3 mb-2.5 last:mb-0">
+                    <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: ACCENT, color: "#fff", fontSize: 11, fontWeight: 700 }}>{n}</span>
+                    <div className="min-w-0">
+                      <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3 }}>{title}</p>
+                      <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.5, marginTop: 1 }}>{sub}</p>
                     </div>
-                  </>
-                )}
-
-                {/* ── Expanded UPI detail ── */}
-                {payment === "upi" && (
-                  <div className="mt-1 mb-2 rounded-xl" style={{ border: "0.5px solid var(--border)", overflow: "hidden" }}>
-                    {savedUpis.map((u) => {
-                      const sel = selectedUpi === u;
-                      return (
-                        <div key={u} className="w-full flex items-center gap-2.5 px-3 py-2.5 transition-all"
-                          style={{ background: sel ? ACCENT_BG : "var(--card)", borderBottom: "0.5px solid var(--border)" }}>
-                          <button onClick={() => setSelectedUpi(u)} className="flex-1 flex items-center gap-2.5 text-left" style={{ cursor: "pointer", background: "transparent", border: "none", padding: 0 }}>
-                            <div className="w-3.5 h-3.5 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border: `2px solid ${sel ? DARK : "#d1d5db"}`, background: sel ? DARK : "var(--card)" }}>
-                              {sel && <div className="w-1 h-1 rounded-full bg-white"/>}
-                            </div>
-                            <QrCode size={14} strokeWidth={1.5} style={{ color: sel ? DARK : "#6b7280" }}/>
-                            <span className="text-sm text-foreground" style={{ fontWeight: sel ? 600 : 400, wordBreak: "break-all" }}>{u}</span>
-                          </button>
-                          <span style={{ fontSize: 9, fontWeight: 700, color: ACCENT_TEXT, background: ACCENT_BG, padding: "2px 6px", borderRadius: 4, letterSpacing: 0.5, flexShrink: 0 }}>UPI</span>
-                          <button onClick={() => { setSavedUpis(prev => prev.filter(x => x !== u)); if (selectedUpi === u) setSelectedUpi(""); }} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 2, flexShrink: 0 }} aria-label="Remove UPI ID">
-                            <X size={13} style={{ color: "#9ca3af" }}/>
-                          </button>
-                        </div>
-                      );
-                    })}
-                    {showUpiAdd ? (
-                      <div className="px-3 py-3">
-                        <p style={{ fontSize: 11, fontWeight: 600, color: DARK, marginBottom: 6 }}>Add UPI ID</p>
-                        <div className="flex gap-2">
-                          <input
-                            value={upiInput}
-                            onChange={(e) => { setUpiInput(e.target.value); if (upiError) setUpiError(""); }}
-                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addUpi(); } }}
-                            placeholder="yourname@bank"
-                            autoCapitalize="none" autoCorrect="off" spellCheck={false}
-                            className="flex-1 rounded-lg px-3 py-2 text-sm min-w-0"
-                            style={{ border: `1px solid ${upiError ? "#dc2626" : "var(--border)"}`, background: "var(--card)", outline: "none", color: DARK }}
-                          />
-                          <button onClick={addUpi} className="rounded-lg px-4 text-sm flex-shrink-0" style={{ background: DARK, color: "#fff", fontWeight: 600, cursor: "pointer", border: "none" }}>Save</button>
-                        </div>
-                        {upiError && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 5 }}>{upiError}</p>}
-                        <p style={{ fontSize: 10, color: "#9ca3af", marginTop: 5 }}>Works with Google Pay, PhonePe, Paytm & any UPI app.</p>
-                      </div>
-                    ) : (
-                      <button onClick={() => setShowUpiAdd(true)} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left" style={{ background: "var(--card)", cursor: "pointer", border: "none" }}>
-                        <Plus size={14} style={{ color: ACCENT }}/>
-                        <span className="flex-1 text-sm" style={{ color: ACCENT_TEXT, fontWeight: 600 }}>Add new UPI ID</span>
-                        <ChevronRight size={14} style={{ color: "#9ca3af" }}/>
-                      </button>
-                    )}
                   </div>
-                )}
+                ))}
 
-                {/* ── Expanded Card detail ── */}
-                {payment === "card" && (
-                  <div className="mt-1 mb-2 rounded-xl px-3 py-3" style={{ border: "0.5px solid var(--border)" }}>
-                    <label style={{ fontSize: 11, fontWeight: 600, color: DARK }}>Card number</label>
-                    <input
-                      value={cardData.number}
-                      onChange={(e) => { setCardData(c => ({ ...c, number: formatCardNum(e.target.value) })); if (cardErrors.number) setCardErrors(x => ({ ...x, number: undefined })); }}
-                      onBlur={(e) => { const d = e.target.value.replace(/\D/g, ""); setCardErrors(x => ({ ...x, number: d && d.length < 13 ? "Enter a valid card number" : undefined })); }}
-                      inputMode="numeric" placeholder="1234 5678 9012 3456"
-                      className="w-full rounded-lg px-3 py-2 text-sm mt-1"
-                      style={{ border: `1px solid ${cardErrors.number ? "#dc2626" : "var(--border)"}`, background: "var(--card)", outline: "none", color: DARK, letterSpacing: 1 }}
-                    />
-                    {cardErrors.number && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 4 }}>{cardErrors.number}</p>}
-
-                    <div className="flex gap-2 mt-2.5">
-                      <div className="flex-1 min-w-0">
-                        <label style={{ fontSize: 11, fontWeight: 600, color: DARK }}>Expiry</label>
-                        <input
-                          value={cardData.expiry}
-                          onChange={(e) => { setCardData(c => ({ ...c, expiry: formatExpiry(e.target.value) })); if (cardErrors.expiry) setCardErrors(x => ({ ...x, expiry: undefined })); }}
-                          onBlur={(e) => { const v = e.target.value; setCardErrors(x => ({ ...x, expiry: v && !validExpiry(v) ? "MM/YY" : undefined })); }}
-                          inputMode="numeric" placeholder="MM/YY" maxLength={5}
-                          className="w-full rounded-lg px-3 py-2 text-sm mt-1"
-                          style={{ border: `1px solid ${cardErrors.expiry ? "#dc2626" : "var(--border)"}`, background: "var(--card)", outline: "none", color: DARK }}
-                        />
-                        {cardErrors.expiry && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 4 }}>{cardErrors.expiry}</p>}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <label style={{ fontSize: 11, fontWeight: 600, color: DARK }}>CVV</label>
-                        <input
-                          value={cardCvv}
-                          onChange={(e) => { setCardCvv(e.target.value.replace(/\D/g, "").slice(0, 4)); if (cardErrors.cvv) setCardErrors(x => ({ ...x, cvv: undefined })); }}
-                          onBlur={(e) => { const v = e.target.value; setCardErrors(x => ({ ...x, cvv: v && v.length < 3 ? "3–4 digits" : undefined })); }}
-                          type="password" inputMode="numeric" placeholder="•••" maxLength={4}
-                          className="w-full rounded-lg px-3 py-2 text-sm mt-1"
-                          style={{ border: `1px solid ${cardErrors.cvv ? "#dc2626" : "var(--border)"}`, background: "var(--card)", outline: "none", color: DARK }}
-                        />
-                        {cardErrors.cvv && <p style={{ fontSize: 10.5, color: "#dc2626", marginTop: 4 }}>{cardErrors.cvv}</p>}
-                      </div>
-                    </div>
-
-                    <div className="mt-2.5">
-                      <label style={{ fontSize: 11, fontWeight: 600, color: DARK }}>Name on card</label>
-                      <input
-                        value={cardData.name}
-                        onChange={(e) => setCardData(c => ({ ...c, name: e.target.value }))}
-                        placeholder="As printed on card"
-                        className="w-full rounded-lg px-3 py-2 text-sm mt-1"
-                        style={{ border: "1px solid var(--border)", background: "var(--card)", outline: "none", color: DARK }}
-                      />
-                    </div>
-                    <p style={{ fontSize: 10, color: "#9ca3af", marginTop: 8, lineHeight: 1.5 }}>Saved securely for your coordinator's payment link. Your card is not charged now and the CVV is never stored.</p>
-                  </div>
-                )}
-
-                <div className="mt-1 flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: ACCENT_BG, border: `0.5px solid ${ACCENT}` }}>
+                <div className="mt-2 flex gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: ACCENT_BG, border: `0.5px solid ${ACCENT}` }}>
                   <Info size={11} style={{ color: ACCENT, flexShrink: 0, marginTop: 1 }}/>
-                  <p style={{ fontSize: 11, color: "#7c5419", lineHeight: 1.5 }}>Fixed price — pay {inr(individualPayable)} now by {payment === "upi" ? "UPI" : "card"} to place your order.{isAccessoryOrder ? "" : " Stitching & packaging are included in this price."} Your coordinator confirms fit before production.</p>
+                  <p style={{ fontSize: 11, color: "#7c5419", lineHeight: 1.5 }}>Nothing is charged when you submit.{isAccessoryOrder ? "" : " Stitching & packaging are included in the price."} Payment unlocks in Track after Garm confirms your order.</p>
                 </div>
               </div>
             </div>
@@ -6136,7 +6169,10 @@ function PersonaOrderForm({
                   <p style={{ fontSize: 13, fontWeight: 700, color: DARK }}>{cat.label}</p>
                 </div>
 
-                {accessorySpecs ? catItems.map(({ key, name }, idx) => (
+                {(accessorySpecs || catItems.some(ci => accFieldsFor(catId, ci.name).length > 0)) ? catItems.map(({ key, name }, idx) => {
+                  const efields = accFieldsFor(catId, name);
+                  const matIdx = efields.findIndex(f => f.label !== "Colour");
+                  return (
                   <div key={key} className="rounded-2xl overflow-hidden border border-border mb-4">
                     <div className="flex items-center gap-2.5 px-3.5 py-2.5" style={{ background: "var(--muted)", borderBottom: "0.5px solid var(--border)" }}>
                       <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-white" style={{ background: DARK, fontSize: 11, fontWeight: 700 }}>
@@ -6145,7 +6181,7 @@ function PersonaOrderForm({
                       <p style={{ fontSize: 13, fontWeight: 700, color: DARK }}>{name}</p>
                     </div>
                     <div className="px-3.5 py-3 flex flex-col gap-3">
-                      {accessorySpecs.fields.map((field, fi) => (
+                      {efields.map((field, fi) => (
                         <div key={fi}>
                           <p style={{ fontSize: 11, fontWeight: 600, color: "#374151", marginBottom: 4 }}>{field.label}</p>
                           {field.hint && (
@@ -6154,7 +6190,7 @@ function PersonaOrderForm({
                           <SelectField options={field.options}
                             value={accSpecState[key]?.[field.label] ?? field.options[0]}
                             onChange={v => setAccSpec(key, field.label, v)}
-                            priceFor={fi === 0 ? (opt => ` · ${inr(Math.round(accessoryRatePerPc(catId, name) * accessoryMaterialMultiplier(opt) / accessoryMaterialMultiplier(field.options[0])))}/pc`) : undefined} />
+                            priceFor={fi === matIdx ? (opt => ` · ${inr(Math.round(accessoryRatePerPc(catId, name) * accessoryMaterialMultiplier(opt) / accessoryMaterialMultiplier(field.options[0])))}/pc`) : undefined} />
                         </div>
                       ))}
                       <div>
@@ -6169,7 +6205,8 @@ function PersonaOrderForm({
                       </div>
                     </div>
                   </div>
-                )) : (
+                  );
+                }) : (
                   <div className="rounded-2xl border border-border p-3.5 mb-4">
                     <p className="text-foreground mb-1.5" style={{ fontSize: 13, fontWeight: 600 }}>Product notes for {cat.label}</p>
                     <textarea
@@ -6215,7 +6252,7 @@ function PersonaOrderForm({
           <Section title="Choose your garments" icon={Shirt}>
             {persona === "individual"
               ? <GarmentCart cart={garmentCart} onChange={setGarmentCart} lockedCategory={lockedCat} onViewPhotos={setGalleryName}/>
-              : <OrgGarmentCart cart={orgCart} onChange={setOrgCart} orgType={orgDetails?.type} allowedCategories={orgAllowedCats} onViewPhotos={setGalleryName} view={orgGarmentView} onViewChange={setOrgGarmentView}/>}
+              : <OrgGarmentCart cart={orgCart} onChange={setOrgCart} orgType={orgDetails?.type} allowedCategories={orgAllowedCats} onViewPhotos={setGalleryName} view={orgGarmentView} onViewChange={setOrgGarmentView} fabricSource={fabricSource}/>}
           </Section>
         </div>
       );
@@ -6253,25 +6290,55 @@ function PersonaOrderForm({
           {!isUniformOrder && (
             <Section title="Material" icon={Ruler}>
               <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Fabric source</p>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                {([["fresh","New fabric","New production run"],["surplus","Surplus fabric","Mill leftover stock · Discounted"]] as const).map(([id, lbl2, sub]) => (
-                  <button key={id} onClick={() => setFabricSource(id)}
-                    className="flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-xl text-left"
-                    style={{ border:`1.5px solid ${fabricSource===id ? DARK : "var(--border)"}`, background: fabricSource===id ? "rgba(13,13,13,0.04)" : "var(--card)", cursor:"pointer" }}>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border:`2px solid ${fabricSource===id ? DARK : "#d1d5db"}`, background: fabricSource===id ? DARK : "var(--card)" }}>
-                        {fabricSource===id && <div className="w-1.5 h-1.5 rounded-full bg-white"/>}
-                      </div>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: fabricSource===id ? DARK : "#111827" }}>{lbl2}</span>
-                    </div>
-                    <span style={{ fontSize: 11, color:"#9ca3af", marginLeft: 22 }}>{sub}</span>
-                  </button>
-                ))}
-              </div>
+              {(() => {
+                // Representative garment for the price preview on the two cards —
+                // the first garment in the order with its current fabric/weave picks.
+                const rep = persona === "individual" && garmentCart.length > 0
+                  ? { g: { categoryId: garmentCart[0].categoryId, name: garmentCart[0].name, basePrice: garmentCart[0].basePrice }, m: matFor(garmentCart[0].name) }
+                  : orgCart.length > 0
+                    ? { g: { categoryId: orgCart[0].categoryId, name: orgCart[0].name, basePrice: orgCart[0].basePrice }, m: orgCart[0].material }
+                    : selectedGarment ? { g: selectedGarment, m: material } : null;
+                const priceOf = (src: "fresh" | "surplus") => rep ? garmentPriceForFabric(rep.g, rep.m.fabric, rep.m.weave, src) : null;
+                const freshPc = priceOf("fresh");
+                const surplusPc = priceOf("surplus");
+                const moreThanOne = persona === "individual" ? new Set(garmentCart.map(g => g.name)).size > 1 : orgCart.length > 1;
+                return (
+                  <div className="grid grid-cols-2 gap-2 mb-4">
+                    {([["fresh", "New fabric", "New production run", freshPc, null],
+                       ["surplus", "Surplus fabric", "Mill leftover stock", surplusPc, freshPc]] as const).map(([id, lbl2, sub, pc, was]) => (
+                      <button key={id} onClick={() => setFabricSource(id)}
+                        className="flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-xl text-left"
+                        style={{ border:`1.5px solid ${fabricSource===id ? DARK : "var(--border)"}`, background: fabricSource===id ? "rgba(13,13,13,0.04)" : "var(--card)", cursor:"pointer" }}>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center" style={{ border:`2px solid ${fabricSource===id ? DARK : "#d1d5db"}`, background: fabricSource===id ? DARK : "var(--card)" }}>
+                            {fabricSource===id && <div className="w-1.5 h-1.5 rounded-full bg-white"/>}
+                          </div>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: fabricSource===id ? DARK : "#111827" }}>{lbl2}</span>
+                        </div>
+                        {/* The REAL per-piece price for this source — the core of the decision */}
+                        {pc !== null && (
+                          <span className="flex items-baseline gap-1.5" style={{ marginLeft: 22, marginTop: 2 }}>
+                            <span style={{ fontSize: 17, fontWeight: 800, color: id === "surplus" ? "#047857" : DARK }}>{inr(pc)}<span style={{ fontSize: 11.5, fontWeight: 600 }}>/pc</span></span>
+                            {id === "surplus" && was !== null && was !== pc && (
+                              <span style={{ fontSize: 12.5, color: "#9ca3af", textDecoration: "line-through" }}>{inr(was)}</span>
+                            )}
+                          </span>
+                        )}
+                        <span style={{ fontSize: 11, color: id === "surplus" ? "#047857" : "#9ca3af", marginLeft: 22, fontWeight: id === "surplus" ? 600 : 400 }}>
+                          {id === "surplus" ? `Save ${surplusDiscountPct()}%${moreThanOne ? " on every garment" : ""}` : sub}
+                        </span>
+                        {pc !== null && moreThanOne && (
+                          <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: 22 }}>e.g. {rep!.g.name}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
               {fabricSource === "surplus" && (
                 <div className="mb-3 flex gap-1.5 px-2.5 py-2 rounded-xl bg-emerald-50 border border-emerald-200">
                   <RotateCcw size={12} style={{ color:"#065f46", flexShrink:0, marginTop:1 }}/>
-                  <p style={{ fontSize: 11, color:"#065f46", lineHeight: 1.5 }}>Surplus fabric is leftover mill stock — same quality, up to 30% cheaper. Availability confirmed before production.</p>
+                  <p style={{ fontSize: 11, color:"#065f46", lineHeight: 1.5 }}>Surplus fabric is leftover mill stock — same quality, <strong>{surplusDiscountPct()}% off</strong> every garment below. Availability confirmed before production.</p>
                 </div>
               )}
 
@@ -6293,7 +6360,19 @@ function PersonaOrderForm({
                         <div className="flex items-center justify-between gap-2 px-3 py-2" style={{ background:"var(--muted)" }}>
                           <span style={{ fontSize: 12.5, fontWeight: 700, color: DARK }}>{name}</span>
                           <span className="flex items-center gap-1.5 flex-shrink-0">
-                            <span style={{ fontSize: 11, color:"#1a4a8a", fontWeight: 600 }}>{inr(garmentPriceForFabric({ categoryId: "mens", name, basePrice: garmentCart.find(g => g.name === name)!.basePrice }, fabricVal, weaveVal))}/pc</span>
+                            {(() => {
+                              const gLine = { categoryId: "mens" as const, name, basePrice: garmentCart.find(g => g.name === name)!.basePrice };
+                              const fresh = garmentPriceForFabric(gLine, fabricVal, weaveVal, "fresh");
+                              const now = garmentPriceForFabric(gLine, fabricVal, weaveVal, fabricSource);
+                              return (
+                                <span className="flex items-baseline gap-1.5">
+                                  {fabricSource === "surplus" && fresh !== now && (
+                                    <span style={{ fontSize: 13, color:"#9ca3af", textDecoration:"line-through" }}>{inr(fresh)}</span>
+                                  )}
+                                  <span style={{ fontSize: 17, color: fabricSource === "surplus" ? "#047857" : "#1a4a8a", fontWeight: 800 }}>{inr(now)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
+                                </span>
+                              );
+                            })()}
                             <RemoveChip title={`Remove ${name} from this order`}
                               onRemove={() => setGarmentCart(prev => prev.filter(g => g.name !== name))}/>
                           </span>
@@ -6319,7 +6398,17 @@ function PersonaOrderForm({
               ) : (
                 <>
                   <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>{cfg.fabricLabel}</p>
-                  <div className="mb-3"><SelectField options={cfg.fabricOptions} value={material.fabric} onChange={v => setMaterial(m => ({ ...m, fabric: v }))} priceFor={o => ` · ${inr(fabricRatePerPc(o))}/pc`} /></div>
+                  <div className="mb-2"><SelectField options={cfg.fabricOptions} value={material.fabric} onChange={v => setMaterial(m => ({ ...m, fabric: v }))} priceFor={o => ` · ${inr(fabricSource === "surplus" ? Math.max(1, Math.round(fabricRatePerPc(o) * (1 - surplusDiscountPct() / 100))) : fabricRatePerPc(o))}/pc`} /></div>
+                  {/* The price of what's currently selected — big and unmissable */}
+                  <div className="flex items-baseline justify-between px-3 py-2 mb-3 rounded-xl" style={{ background: fabricSource === "surplus" ? "#ecfdf5" : "var(--muted)", border: `1px solid ${fabricSource === "surplus" ? "#a7f3d0" : "var(--border)"}` }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Your price with this fabric</span>
+                    <span className="flex items-baseline gap-1.5">
+                      {fabricSource === "surplus" && (
+                        <span style={{ fontSize: 12.5, color: "#9ca3af", textDecoration: "line-through" }}>{inr(garmentPriceForFabric(selectedGarment, material.fabric, material.weave, "fresh"))}</span>
+                      )}
+                      <span style={{ fontSize: 17, fontWeight: 800, color: fabricSource === "surplus" ? "#047857" : DARK }}>{inr(garmentRate)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
+                    </span>
+                  </div>
 
                   <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>GSM weight</p>
                   <div className="mb-3"><SelectField options={cfg.gsmOptions} value={material.gsm} onChange={v => setMaterial(m => ({ ...m, gsm: v }))} /></div>
@@ -6393,7 +6482,7 @@ function PersonaOrderForm({
                     <p style={{ fontSize:15, color:"#1a4a8a", fontWeight:700 }}>{inr(individualPayable)}</p>
                   </div>
                   <p style={{ fontSize:10.5, color:"#315f8f", marginTop:3, lineHeight:1.5 }}>
-                    Fixed price · {qty} {qty > 1 ? "pieces" : "piece"} across {garmentCart.length} colour line{garmentCart.length !== 1 ? "s" : ""}. Pay now by UPI or card to place your order.
+                    Fixed price · {qty} {qty > 1 ? "pieces" : "piece"} across {garmentCart.length} colour line{garmentCart.length !== 1 ? "s" : ""}. Submit now — payment unlocks after Garm confirms.
                   </p>
                 </div>
               );
@@ -6489,7 +6578,7 @@ function PersonaOrderForm({
               </div>
             </div>
           )}
-          <Section title="References & samples" icon={ImageIcon}><RefImagesSection persona={persona} isAccessoryOrder={isAccessoryOrgOrder} onStateChange={setRefState} initialChosen={resume ? refState.chosen : undefined} previewLines={persona === "individual" ? garmentCart.map(g => ({ name: g.name, colorHex: g.colorHex, colorLabel: g.colorLabel })) : undefined} previewAudience={indivCartMixed ? undefined : customDetails?.audience} previewMaterial={material.fabric}/></Section>
+          <Section title="References & samples" icon={ImageIcon}><RefImagesSection persona={persona} isAccessoryOrder={isAccessoryOrgOrder} onStateChange={setRefState} initialChosen={resume ? refState.chosen : undefined} previewLines={orderFormCfg.livePreview && persona === "individual" ? garmentCart.map(g => ({ name: g.name, colorHex: g.colorHex, colorLabel: g.colorLabel })) : undefined} previewAudience={indivCartMixed ? undefined : customDetails?.audience} previewMaterial={material.fabric}/></Section>
         </div>
       );
     }
@@ -6557,20 +6646,24 @@ function PersonaOrderForm({
           const stitchCost = perPcCost(stitchOpt?.cost), packCost = perPcCost(packOpt?.cost);
           const weaveCost  = weaveAddOnPerPc(material.weave);
           const breakdown: { label: string; value: string; strong?: boolean }[] = isAccessoryOrder
-            ? Object.entries(accessoryQtyData).filter(([, q]) => q > 0).map(([key, q]) => {
-                const { categoryId, itemName } = parseAccessoryQtyKey(key);
-                const r = accessoryItemRate(categoryId, itemName, accSpecState[key]);
-                return { label: `${itemName} · ${q} × ${inr(r)}`, value: inr(q * r) };
-              })
+            ? [
+                ...Object.entries(accessoryQtyData).filter(([, q]) => q > 0).map(([key, q]) => {
+                  const { categoryId, itemName } = parseAccessoryQtyKey(key);
+                  const r = accessoryItemRate(categoryId, itemName, accSpecState[key]);
+                  return { label: `${itemName} · ${q} × ${inr(r)}`, value: inr(q * r) };
+                }),
+                ...(persona === "individual" && individualServiceFee > 0 ? [{ label: `Service fee (${orderFormCfg.fee.b2cPercent}% + ${inr(orderFormCfg.fee.b2cPerPiece)}/pc)`, value: inr(individualServiceFee) }] : []),
+              ]
             : persona === "individual"
             ? [
                 ...garmentCart.map(g => {
-                  const r = garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave);
+                  const r = garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource);
                   return { label: `${g.name} · ${g.colorLabel} · ${g.qty} × ${inr(r)}`, value: inr(g.qty * r) };
                 }),
                 { label: `Stitching · ${stitchOpt?.label ?? "Standard"}`, value: stitchCost > 0 ? `+${inr(stitchCost)}/pc` : "included" },
                 { label: `Packaging · ${packOpt?.label ?? "Standard"}`, value: packCost > 0 ? `+${inr(packCost)}/pc` : "included" },
                 { label: "Finishing", value: garmentCartQty * finishingPerPc > 0 ? inr(garmentCartQty * finishingPerPc) : "included" },
+                ...(individualServiceFee > 0 ? [{ label: `Service fee (${orderFormCfg.fee.b2cPercent}% + ${inr(orderFormCfg.fee.b2cPerPiece)}/pc)`, value: inr(individualServiceFee) }] : []),
                 { label: "Total pieces", value: `${garmentCartQty} pcs`, strong: true },
               ]
             : [
@@ -6608,7 +6701,7 @@ function PersonaOrderForm({
                         </div>
                         <div className="flex items-center gap-1 mt-1">
                           <ShieldCheck size={11} strokeWidth={2} style={{ color:"rgba(200,169,126,0.9)", flexShrink:0 }}/>
-                          <p style={{ fontSize:10.5, color:"rgba(255,255,255,0.62)" }} className="truncate">{priceExpanded ? `Pay by ${payment === "upi" ? "UPI" : "card"}` : "Tap to see full breakdown"}</p>
+                          <p style={{ fontSize:10.5, color:"rgba(255,255,255,0.62)" }} className="truncate">{priceExpanded ? "Payable after confirmation" : "Tap to see full breakdown"}</p>
                         </div>
                       </div>
                     </div>
@@ -6722,7 +6815,7 @@ function PersonaOrderForm({
               style={{ ...(currentStepBlocked ? btnPrimaryDisabled : btnPrimary), flex:1, width:"auto" }}
             >
               {persona === "individual"
-                ? <>{`Pay ${inr(individualPayable)} & place order`}</>
+                ? <><Send size={14}/> Submit order · {inr(individualPayable)}</>
                 : <><Send size={14}/> Submit my order</>}
             </button>
           )}
@@ -6741,13 +6834,13 @@ function PersonaOrderForm({
             <div className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center" style={{ background: ACCENT_BG }}>
               <Send size={20} style={{ color: ACCENT }}/>
             </div>
-            <p className="text-foreground mb-1.5" style={{ fontSize: 16, fontWeight: 700 }}>{persona === "individual" ? `Pay ${inr(individualPayable)} & place order?` : "Submit my order?"}</p>
+            <p className="text-foreground mb-1.5" style={{ fontSize: 16, fontWeight: 700 }}>{persona === "individual" ? `Submit order for confirmation?` : "Submit my order?"}</p>
             <p className="text-muted-foreground text-sm leading-relaxed mb-5">{persona === "individual"
-              ? <>You'll pay the fixed price of {inr(individualPayable)} by {payment === "upi" ? "UPI" : "card"} to place your order. Your coordinator confirms fit before production.</>
+              ? <>Your order is sent to Garm for confirmation — nothing is charged now. Once confirmed, you'll pay {inr(individualPayable)} in Track and production starts right after.</>
               : <>Your coordinator will confirm the order details and share the final price &amp; next steps shortly. You can still request changes after submitting.</>}</p>
             <div className="flex flex-col gap-2">
               <button onClick={() => { setShowConfirmSubmit(false); onSubmit(buildFullSummary(), buildDraftPayload()); }} style={{ ...btnPrimary, padding:"12px 20px" }}>
-                <Check size={15}/> {persona === "individual" ? `Pay ${inr(individualPayable)} now` : "Yes, submit order"}
+                <Check size={15}/> Yes, submit order
               </button>
               <button onClick={() => setShowConfirmSubmit(false)} style={{ ...btnSecondary, padding:"10px 20px" }}>Go back and review</button>
             </div>
@@ -6864,6 +6957,9 @@ function CustomAudienceForm({ onContinue, onBack, onAccessories }: { onContinue:
 
 // ─── Individual Accessory Picker (same catalog & MOQ rules as organisation) ────
 function IndividualAccessoryPicker({ onContinue, onBack }: { onContinue: (qty: Record<string, number>) => void; onBack: () => void }) {
+  const { isCategoryActive, isItemActive, isItemInStock, extraAccessoryCategories, extraItemsForCategory } = useCatalogAvailability({
+    knownLabels: universalAccessoryCategories.map(c => c.label), audience: "B2C",
+  });
   const ACCESSORY_MOQ = IND_ACCESSORY_MOQ, ACCESSORY_STEP = IND_ACCESSORY_STEP;
   const [accessoryQty, setAccessoryQty] = useState<Record<string, number>>({});
   const [view, setView] = useState<"categories" | "products">("categories");
@@ -6883,7 +6979,9 @@ function IndividualAccessoryPicker({ onContinue, onBack }: { onContinue: (qty: R
   }
   function clearAccessory(key: string) { setAccessoryQty(prev => ({ ...prev, [key]: 0 })); }
 
-  const activeCat = activeCategoryId ? universalAccessoryCategories.find(c => c.id === activeCategoryId) : null;
+  const activeCat = activeCategoryId
+    ? universalAccessoryCategories.find(c => c.id === activeCategoryId) ?? extraAccessoryCategories.find(c => c.id === activeCategoryId)
+    : null;
 
   // ── Products page for a chosen category ──
   if (view === "products" && activeCat) {
@@ -6912,22 +7010,25 @@ function IndividualAccessoryPicker({ onContinue, onBack }: { onContinue: (qty: R
           </div>
           <p className="text-muted-foreground mb-2" style={{ fontSize:12, fontWeight:500 }}>{activeCat.label} products</p>
           <div className="flex flex-col gap-2">
-            {activeCat.items.map(item => {
+            {[...activeCat.items.filter(isItemActive), ...(activeCat.id.startsWith("admin_") ? [] : extraItemsForCategory(activeCat.label, activeCat.items, "ACCESSORY").map(e => e.name))].map(item => {
               const key = `${activeCat.id}-${item}`;
               const q = accessoryQty[key] ?? 0;
               const active = q > 0;
+              const inStock = isItemInStock(item);
               return (
-                <div key={key} className="flex items-center gap-3 rounded-xl pl-3.5 pr-2 py-2.5" style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, background: active ? ACCENT_BG : "var(--card)" }}>
+                <div key={key} className="flex items-center gap-3 rounded-xl pl-3.5 pr-2 py-2.5" style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, background: active ? ACCENT_BG : "var(--card)", opacity: inStock || active ? 1 : 0.45 }}>
                   <div className="flex-1 min-w-0">
                     <p style={{ fontSize:13, fontWeight: active ? 600 : 500, color: active ? "#7c5419" : DARK, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item}</p>
-                    <p style={{ fontSize:10.5, color: active ? ACCENT_TEXT : "#9ca3af", marginTop:1 }}>{inr(accessoryRatePerPc(activeCat.id, item))}/pc{active ? ` · ${q} pcs · ${inr(q * accessoryRatePerPc(activeCat.id, item))}` : ` · min ${ACCESSORY_MOQ}`}</p>
+                    {inStock || active
+                      ? <p style={{ fontSize:10.5, color: active ? ACCENT_TEXT : "#9ca3af", marginTop:1 }}>{inr(accessoryRatePerPc(activeCat.id, item))}/pc{active ? ` · ${q} pcs · ${inr(q * accessoryRatePerPc(activeCat.id, item))}` : ` · min ${ACCESSORY_MOQ}`}</p>
+                      : <p style={{ fontSize:10.5, color:"#dc2626", fontWeight:600, marginTop:1 }}>Out of stock — back soon</p>}
                   </div>
                   <div className="flex items-center flex-shrink-0" style={{ border:`1px solid ${active ? ACCENT : "var(--border)"}`, borderRadius:9, overflow:"hidden", background:"var(--card)" }}>
                     <button onClick={() => stepQty(key, -1)} disabled={q === 0} className="flex items-center justify-center" style={{ width:32, height:32, background:"transparent", border:"none", cursor: q === 0 ? "default" : "pointer", opacity: q === 0 ? 0.35 : 1 }}>
                       <Minus size={14} style={{ color: active ? "#7c5419" : "#6b7280" }}/>
                     </button>
                     <span style={{ fontSize:13, fontWeight:700, minWidth:42, textAlign:"center", color: active ? "#7c5419" : "#9ca3af", borderLeft:`1px solid ${active ? ACCENT : "var(--border)"}`, borderRight:`1px solid ${active ? ACCENT : "var(--border)"}`, lineHeight:"32px" }}>{q}</span>
-                    <button onClick={() => stepQty(key, 1)} className="flex items-center justify-center" style={{ width:32, height:32, background: active ? ACCENT : DARK, border:"none", cursor:"pointer" }}>
+                    <button onClick={() => inStock && stepQty(key, 1)} disabled={!inStock} className="flex items-center justify-center" style={{ width:32, height:32, background: active ? ACCENT : DARK, border:"none", cursor: inStock ? "pointer" : "not-allowed" }}>
                       <Plus size={14} style={{ color:"#fff" }}/>
                     </button>
                   </div>
@@ -6971,7 +7072,7 @@ function IndividualAccessoryPicker({ onContinue, onBack }: { onContinue: (qty: R
           <p style={{ fontSize:11.5, color:"#9a3412" }}>Minimum order <strong>{ACCESSORY_MOQ} pcs per product</strong>. Tap a category to choose products.</p>
         </div>
         <div className="flex flex-col gap-2">
-          {universalAccessoryCategories.map(cat => {
+          {[...universalAccessoryCategories.filter(c => isCategoryActive(c.label)), ...extraAccessoryCategories].map(cat => {
             const catQty = countAccessoryQtyForCategory(cat.id, accessoryQty);
             const catItemCount = Object.entries(accessoryQty).filter(([key, q]) => q > 0 && parseAccessoryQtyKey(key).categoryId === cat.id).length;
             return (
@@ -7017,7 +7118,7 @@ function IndividualAccessoryPicker({ onContinue, onBack }: { onContinue: (qty: R
 
 // ─── Success Screen ───────────────────────────────────────────────────────────
 
-function SuccessScreen({ onNavigate, onTrackOrder }: { onNavigate: (tab: string) => void; onTrackOrder: () => void }) {
+function SuccessScreen({ onNavigate, onTrackOrder }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: () => void }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-8 text-center min-h-0">
       <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mb-5">
@@ -7025,7 +7126,7 @@ function SuccessScreen({ onNavigate, onTrackOrder }: { onNavigate: (tab: string)
       </div>
       <p className="text-foreground mb-2" style={{ fontSize: 20, fontWeight: 600 }}>Order submitted!</p>
       <p className="text-muted-foreground mb-1.5 text-sm leading-relaxed">Your coordinator will confirm your order details and share the next steps shortly.</p>
-      <p className="text-muted-foreground mb-8" style={{ fontSize: 11 }}>Reference: <span className="text-foreground" style={{ fontWeight: 500 }}>#FL-2046</span></p>
+      <p className="text-muted-foreground mb-8" style={{ fontSize: 11 }}>Your order reference (FL-xxxx) appears in <span className="text-foreground" style={{ fontWeight: 500 }}>Track</span> in a moment.</p>
       <div className="w-full flex flex-col gap-2.5">
         <button onClick={onTrackOrder} className="w-full bg-foreground text-white rounded-2xl py-3.5 text-sm" style={{ fontWeight: 500 }}>Track your order</button>
         <button onClick={() => onNavigate("home")} className="w-full bg-card border border-border rounded-2xl py-3.5 text-sm text-foreground" style={{ fontWeight: 500 }}>Back to Home</button>
@@ -7045,19 +7146,24 @@ type OrderStep =
   | { type: "individual_step2"; custom: CustomOrderDetails; resume?: ResumeState | null }
   | { type: "success" };
 
-export function NewOrderTab({ onNavigate, onTrackOrder, accountType, orgType, orgName, name, phone, email, onSaveDraft, resumeDraft }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null }) {
+export function NewOrderTab({ onNavigate, onTrackOrder, accountType, orgType, orgName, name, phone, email, address, city, pin, onSaveDraft, resumeDraft }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; address?: string; city?: string; pin?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null }) {
   const isPersonal = accountType === "personal";
-  // Carry the real onboarding profile (org name/type, contact name, phone, email) into
-  // the shared `currentUser` default that the rest of this file reads from, so the
-  // "Organisation, contact & delivery" step and the order's contact details are the
-  // person's actual details instead of the hardcoded demo values.
+  // Carry the real onboarding profile (org name/type, contact name, phone, email, saved
+  // default delivery address) into the shared `currentUser` default that the rest of this
+  // file reads from, so the "Organisation, contact & delivery" step and the order's
+  // contact/delivery details are the person's actual details instead of hardcoded demo
+  // values, and so the individual flow's Review step doesn't ask for an address the user
+  // already saved during onboarding.
   currentUser = {
-    name: name || currentUser.name,
-    org: orgName || currentUser.org,
+    name: name || "",
+    org: orgName || "",
     accountType: currentUser.accountType,
     orgType: (orgTypeDefs.some(t => t.id === orgType) ? (orgType as OrgType) : currentUser.orgType),
-    email: email || currentUser.email,
-    phone: phone || currentUser.phone,
+    email: email || "",
+    phone: phone || "",
+    address: address || "",
+    city: city || "",
+    pin: pin || "",
   };
   const [step, setStep] = useState<OrderStep>(() => {
     if (resumeDraft) {
@@ -7069,7 +7175,31 @@ export function NewOrderTab({ onNavigate, onTrackOrder, accountType, orgType, or
   const [showSwitchConfirm, setShowSwitchConfirm] = useState(false);
   const [submittedSummary, setSubmittedSummary] = useState<SubmittedOrderSummary | null>(null);
 
+  // Feature gate: the admin portal can turn Individual (B2C) or Organisation
+  // (B2B) ordering on/off (Settings → Feature Toggles). Reads live config;
+  // fails open (ordering allowed) until it loads or if the backend is down.
+  const gateCfg = useOrderFormConfig();
+  const orderingOff = isPersonal ? gateCfg.features.b2c_orders === false : gateCfg.features.b2b_orders === false;
+
   const switchBanner = null;
+
+  if (orderingOff) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
+        <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
+          <Info size={24} strokeWidth={1.5} className="text-muted-foreground" />
+        </div>
+        <p className="text-foreground" style={{ fontSize: 16, fontWeight: 600 }}>Ordering is paused</p>
+        <p className="text-muted-foreground text-sm mt-1.5" style={{ maxWidth: 280, lineHeight: 1.5 }}>
+          New {isPersonal ? "individual" : "organisation"} orders are temporarily unavailable. Please check back
+          soon or contact your Garm coordinator.
+        </p>
+        <button onClick={() => onNavigate("home")} className="mt-5 px-4 py-2.5 rounded-2xl text-sm" style={{ background: "var(--foreground)", color: "#fff", fontWeight: 500 }}>
+          Back to home
+        </button>
+      </div>
+    );
+  }
 
   function handleSuccess(summary?: SubmittedOrderSummary, editPayload?: DraftPayload) {
     // Keep the editable snapshot on the summary so Track can reopen this order at Review.
@@ -7107,7 +7237,8 @@ export function NewOrderTab({ onNavigate, onTrackOrder, accountType, orgType, or
           onBack={() => setStep({ type:"custom_audience" })}
           onContinue={accessoryQty => setStep({ type:"individual_step2", custom: {
             garmentType: "tshirt", groupType: "personal", name: currentUser.name,
-            phone: currentUser.phone, email: currentUser.email, address: "", city: "", pin: "",
+            phone: currentUser.phone, email: currentUser.email,
+            address: currentUser.address, city: currentUser.city, pin: currentUser.pin,
             isAccessoryOrder: true, accessoryQty,
           } })}
         />

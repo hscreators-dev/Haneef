@@ -45,9 +45,10 @@ export interface IUser extends Document {
   avatarUrl?: string;
   twoFAEnabled: boolean;
 
-  // Sub-documents
-  addresses: IAddress[];
-  paymentMethods: IPaymentMethod[];
+  // Sub-documents — DocumentArray so `.id(...)` lookups typecheck (mongoose
+  // subdocument arrays carry helpers a plain IAddress[] doesn't have).
+  addresses: mongoose.Types.DocumentArray<IAddress>;
+  paymentMethods: mongoose.Types.DocumentArray<IPaymentMethod>;
 
   onboardingComplete: boolean;
   createdAt: Date;

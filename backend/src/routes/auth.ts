@@ -31,18 +31,25 @@ router.post("/send-otp", async (req: Request, res: Response, next: NextFunction)
 
     const otp = await generateOTP(identity, mode);
 
-    if (mode === "phone") {
-      await sendSMS(identity, otp);
-    } else {
-      await sendEmail(identity, otp);
+    // Deliver via the configured provider (see services/smsService.ts and
+    // emailService.ts — provider-agnostic, no Twilio required). If a real
+    // gateway isn't configured they fall back to a console log in dev. In
+    // production a delivery failure is a hard error (don't issue a code no one
+    // receives); in dev it's swallowed so you can test with the console code.
+    try {
+      if (mode === "phone") await sendSMS(identity, otp);
+      else await sendEmail(identity, otp);
+    } catch (gatewayErr) {
+      if (process.env.NODE_ENV === "production") throw gatewayErr;
     }
 
-    // In development, also log to console so you can test without credentials
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`\n🔑 OTP for ${identity}: ${otp}\n`);
-    }
-
-    res.json({ success: true, message: `OTP sent to ${identity}` });
+    res.json({
+      success: true,
+      message: `OTP sent to ${identity}`,
+      // Echo the code ONLY outside production so local testing works without a
+      // real gateway. Never returned in production — there it must be delivered.
+      ...(process.env.NODE_ENV !== "production" ? { devCode: otp } : {}),
+    });
   } catch (err) {
     next(err);
   }

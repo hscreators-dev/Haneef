@@ -1,0 +1,60 @@
+# Render Blueprint — Garm Customer App (backend + frontend)
+# ─────────────────────────────────────────────────────────────────────────────
+# In Render: New ▸ Blueprint ▸ connect the "Haneef" repo ▸ Apply.
+# Render reads this file and creates BOTH services below with the right settings.
+# You'll be asked to fill a few values (marked "sync: false") when you Apply:
+#   • MONGODB_URI   — the SAME MongoDB Atlas string you used for the admin backend
+#   • SMTP_*        — a Gmail address + App Password so login codes get emailed
+#   • FRONTEND_URL  — the customer app's own URL once it's live
+#   • VITE_API_URL / VITE_ADMIN_API_URL (on the static site) — the two backend URLs
+# The JWT secret is generated for you automatically.
+services:
+  # ── Customer backend (Express, Docker) ──
+  - type: web
+    name: garm-app-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        sync: false
+      - key: OTP_APP_NAME
+        value: Garm
+      - key: SMS_PROVIDER
+        value: console
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+
+  # ── Customer frontend (static site) ──
+  - type: web
+    name: garm-shop
+    runtime: static
+    buildCommand: npm install && npx vite build --base=/
+    staticPublishPath: ./dist
+    envVars:
+      # Set these once the two backends are live:
+      #   VITE_API_URL       = https://garm-app-backend.onrender.com/api
+      #   VITE_ADMIN_API_URL = https://garm-admin-backend.onrender.com/api/garm
+      - key: VITE_API_URL
+        sync: false
+      - key: VITE_ADMIN_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

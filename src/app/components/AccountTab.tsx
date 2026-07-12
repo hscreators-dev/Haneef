@@ -6,6 +6,15 @@ import {
   RotateCcw, Package, BookOpen, GraduationCap, Heart, Factory,
   Utensils, Trophy, Landmark, Users, AlertTriangle, Lock,
 } from "lucide-react";
+import {
+  account as accountApi,
+  support as supportApi,
+  coordinator as coordinatorApi,
+  type PaymentMethod as ApiPaymentMethod,
+  type Address as ApiAddress,
+  type SupportTicket,
+  type Coordinator,
+} from "../../lib/api";
 
 const ACCENT      = "#C8A97E";
 const ACCENT_BG   = "rgba(200,169,126,0.12)";
@@ -38,7 +47,7 @@ const btnSecondary: React.CSSProperties = {
 };
 const btnAccent: React.CSSProperties = { ...btnPrimary, background: ACCENT };
 
-export type UserProfile = { name: string; avatar: string | null; accountType?: "personal" | "organisation"; orgName?: string; orgType?: string; gstNumber?: string; phone?: string; email?: string };
+export type UserProfile = { name: string; avatar: string | null; accountType?: "personal" | "organisation"; orgName?: string; orgType?: string; gstNumber?: string; phone?: string; email?: string; twoFAEnabled?: boolean };
 
 type Screen =
   | "main" | "profile" | "business" | "delivery" | "payment"
@@ -208,8 +217,20 @@ export function OrgTypeSelect({ value, onChange, placeholder = "Select organisat
 
 // ─── Payment & Billing ────────────────────────────────────────────────────────
 export type UpiProvider = "gpay" | "phonepe" | "paytm" | "bhim";
-interface UpiMethod  { id:number; provider:UpiProvider; address:string; default:boolean }
-interface SavedCard  { id:number; type:"credit"|"debit"; network:"visa"|"mastercard"|"rupay"; last4:string; name:string; expiry:string; default:boolean }
+interface UpiMethod  { id:string; provider:UpiProvider; address:string; default:boolean }
+interface SavedCard  { id:string; type:"credit"|"debit"; network:"visa"|"mastercard"|"rupay"; last4:string; name:string; expiry:string; default:boolean }
+
+// Split the backend's flat paymentMethods list into the two shapes this screen renders.
+function splitPaymentMethods(pms: ApiPaymentMethod[]): { upis: UpiMethod[]; cards: SavedCard[] } {
+  const upis = pms.filter(m => m.type === "upi" && m.upiId).map(m => ({
+    id: m._id!, provider: (m.upiProvider as UpiProvider) || "gpay", address: m.upiId!, default: !!m.isDefault,
+  }));
+  const cards = pms.filter(m => m.type === "card").map(m => ({
+    id: m._id!, type: m.cardType || "credit", network: m.cardNetwork || "visa",
+    last4: m.cardLast4 || "0000", name: m.cardHolderName || "", expiry: m.cardExpiry || "", default: !!m.isDefault,
+  }));
+  return { upis, cards };
+}
 
 export const upiProviderDefs: Record<UpiProvider, { label:string }> = {
   gpay:    { label:"Google Pay" },
@@ -307,6 +328,7 @@ function CardNetworkLogo({ network, size=1 }: { network:SavedCard["network"]; si
 
 function PaymentBillingScreen({ onBack }: { onBack: () => void }) {
   const [tab, setTab] = useState<"upi"|"cards">("upi");
+  const [loadErr, setLoadErr] = useState("");
 
   // ── UPI state ──
   const [upis, setUpis]           = useState<UpiMethod[]>([]);
@@ -314,24 +336,7 @@ function PaymentBillingScreen({ onBack }: { onBack: () => void }) {
   const [upiProvider, setUpiProvider] = useState<UpiProvider>("gpay");
   const [upiAddr, setUpiAddr]     = useState("");
   const [upiErr, setUpiErr]       = useState("");
-
-  function saveUpi() {
-    const v = upiAddr.trim();
-    if (!v) { setUpiErr("Enter your UPI ID"); return; }
-    if (!/^[\w.\-]+@[\w]+$/.test(v)) { setUpiErr("Invalid UPI ID (e.g. name@okicici)"); return; }
-    if (upis.some(u => u.address.toLowerCase() === v.toLowerCase())) { setUpiErr("This UPI ID is already saved"); return; }
-    setUpis(p => [...p, { id:Date.now(), provider:upiProvider, address:v, default:p.length===0 }]);
-    setAddingUpi(false); setUpiAddr(""); setUpiErr(""); setUpiProvider("gpay");
-  }
-  function makeUpiDefault(id: number) { setUpis(p => p.map(x => ({ ...x, default:x.id===id }))); }
-  function removeUpi(id: number) {
-    setUpis(p => {
-      const wasDefault = p.find(x => x.id===id)?.default;
-      let rest = p.filter(x => x.id!==id);
-      if (wasDefault && rest.length) rest = rest.map((x, i) => ({ ...x, default:i===0 }));
-      return rest;
-    });
-  }
+  const [savingUpi, setSavingUpi] = useState(false);
 
   // ── Cards state ──
   const [cards, setCards]           = useState<SavedCard[]>([]);
@@ -343,6 +348,39 @@ function PaymentBillingScreen({ onBack }: { onBack: () => void }) {
   const [cardExpiry, setCardExpiry] = useState("");
   const [cardCvv, setCardCvv]       = useState("");
   const [cardErr, setCardErr]       = useState("");
+  const [savingCard, setSavingCard] = useState(false);
+
+  // Load real saved methods from the backend on open.
+  useEffect(() => {
+    let cancelled = false;
+    accountApi.getPayment()
+      .then(res => { if (!cancelled) { const { upis, cards } = splitPaymentMethods(res.paymentMethods || []); setUpis(upis); setCards(cards); } })
+      .catch(err => { if (!cancelled) setLoadErr(err instanceof Error ? err.message : "Couldn't load saved payment methods"); });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function saveUpi() {
+    const v = upiAddr.trim();
+    if (!v) { setUpiErr("Enter your UPI ID"); return; }
+    if (!/^[\w.\-]+@[\w]+$/.test(v)) { setUpiErr("Invalid UPI ID (e.g. name@okicici)"); return; }
+    if (upis.some(u => u.address.toLowerCase() === v.toLowerCase())) { setUpiErr("This UPI ID is already saved"); return; }
+    setSavingUpi(true);
+    try {
+      const res = await accountApi.addPayment({ type:"upi", upiId:v, upiProvider, isDefault: upis.length===0 });
+      setUpis(splitPaymentMethods(res.paymentMethods).upis);
+      setAddingUpi(false); setUpiAddr(""); setUpiErr(""); setUpiProvider("gpay");
+    } catch (err) {
+      setUpiErr(err instanceof Error ? err.message : "Couldn't save UPI ID. Try again.");
+    } finally {
+      setSavingUpi(false);
+    }
+  }
+  async function makeUpiDefault(id: string) {
+    try { const res = await accountApi.setDefaultPayment(id); setUpis(splitPaymentMethods(res.paymentMethods).upis); } catch { /* best-effort */ }
+  }
+  async function removeUpi(id: string) {
+    try { const res = await accountApi.deletePayment(id); setUpis(splitPaymentMethods(res.paymentMethods).upis); } catch { /* best-effort */ }
+  }
 
   function formatCardNumber(v: string) {
     const digits = v.replace(/\D/g,"").slice(0,16);
@@ -352,23 +390,33 @@ function PaymentBillingScreen({ onBack }: { onBack: () => void }) {
     const digits = v.replace(/\D/g,"").slice(0,4);
     return digits.length > 2 ? digits.slice(0,2)+"/"+digits.slice(2) : digits;
   }
-  function saveCard() {
+  async function saveCard() {
     const digits = cardNumber.replace(/\s/g,"");
     if (digits.length !== 16)               { setCardErr("Enter full 16-digit card number"); return; }
     if (!cardName.trim())                   { setCardErr("Enter name on card"); return; }
     if (!/^\d{2}\/\d{2}$/.test(cardExpiry)) { setCardErr("Enter expiry as MM/YY"); return; }
     if (cardCvv.length < 3)                 { setCardErr("Enter CVV (3 digits)"); return; }
-    setCards(p => [...p, { id:Date.now(), type:cardType, network:cardNetwork, last4:digits.slice(-4), name:cardName.trim(), expiry:cardExpiry, default:p.length===0 }]);
-    setAddingCard(false); setCardNumber(""); setCardName(""); setCardExpiry(""); setCardCvv(""); setCardErr("");
+    setSavingCard(true);
+    try {
+      // Only last4 + non-sensitive metadata ever leaves this device — the full
+      // card number and CVV are used for on-screen validation only and dropped here.
+      const res = await accountApi.addPayment({
+        type: "card", cardType, cardNetwork: cardNetwork, cardLast4: digits.slice(-4),
+        cardHolderName: cardName.trim(), cardExpiry, isDefault: cards.length===0,
+      });
+      setCards(splitPaymentMethods(res.paymentMethods).cards);
+      setAddingCard(false); setCardNumber(""); setCardName(""); setCardExpiry(""); setCardCvv(""); setCardErr("");
+    } catch (err) {
+      setCardErr(err instanceof Error ? err.message : "Couldn't save card. Try again.");
+    } finally {
+      setSavingCard(false);
+    }
   }
-  function makeCardDefault(id: number) { setCards(p => p.map(x => ({ ...x, default:x.id===id }))); }
-  function removeCard(id: number) {
-    setCards(p => {
-      const wasDefault = p.find(x => x.id===id)?.default;
-      let rest = p.filter(x => x.id!==id);
-      if (wasDefault && rest.length) rest = rest.map((x, i) => ({ ...x, default:i===0 }));
-      return rest;
-    });
+  async function makeCardDefault(id: string) {
+    try { const res = await accountApi.setDefaultPayment(id); setCards(splitPaymentMethods(res.paymentMethods).cards); } catch { /* best-effort */ }
+  }
+  async function removeCard(id: string) {
+    try { const res = await accountApi.deletePayment(id); setCards(splitPaymentMethods(res.paymentMethods).cards); } catch { /* best-effort */ }
   }
 
   const defaultUpi  = upis.find(u => u.default);
@@ -382,6 +430,12 @@ function PaymentBillingScreen({ onBack }: { onBack: () => void }) {
 
   return (
     <SubScreen title="Payments" sub="UPI apps & saved cards" onBack={onBack}>
+      {loadErr && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-4" style={{ background:"rgba(220,38,38,0.06)", border:"1px solid rgba(220,38,38,0.2)" }}>
+          <AlertTriangle size={13} style={{ color:"#dc2626", flexShrink:0 }}/>
+          <p style={{ fontSize:11, color:"#dc2626" }}>{loadErr}</p>
+        </div>
+      )}
       {/* ── Default method hero ── */}
       <div className="rounded-2xl p-4 mb-5 relative overflow-hidden" style={{ background:DARK }}>
         <div className="absolute -right-6 -top-8 w-28 h-28 rounded-full" style={{ background:"rgba(200,169,126,0.18)" }}/>
@@ -497,7 +551,9 @@ function PaymentBillingScreen({ onBack }: { onBack: () => void }) {
                 placeholder="e.g. name@okicici · 98765@ybl" className={INP + " block mb-1"} style={fnt}/>
               {upiErr && <p className="flex items-center gap-1 mb-2" style={{ fontSize:10, color:"#dc2626" }}><AlertTriangle size={10}/>{upiErr}</p>}
               <div className="mb-3"/>
-              <button onClick={saveUpi} style={btnPrimary}><Check size={14} strokeWidth={2}/> Save UPI ID</button>
+              <button onClick={saveUpi} disabled={savingUpi} style={savingUpi ? { ...btnPrimary, opacity:0.6 } : btnPrimary}>
+                <Check size={14} strokeWidth={2}/> {savingUpi ? "Saving…" : "Save UPI ID"}
+              </button>
             </div>
           ) : (
             <button onClick={() => setAddingUpi(true)}
@@ -621,8 +677,8 @@ function PaymentBillingScreen({ onBack }: { onBack: () => void }) {
                 <p style={{ fontSize:10, color:"var(--muted-foreground)" }}>Your card details are encrypted and stored securely. CVV is never saved.</p>
               </div>
 
-              <button onClick={saveCard} style={btnPrimary}>
-                <CreditCard size={14}/> Save card securely
+              <button onClick={saveCard} disabled={savingCard} style={savingCard ? { ...btnPrimary, opacity:0.6 } : btnPrimary}>
+                <CreditCard size={14}/> {savingCard ? "Saving…" : "Save card securely"}
               </button>
             </div>
           ) : (
@@ -775,18 +831,27 @@ function BusinessDetails({ profile, onBack, onSave: onSaveProfile, onContactSupp
 }
 
 // ─── Delivery Addresses ───────────────────────────────────────────────────────
-interface Address { id:number; label:string; line1:string; city:string; pin:string; default:boolean }
+interface Address { id:string; label:string; line1:string; city:string; pin:string; default:boolean }
+const mapApiAddress = (a: ApiAddress): Address => ({ id: a._id!, label: a.label, line1: a.line1, city: a.city, pin: a.pin, default: !!a.isDefault });
 
 function DeliveryAddresses({ onBack }: { onBack: () => void }) {
-  const [addresses, setAddresses] = useState<Address[]>([
-    { id:1, label:"Sri Vidya Mandir School", line1:"#12 Gandhi Nagar, T. Nagar", city:"Chennai", pin:"600017", default:true },
-  ]);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [loadErr, setLoadErr]   = useState("");
   const [adding, setAdding]     = useState(false);
+  const [saving, setSaving]     = useState(false);
   const [gpsLoading, setGpsLoading] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newLine1, setNewLine1] = useState("");
   const [newCity, setNewCity]   = useState("");
   const [newPin, setNewPin]     = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    accountApi.getAddresses()
+      .then(res => { if (!cancelled) setAddresses((res.addresses || []).map(mapApiAddress)); })
+      .catch(err => { if (!cancelled) setLoadErr(err instanceof Error ? err.message : "Couldn't load addresses"); });
+    return () => { cancelled = true; };
+  }, []);
 
   function detectGPS() {
     setGpsLoading(true);
@@ -795,27 +860,47 @@ function DeliveryAddresses({ onBack }: { onBack: () => void }) {
       setGpsLoading(false); setAdding(true);
     }, 1500);
   }
-  function saveNew() {
+  async function saveNew() {
     if (!newLine1.trim() || !newCity.trim()) return;
-    setAddresses(p => [...p, { id:Date.now(), label:newLabel || "New address", line1:newLine1, city:newCity, pin:newPin, default:false }]);
-    setAdding(false); setNewLabel(""); setNewLine1(""); setNewCity(""); setNewPin("");
+    setSaving(true);
+    try {
+      const res = await accountApi.addAddress({ label: newLabel || "New address", line1: newLine1, city: newCity, state: "", pin: newPin, isDefault: addresses.length===0 });
+      setAddresses(res.addresses.map(mapApiAddress));
+      setAdding(false); setNewLabel(""); setNewLine1(""); setNewCity(""); setNewPin("");
+    } catch (err) {
+      setLoadErr(err instanceof Error ? err.message : "Couldn't save address. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function removeAddress(id: string) {
+    try { const res = await accountApi.deleteAddress(id); setAddresses(res.addresses.map(mapApiAddress)); } catch { /* best-effort */ }
+  }
+  async function makeDefault(id: string) {
+    try { const res = await accountApi.updateAddress(id, { isDefault: true }); setAddresses(res.addresses.map(mapApiAddress)); } catch { /* best-effort */ }
   }
 
   return (
     <SubScreen title="Delivery addresses" sub="Saved delivery locations" onBack={onBack}>
+      {loadErr && (
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-3" style={{ background:"rgba(220,38,38,0.06)", border:"1px solid rgba(220,38,38,0.2)" }}>
+          <AlertTriangle size={13} style={{ color:"#dc2626", flexShrink:0 }}/>
+          <p style={{ fontSize:11, color:"#dc2626" }}>{loadErr}</p>
+        </div>
+      )}
       {addresses.map(a => (
         <div key={a.id} className="bg-card border border-border rounded-2xl p-4 mb-3">
           <div className="flex items-start justify-between mb-1">
             <p className="text-foreground text-sm" style={{ fontWeight:500 }}>{a.label}</p>
             <div className="flex items-center gap-2">
               {a.default && <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700" style={{ fontWeight:500 }}>Default</span>}
-              <button onClick={() => setAddresses(p => p.filter(x => x.id !== a.id))}><Trash2 size={13} className="text-muted-foreground" strokeWidth={1.5}/></button>
+              <button onClick={() => removeAddress(a.id)}><Trash2 size={13} className="text-muted-foreground" strokeWidth={1.5}/></button>
             </div>
           </div>
           <p className="text-muted-foreground" style={{ fontSize:12 }}>{a.line1}</p>
           <p className="text-muted-foreground" style={{ fontSize:12 }}>{a.city}{a.pin ? ` — ${a.pin}` : ""}</p>
           {!a.default && (
-            <button onClick={() => setAddresses(p => p.map(x => ({ ...x, default: x.id===a.id })))} className="mt-1.5 text-xs text-foreground" style={{ fontWeight:500 }}>Set as default</button>
+            <button onClick={() => makeDefault(a.id)} className="mt-1.5 text-xs text-foreground" style={{ fontWeight:500 }}>Set as default</button>
           )}
         </div>
       ))}
@@ -843,7 +928,7 @@ function DeliveryAddresses({ onBack }: { onBack: () => void }) {
             <div><p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>City *</p><input value={newCity} onChange={e => setNewCity(sanitizeCity(e.target.value))} placeholder="City" className={INP} style={fnt}/></div>
             <div><p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>PIN code</p><input value={newPin} onChange={e => setNewPin(e.target.value)} placeholder="6-digit PIN" inputMode="numeric" maxLength={6} className={INP} style={fnt}/></div>
           </div>
-          <button onClick={saveNew} style={btnPrimary}>Save address</button>
+          <button onClick={saveNew} disabled={saving} style={saving ? { ...btnPrimary, opacity:0.6 } : btnPrimary}>{saving ? "Saving…" : "Save address"}</button>
         </div>
       )}
     </SubScreen>
@@ -1134,39 +1219,198 @@ function OrderHistory({ onBack, onReorder }: { onBack: () => void; onReorder: (i
   );
 }
 
+const TICKET_STATUS_LABEL: Record<string, { label: string; color: string; bg: string }> = {
+  OPEN:        { label: "Open",        color: "#1a4a8a", bg: "#e3f2fd" },
+  IN_PROGRESS: { label: "In progress", color: "#7c5419", bg: ACCENT_BG },
+  RESOLVED:    { label: "Resolved",    color: "#2e7d32", bg: "#e8f5e9" },
+  CLOSED:      { label: "Closed",      color: "#6b7280", bg: "#f3f4f6" },
+};
+function ticketTime(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) + " · " + d.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+}
+
 function HelpSupportScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: boolean }) {
-  const [subject, setSubject] = useState("");
-  const [details, setDetails] = useState("");
-  const [submitted, setSubmitted] = useState(false);
   const queryTypes = isOrg
     ? ["Order status & tracking", "Payment or invoice", "Sample pickup / swatch box", "Quality issue", "Business or account details"]
     : ["Order status & tracking", "Payment or refund", "Sizing or fit help", "Quality issue", "Account details"];
+  const [category, setCategory] = useState(queryTypes[0]);
+  const [subject, setSubject] = useState("");
+  const [details, setDetails] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [raisedRef, setRaisedRef] = useState("");
+  const [error, setError] = useState("");
+  const [view, setView] = useState<"form" | "tickets" | { thread: string }>("form");
+  const [coord, setCoord] = useState<Coordinator | null>(null);
+
+  useEffect(() => { coordinatorApi.get().then(d => setCoord(d.coordinator)).catch(() => {}); }, []);
+
+  async function raise() {
+    if (!subject.trim() || !details.trim()) return;
+    setBusy(true); setError("");
+    try {
+      const { ticket } = await supportApi.create({ category, subject: subject.trim(), message: details.trim() });
+      setRaisedRef(ticket.ref);
+      setSubject(""); setDetails("");
+    } catch (e) {
+      setError((e as Error).message || "Couldn't raise the ticket. Please try again.");
+    } finally { setBusy(false); }
+  }
+
+  // Contact shortcuts from the coordinator config.
+  const digits = (s?: string) => (s || "").replace(/[^\d+]/g, "");
+  const contacts: { label: string; onClick: () => void; disabled?: boolean }[] = [
+    { label: "Call coordinator", onClick: () => { if (coord?.phone) window.location.href = `tel:${digits(coord.phone)}`; }, disabled: !coord?.phone },
+    { label: "WhatsApp support", onClick: () => { if (coord?.whatsapp) window.open(`https://wa.me/${digits(coord.whatsapp).replace(/^\+/, "")}`, "_blank"); }, disabled: !coord?.whatsapp },
+    { label: "Email support", onClick: () => { if (coord?.email) window.location.href = `mailto:${coord.email}`; }, disabled: !coord?.email },
+    { label: "Track my tickets", onClick: () => setView("tickets") },
+  ];
+
+  if (view === "tickets") return <TicketsScreen onBack={() => setView("form")} onOpen={(id) => setView({ thread: id })} />;
+  if (typeof view === "object") return <TicketThreadScreen id={view.thread} onBack={() => setView("tickets")} />;
+
   return (
     <SubScreen title="Help & support" sub="Raise a ticket or reach your coordinator" onBack={onBack}>
-      <div className="bg-card border border-border rounded-2xl p-4 mb-3">
-        <p className="text-foreground text-sm mb-3" style={{ fontWeight:600 }}>Create a support ticket</p>
-        <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>What do you need help with?</p>
-        <div className="relative mb-3">
-          <select className={INP + " appearance-none pr-10"} style={{ ...fnt, cursor:"pointer" }}>
-            {queryTypes.map(t => <option key={t}>{t}</option>)}
-          </select>
-          <ChevronDown size={15} strokeWidth={1.8} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:"#6b7280", pointerEvents:"none" }}/>
+      {raisedRef ? (
+        <div className="bg-card border border-border rounded-2xl p-4 mb-3 text-center">
+          <div className="w-11 h-11 rounded-full mx-auto mb-2 flex items-center justify-center" style={{ background: "#e8f5e9" }}>
+            <Check size={20} style={{ color: "#2e7d32" }}/>
+          </div>
+          <p className="text-foreground text-sm" style={{ fontWeight: 700 }}>Ticket raised · {raisedRef}</p>
+          <p className="text-muted-foreground" style={{ fontSize: 12, marginTop: 3 }}>Our team will reply here. You'll see updates under "Track my tickets".</p>
+          <div className="flex gap-2 mt-3">
+            <button onClick={() => setRaisedRef("")} className="flex-1 rounded-xl border border-border py-2.5 text-sm text-foreground" style={{ fontWeight: 500 }}>Raise another</button>
+            <button onClick={() => setView("tickets")} className="flex-1 rounded-xl py-2.5 text-sm" style={btnPrimary}>Track my tickets</button>
+          </div>
         </div>
-        <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Subject</p>
-        <input value={subject} onChange={e => setSubject(e.target.value)} placeholder="e.g. Change delivery address on order #FL-2046" className={INP + " mb-3 block"} style={fnt}/>
-        <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Details</p>
-        <textarea value={details} onChange={e => setDetails(e.target.value)} placeholder="Tell us what happened, and your order number if you have one" className={INP + " mb-4 block"} style={{ ...fnt, resize:"none", height:90 }}/>
-        <button onClick={() => setSubmitted(true)} disabled={!subject.trim() || !details.trim()}
-          style={subject.trim() && details.trim() ? btnPrimary : { ...btnPrimary, background:"#e5e7eb", color:"#9ca3af", cursor:"not-allowed" }}>
-          {submitted ? "Ticket raised · FL-SUP-1042" : "Raise ticket"}
-        </button>
-      </div>
+      ) : (
+        <div className="bg-card border border-border rounded-2xl p-4 mb-3">
+          <p className="text-foreground text-sm mb-3" style={{ fontWeight:600 }}>Create a support ticket</p>
+          <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>What do you need help with?</p>
+          <div className="relative mb-3">
+            <select value={category} onChange={e => setCategory(e.target.value)} className={INP + " appearance-none pr-10"} style={{ ...fnt, cursor:"pointer" }}>
+              {queryTypes.map(t => <option key={t}>{t}</option>)}
+            </select>
+            <ChevronDown size={15} strokeWidth={1.8} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", color:"#6b7280", pointerEvents:"none" }}/>
+          </div>
+          <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Subject</p>
+          <input value={subject} onChange={e => setSubject(e.target.value)} placeholder="e.g. Change delivery address on order #FL-2046" className={INP + " mb-3 block"} style={fnt}/>
+          <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Details</p>
+          <textarea value={details} onChange={e => setDetails(e.target.value)} placeholder="Tell us what happened, and your order number if you have one" className={INP + " mb-3 block"} style={{ ...fnt, resize:"none", height:90 }}/>
+          {error && <p style={{ fontSize: 12, color: "#b91c1c", marginBottom: 10 }}>{error}</p>}
+          <button onClick={raise} disabled={!subject.trim() || !details.trim() || busy}
+            style={subject.trim() && details.trim() && !busy ? btnPrimary : { ...btnPrimary, background:"#e5e7eb", color:"#9ca3af", cursor:"not-allowed" }}>
+            {busy ? "Raising…" : "Raise ticket"}
+          </button>
+        </div>
+      )}
       <p className="text-muted-foreground mb-2" style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em" }}>Reach us directly</p>
       <div className="grid grid-cols-2 gap-2">
-        {["Call coordinator", "WhatsApp support", "Email support", "Track my tickets"].map(item => (
-          <button key={item} className="rounded-2xl bg-card border border-border py-3 text-sm text-foreground" style={{ fontWeight:500 }}>{item}</button>
+        {contacts.map(c => (
+          <button key={c.label} onClick={c.onClick} disabled={c.disabled}
+            className="rounded-2xl bg-card border border-border py-3 text-sm text-foreground" style={{ fontWeight:500, opacity: c.disabled ? 0.45 : 1, cursor: c.disabled ? "not-allowed" : "pointer" }}>{c.label}</button>
         ))}
       </div>
+    </SubScreen>
+  );
+}
+
+// Per-ticket "last seen message count" so we can show a NEW-reply dot until
+// the customer opens the ticket. Stored locally, keyed by ticket id.
+const TICKET_SEEN_KEY = "fl_ticket_seen_v1";
+function ticketSeen(): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(TICKET_SEEN_KEY) || "{}"); } catch { return {}; }
+}
+function markTicketSeen(id: string, count: number) {
+  try { const m = ticketSeen(); m[id] = count; localStorage.setItem(TICKET_SEEN_KEY, JSON.stringify(m)); } catch { /* ignore */ }
+}
+/** A ticket has an unread admin reply if its message count grew since last seen AND the last message is from admin. */
+function ticketHasUnread(t: SupportTicket, seen: Record<string, number>): boolean {
+  const last = t.messages[t.messages.length - 1];
+  return !!last && last.from === "admin" && t.messages.length > (seen[t._id] ?? 0);
+}
+
+function TicketsScreen({ onBack, onOpen }: { onBack: () => void; onOpen: (id: string) => void }) {
+  const [tickets, setTickets] = useState<SupportTicket[] | null>(null);
+  const [seen] = useState(ticketSeen);
+  useEffect(() => { supportApi.list().then(d => setTickets(d.tickets)).catch(() => setTickets([])); }, []);
+  return (
+    <SubScreen title="My tickets" sub="Track your support requests" onBack={onBack}>
+      {tickets === null && <p className="text-muted-foreground text-xs px-1">Loading…</p>}
+      {tickets !== null && tickets.length === 0 && (
+        <div className="bg-card border border-border rounded-2xl p-6 text-center">
+          <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>No tickets yet</p>
+          <p className="text-muted-foreground" style={{ fontSize: 12, marginTop: 3 }}>Raise a ticket from Help &amp; support and it'll show here.</p>
+        </div>
+      )}
+      <div className="flex flex-col gap-2">
+        {(tickets ?? []).map(t => {
+          const s = TICKET_STATUS_LABEL[t.status] ?? TICKET_STATUS_LABEL.OPEN;
+          const last = t.messages[t.messages.length - 1];
+          const unread = ticketHasUnread(t, seen);
+          return (
+            <button key={t._id} onClick={() => onOpen(t._id)} className="text-left bg-card rounded-2xl p-3.5"
+              style={{ border: unread ? "1.5px solid #C8A97E" : "1px solid var(--border)", background: unread ? "rgba(200,169,126,0.06)" : "var(--card)" }}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="flex items-center gap-1.5">
+                  {unread && <span style={{ width: 7, height: 7, borderRadius: 999, background: "#C8A97E", display: "inline-block" }}/>}
+                  <span className="text-muted-foreground" style={{ fontSize: 11 }}>{t.ref}</span>
+                  {unread && <span style={{ fontSize: 10, fontWeight: 700, color: "#7c5419" }}>New reply</span>}
+                </span>
+                <span className="px-2 py-0.5 rounded-full" style={{ fontSize: 10.5, fontWeight: 600, background: s.bg, color: s.color }}>{s.label}</span>
+              </div>
+              <p className="text-foreground text-sm" style={{ fontWeight: unread ? 700 : 600 }}>{t.subject}</p>
+              {last && <p className="text-muted-foreground" style={{ fontSize: 12, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{last.from === "admin" ? "Garm: " : "You: "}{last.body}</p>}
+              <p className="text-muted-foreground" style={{ fontSize: 10.5, marginTop: 3 }}>{ticketTime(t.updatedAt)}</p>
+            </button>
+          );
+        })}
+      </div>
+    </SubScreen>
+  );
+}
+
+function TicketThreadScreen({ id, onBack }: { id: string; onBack: () => void }) {
+  const [ticket, setTicket] = useState<SupportTicket | null>(null);
+  const [reply, setReply] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = () => supportApi.get(id).then(d => { setTicket(d.ticket); markTicketSeen(id, d.ticket.messages.length); }).catch(() => {});
+  useEffect(() => { load(); const t = setInterval(load, 20000); return () => clearInterval(t); /* eslint-disable-next-line */ }, [id]);
+  async function send() {
+    if (!reply.trim()) return;
+    setBusy(true);
+    try { const { ticket: t } = await supportApi.reply(id, reply.trim()); setTicket(t); setReply(""); }
+    finally { setBusy(false); }
+  }
+  const s = ticket ? (TICKET_STATUS_LABEL[ticket.status] ?? TICKET_STATUS_LABEL.OPEN) : null;
+  return (
+    <SubScreen title={ticket?.ref ?? "Ticket"} sub={ticket?.subject} onBack={onBack}>
+      {!ticket ? <p className="text-muted-foreground text-xs px-1">Loading…</p> : (
+        <>
+          {s && <div className="mb-3"><span className="px-2.5 py-1 rounded-full" style={{ fontSize: 11, fontWeight: 600, background: s.bg, color: s.color }}>{s.label}</span></div>}
+          <div className="flex flex-col gap-2 mb-3">
+            {ticket.messages.map((m, i) => (
+              <div key={i} className={"rounded-2xl p-3 " + (m.from === "customer" ? "self-end" : "self-start")}
+                style={{ maxWidth: "85%", background: m.from === "customer" ? ACCENT_BG : "var(--card)", border: "1px solid var(--border)" }}>
+                <p className="text-foreground" style={{ fontSize: 13, lineHeight: 1.5 }}>{m.body}</p>
+                <p className="text-muted-foreground" style={{ fontSize: 10, marginTop: 4 }}>{m.from === "admin" ? (m.authorName || "Garm Support") : "You"} · {ticketTime(m.at)}</p>
+              </div>
+            ))}
+          </div>
+          {ticket.status !== "CLOSED" ? (
+            <div className="flex gap-2 items-end">
+              <textarea value={reply} onChange={e => setReply(e.target.value)} placeholder="Type a reply…" className={INP + " flex-1 min-w-0"} style={{ ...fnt, resize: "none", height: 46 }}/>
+              <button onClick={send} disabled={!reply.trim() || busy} className="rounded-xl px-5 text-sm flex-shrink-0"
+                style={{ ...(reply.trim() && !busy ? btnPrimary : { ...btnPrimary, background: "#e5e7eb", color: "#9ca3af" }), width: "auto", height: 46 }}>Send</button>
+            </div>
+          ) : (
+            <div className="rounded-2xl p-3 text-center" style={{ background: "var(--muted)", border: "1px solid var(--border)" }}>
+              <p className="text-muted-foreground" style={{ fontSize: 12 }}>This ticket is closed. Reply to reopen it, or raise a new one from Help &amp; support.</p>
+            </div>
+          )}
+        </>
+      )}
     </SubScreen>
   );
 }
@@ -1377,7 +1621,8 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
   onSignOut?: () => void;
 }) {
   const [screen, setScreen]           = useState<Screen>("main");
-  const [twoFAEnabled, setTwoFAEnabled] = useState(false);
+  // 2FA is a real profile field now (persisted server-side), not local-only UI state.
+  const twoFAEnabled = !!profile?.twoFAEnabled;
 
   const displayName   = profile?.name   ?? "Arjun Kumar";
   const displayAvatar = profile?.avatar ?? null;
@@ -1390,8 +1635,8 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
   if (screen === "profile")               return <ProfileEdit profile={{ ...profile, name: displayName, avatar: displayAvatar }} onBack={() => setScreen("main")} onSave={p => { onProfileUpdate?.(p); setScreen("main"); }}/>;
   if (screen === "business")              return <BusinessDetails profile={profile} onSave={onProfileUpdate} onBack={() => setScreen("main")} onContactSupport={() => setScreen("help_support")}/>;
   if (screen === "delivery")              return <DeliveryAddresses onBack={() => setScreen("main")}/>;
-  if (screen === "security")              return <SecurityScreen onBack={() => setScreen("main")} on2FASetup={() => setScreen("two_fa_setup")} twoFAEnabled={twoFAEnabled} onDisable2FA={() => setTwoFAEnabled(false)}/>;
-  if (screen === "two_fa_setup")          return <TwoFASetup onBack={() => setScreen("security")} onComplete={() => { setTwoFAEnabled(true); setScreen("security"); }}/>;
+  if (screen === "security")              return <SecurityScreen onBack={() => setScreen("main")} on2FASetup={() => setScreen("two_fa_setup")} twoFAEnabled={twoFAEnabled} onDisable2FA={() => { onProfileUpdate?.({ ...profile, name: displayName, avatar: displayAvatar, twoFAEnabled: false }); }}/>;
+  if (screen === "two_fa_setup")          return <TwoFASetup onBack={() => setScreen("security")} onComplete={() => { onProfileUpdate?.({ ...profile, name: displayName, avatar: displayAvatar, twoFAEnabled: true }); setScreen("security"); }}/>;
   if (screen === "notifications_settings") return <NotificationsSettings onBack={() => setScreen("main")}/>;
   if (screen === "order_history")         return <OrderHistory onBack={() => setScreen("main")} onReorder={handleReorder}/>;
   if (screen === "payment")               return <PaymentBillingScreen onBack={() => setScreen("main")}/>;

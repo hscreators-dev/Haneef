@@ -6,6 +6,10 @@ import {
 import type { SubmittedOrderSummary, OrderPrice, DraftPayload, OrderGarmentLine } from "./NewOrderTab";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 import { StageAnimation, stageFromLabel, type OrderStage } from "./StageAnimation";
+import { orders as ordersApi, coordinator as coordinatorApi, support as supportApi, token as authToken, type Order as ApiOrder, type Coordinator, type OrderDocument as ApiOrderDocument } from "../../lib/api";
+import { readPendingOrders, writePendingOrders, rememberOrderSummary, readOrderSummaries } from "../../lib/orderSync";
+import { initNotifications, notifyDevice } from "../../lib/notify";
+import { orgAdvancePct } from "../../lib/useOrderFormConfig";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const ACCENT      = "#C8A97E";
@@ -37,11 +41,18 @@ const btnAccent: React.CSSProperties = { ...btnPrimary, background: ACCENT };
 // ─── Types ────────────────────────────────────────────────────────────────────
 type StepStatus = "done" | "active" | "pending";
 interface TrackStep { label: string; sub: string; status: StepStatus; icon: React.ReactNode }
-type OrderStatus = "In production" | "Quality check" | "Shipped" | "Quote pending" | "Order placed" | "Delivered" | "Completed";
+type OrderStatus = "In production" | "Quality check" | "Shipped" | "Quote pending" | "Order placed" | "Order confirmed" | "Delivered" | "Completed";
 
 interface OrderTrack {
   id: string; name: string; statusLabel: OrderStatus; statusColor: string;
   etaDate: string; defaultOpen: boolean; steps: TrackStep[]; isNew?: boolean;
+  // ── Live-backend fields (real orders fetched from the API) ──
+  apiId?: string;            // Mongo _id — presence marks this as a LIVE order
+  adminStatus?: string;      // NEW | CONFIRMED | PAID | … (drives the payment gate)
+  livePaymentStatus?: string; // unpaid | partial | paid
+  assignedEmployee?: string; // name shown on the coordinator card for this order
+  totalAmount?: number;      // confirmed price (₹) to pay
+  documents?: ApiOrderDocument[]; // admin invoices/quotes + own design uploads
   isAccessoryOrder?: boolean;
   accessoryItems?: { name: string; qty: number }[];
   fabric?: string; qty?: string; gsm?: string; colors?: string;
@@ -154,34 +165,52 @@ const allOrders: OrderTrack[] = [
   },
 ];
 
-const defaultNewSubmittedSteps: TrackStep[] = [
-  { label: "Order placed",      sub: "Jun 14, 2025 · Just now",   status: "active",  icon: <Check      size={12} strokeWidth={2.5}/> },
-  { label: "Sourcing material", sub: "Pending coordinator review", status: "pending", icon: <Scissors   size={12} strokeWidth={1.5}/> },
-  { label: "In production",     sub: "–",                         status: "pending", icon: <Scissors   size={12} strokeWidth={1.5}/> },
-  { label: "Quality check",     sub: "–",                         status: "pending", icon: <Microscope size={12} strokeWidth={1.5}/> },
-  { label: "Shipped",           sub: "–",                         status: "pending", icon: <Truck      size={12} strokeWidth={1.5}/> },
-  { label: "Delivered",         sub: "–",                         status: "pending", icon: <Package    size={12} strokeWidth={1.5}/> },
+const todayLabel = () => new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+// Local placeholder steps shown the instant an order is submitted, BEFORE the
+// backend copy lands. Must mirror the backend's real step sequences (see
+// backend/src/models/Order.ts pre-save) so nothing jumps when sync completes.
+const b2cSubmittedSteps = (): TrackStep[] => [
+  // Submitted is the CURRENT stage — "Order confirmed" stays visibly
+  // unreached until the Garm team actually confirms.
+  { label: "Order submitted", sub: `${todayLabel()} · Waiting for Garm to confirm`, status: "active"  as StepStatus, icon: <Check          size={12} strokeWidth={2.5}/> },
+  { label: "Order confirmed", sub: "Garm will confirm your order",                 status: "pending" as StepStatus, icon: <ClipboardCheck size={12} strokeWidth={1.5}/> },
+  { label: "Payment",         sub: "Unlocks once your order is confirmed",     status: "pending" as StepStatus, icon: <Wallet         size={12} strokeWidth={1.5}/> },
+  { label: "In production",   sub: "Starts after payment",                     status: "pending" as StepStatus, icon: <Scissors       size={12} strokeWidth={1.5}/> },
+  { label: "Shipped",         sub: "–",                                        status: "pending" as StepStatus, icon: <Truck          size={12} strokeWidth={1.5}/> },
+  { label: "Delivered",       sub: "–",                                        status: "pending" as StepStatus, icon: <Package        size={12} strokeWidth={1.5}/> },
+];
+const orgSubmittedSteps = (): TrackStep[] => [
+  { label: "Order placed",      sub: `${todayLabel()} · Just now`,   status: "done"    as StepStatus, icon: <Check      size={12} strokeWidth={2.5}/> },
+  { label: "Sourcing material", sub: "Pending coordinator review",   status: "active"  as StepStatus, icon: <Scissors   size={12} strokeWidth={1.5}/> },
+  { label: "In production",     sub: "–",                            status: "pending" as StepStatus, icon: <Scissors   size={12} strokeWidth={1.5}/> },
+  { label: "Quality check",     sub: "–",                            status: "pending" as StepStatus, icon: <Microscope size={12} strokeWidth={1.5}/> },
+  { label: "Shipped",           sub: "–",                            status: "pending" as StepStatus, icon: <Truck      size={12} strokeWidth={1.5}/> },
+  { label: "Delivered",         sub: "–",                            status: "pending" as StepStatus, icon: <Package    size={12} strokeWidth={1.5}/> },
 ];
 
-function buildNewSubmittedOrder(summary?: SubmittedOrderSummary | null): OrderTrack {
+function buildNewSubmittedOrder(summary?: SubmittedOrderSummary | null, accountType?: "personal" | "organisation"): OrderTrack {
+  const isPersonal = accountType === "personal";
   if (!summary) {
     return {
-      id: "#FL-2046", name: "New Order — Just submitted",
+      id: "FL-PENDING", name: "New Order — Just submitted",
       statusLabel: "Order placed", statusColor: "text-blue-700 bg-blue-50",
       etaDate: "TBD", defaultOpen: true, isNew: true,
-      steps: defaultNewSubmittedSteps,
+      steps: isPersonal ? b2cSubmittedSteps() : orgSubmittedSteps(),
     };
   }
-  const steps = summary.isAccessoryOrder
+  const steps = isPersonal
+    ? b2cSubmittedSteps()
+    : summary.isAccessoryOrder
     ? [
-        { label: "Order placed",      sub: "Jun 14, 2025 · Just now",       status: "active"  as StepStatus, icon: <Check        size={12} strokeWidth={2.5}/> },
+        { label: "Order placed",      sub: `${todayLabel()} · Just now`,       status: "active"  as StepStatus, icon: <Check        size={12} strokeWidth={2.5}/> },
         { label: "Quote preparation", sub: "Coordinator reviewing items",     status: "pending" as StepStatus, icon: <ClipboardCheck size={12} strokeWidth={1.5}/> },
         { label: "Production",        sub: "–",                              status: "pending" as StepStatus, icon: <Package      size={12} strokeWidth={1.5}/> },
         { label: "Quality check",     sub: "–",                              status: "pending" as StepStatus, icon: <Microscope   size={12} strokeWidth={1.5}/> },
         { label: "Shipped",           sub: "–",                              status: "pending" as StepStatus, icon: <Truck        size={12} strokeWidth={1.5}/> },
         { label: "Delivered",         sub: "–",                              status: "pending" as StepStatus, icon: <Package      size={12} strokeWidth={1.5}/> },
       ]
-    : defaultNewSubmittedSteps;
+    : orgSubmittedSteps();
   return {
     id: summary.id, name: summary.name,
     statusLabel: "Order placed", statusColor: "text-blue-700 bg-blue-50",
@@ -216,9 +245,105 @@ function buildNewSubmittedOrder(summary?: SubmittedOrderSummary | null): OrderTr
   };
 }
 
-const ACTIVE_STATUSES: OrderStatus[]     = ["Order placed", "Quote pending", "In production", "Quality check", "Shipped"];
+const ACTIVE_STATUSES: OrderStatus[]     = ["Order placed", "Order confirmed", "Quote pending", "In production", "Quality check", "Shipped"];
 const PAST_STATUSES: OrderStatus[]       = ["Delivered", "Completed"];
 const CHANGEABLE_STATUSES: OrderStatus[] = ["Order placed", "Quote pending"];
+
+// ─── Live order → OrderTrack mapping ─────────────────────────────────────────
+const STATUS_COLORS: Record<OrderStatus, string> = {
+  "Order placed":    "text-blue-700 bg-blue-50",
+  "Order confirmed": "text-amber-700 bg-amber-50",
+  "Quote pending":   "text-stone-600 bg-stone-100",
+  "In production":   "text-emerald-700 bg-emerald-50",
+  "Quality check":   "text-amber-700 bg-amber-50",
+  "Shipped":         "text-blue-700 bg-blue-50",
+  "Delivered":       "text-emerald-700 bg-emerald-50",
+  "Completed":       "text-stone-600 bg-stone-100",
+};
+
+function iconForStepLabel(label: string, status: StepStatus): React.ReactNode {
+  if (status === "done") return <Check size={12} strokeWidth={2.5}/>;
+  const l = label.toLowerCase();
+  if (l.includes("confirm"))  return <ClipboardCheck size={12} strokeWidth={1.5}/>;
+  if (l.includes("payment"))  return <Wallet     size={12} strokeWidth={1.5}/>;
+  if (l.includes("product"))  return <Scissors   size={12} strokeWidth={1.5}/>;
+  if (l.includes("sourc"))    return <Scissors   size={12} strokeWidth={1.5}/>;
+  if (l.includes("quality"))  return <Microscope size={12} strokeWidth={1.5}/>;
+  if (l.includes("ship"))     return <Truck      size={12} strokeWidth={1.5}/>;
+  if (l.includes("deliver"))  return <Package    size={12} strokeWidth={1.5}/>;
+  return <Check size={12} strokeWidth={1.5}/>;
+}
+
+function fmtINR(n?: number): string | undefined {
+  return typeof n === "number" && n > 0 ? `₹${n.toLocaleString("en-IN")}` : undefined;
+}
+
+// Organisations pay in two stages: an advance (production starts), then the
+// balance after the QC report (shipping starts). The advance % is configured
+// in the admin portal (Settings → Order Form → Service Fee) and read live via
+// orgAdvancePct() — no hardcoded value.
+function orgAdvanceAmount(total?: number): number { return Math.round(((total ?? 0) * orgAdvancePct()) / 100); }
+
+// Builds a Track card from a real backend order, enriched with the rich
+// display summary saved locally at submit time (keyed by orderRef).
+function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSummary>): OrderTrack {
+  const summary = o.orderRef ? summaries[o.orderRef] : undefined;
+  const statusLabel = ((["In production","Quality check","Shipped","Quote pending","Order placed","Order confirmed","Delivered","Completed"] as OrderStatus[])
+    .includes(o.status as OrderStatus) ? o.status : "Order placed") as OrderStatus;
+  const steps: TrackStep[] = (o.trackSteps || []).map((s) => ({
+    label: s.label, sub: s.sub || "–",
+    status: (s.status === "done" || s.status === "active" ? s.status : "pending") as StepStatus,
+    icon: iconForStepLabel(s.label, s.status as StepStatus),
+  }));
+  const amount = o.total || o.quoteAmount;
+  return {
+    id: o.orderRef || `#${(o._id || "").slice(-6).toUpperCase()}`,
+    name: summary?.name || o.garmentType || o.serviceLabel || (o.isAccessoryOrder ? "Accessories order" : "Custom order"),
+    statusLabel,
+    statusColor: STATUS_COLORS[statusLabel],
+    etaDate: o.etaDate || "TBD",
+    defaultOpen: false,
+    steps,
+    isAccessoryOrder: o.isAccessoryOrder,
+    accessoryItems: o.accessoryItems?.map((a) => ({ name: a.itemName, qty: a.qty })),
+    fabric: o.fabric || summary?.fabric,
+    gsm: o.gsm || summary?.gsm,
+    weave: o.weave || summary?.weave,
+    qty: o.qty ? `${o.qty} pcs` : undefined,
+    stitching: o.stitching || summary?.stitching,
+    packaging: o.packaging || summary?.packaging,
+    total: fmtINR(amount),
+    paymentMode: o.paymentMode || summary?.paymentMethod,
+    paymentDate: o.paymentDate ? new Date(o.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : undefined,
+    paymentReference: o.paymentReference,
+    // Rich detail from the local summary (order-for, garment lines, price, delivery…)
+    isUniform: summary?.isUniform,
+    orderForLabel: summary?.orderForLabel,
+    garmentLabel: summary?.garmentLabel,
+    garmentLines: summary?.garmentLines,
+    fabricSource: summary?.fabricSource,
+    colorList: summary?.colors ?? o.colors?.map((c) => ({ hex: c.hex, label: c.label })),
+    colorDesc: summary?.colorDesc,
+    sizeCatLabel: summary?.sizeCatLabel,
+    sizeBreakdown: summary?.sizeBreakdown ?? o.sizes?.map((s) => ({ size: s.label, qty: s.qty })),
+    referenceMethod: summary?.referenceMethod,
+    referenceFiles: summary?.referenceFiles,
+    delivery: summary?.delivery ?? (o.deliveryAddress ? {
+      name: o.contactName || "", phone: o.contactPhone || "", email: o.contactEmail,
+      address: o.deliveryAddress, city: o.deliveryCity || "", pin: o.deliveryPin || "",
+    } : undefined),
+    accessorySpecs: summary?.accessorySpecs,
+    price: summary?.price,
+    editPayload: summary?.editPayload,
+    // Live gate fields
+    apiId: o._id,
+    adminStatus: o.adminStatus,
+    livePaymentStatus: o.paymentStatus,
+    assignedEmployee: o.assignedEmployee,
+    totalAmount: amount,
+    documents: o.documents,
+  };
+}
 
 type TrackFilter = "active" | "past" | "all";
 
@@ -267,18 +392,51 @@ function DetailRow({ label, value, accent }: { label: string; value: React.React
 }
 
 // ─── Payment Method Card ──────────────────────────────────────────────────────
-function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid }: { order: OrderTrack; accountType?: "personal" | "organisation"; paidOverride?: boolean; onMarkPaid?: () => void }) {
+function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPayLive }: {
+  order: OrderTrack; accountType?: "personal" | "organisation"; paidOverride?: boolean; onMarkPaid?: () => void;
+  onPayLive?: (mode: string, stage?: "advance" | "balance" | "full") => Promise<void>;
+}) {
   const statusPaid = order.statusLabel !== "Quote pending" && order.statusLabel !== "Order placed";
   const [showPay, setShowPay]     = useState(false);
   const [method, setMethod]       = useState<"upi" | "card">("upi");
   const [upiApp, setUpiApp]       = useState<UpiProvider>("gpay");
   const [upiId, setUpiId]         = useState("");
   const [card, setCard]           = useState({ number: "", expiry: "", cvv: "", name: "" });
-  // Individuals pay the fixed price at checkout, so they're always "Paid" and just track.
-  // Organisations can pay/change the method until payment is done, then it's locked.
-  // paidOverride is held in App (by order id) so it survives this card collapsing/remounting.
+  const [paying, setPaying]       = useState(false);
+  const [payError, setPayError]   = useState("");
   const isOrg = accountType !== "personal";
-  const paid  = isOrg ? (statusPaid || !!paidOverride) : true;
+  const isLive = !!order.apiId;
+
+  // ── Individuals: the confirm-then-pay flow ──
+  // Submitted (adminStatus NEW, or a local just-submitted card that hasn't
+  // synced yet): payment is LOCKED until the admin confirms. Confirmed: pay
+  // the confirmed amount here. Paid: locked, shows the receipt info.
+  const isUnconfirmedStage  = order.statusLabel === "Order placed" || order.statusLabel === "Quote pending";
+  const liveAwaitingConfirm = !isOrg && (isLive ? (order.adminStatus === "NEW" || !order.adminStatus) : isUnconfirmedStage);
+  const livePaid            = isLive && order.livePaymentStatus === "paid";
+  const liveCanPay          = isLive && !isOrg && !livePaid && !liveAwaitingConfirm && order.statusLabel !== "Completed";
+  // ── Organisations, LIVE orders: advance → balance ──
+  const orgQuoted     = isLive && isOrg && (order.totalAmount ?? 0) > 0;
+  const orgAdvanceDue = orgQuoted && !livePaid && order.livePaymentStatus !== "partial";
+  const orgBalanceDue = orgQuoted && !livePaid && order.livePaymentStatus === "partial";
+  const orgPayAmount  = orgAdvanceDue ? orgAdvanceAmount(order.totalAmount) : (order.totalAmount ?? 0) - orgAdvanceAmount(order.totalAmount);
+  const orgStage: "advance" | "balance" = orgAdvanceDue ? "advance" : "balance";
+  // Paid is NEVER assumed: live orders use the real paymentStatus; non-live
+  // demo orders only count as paid once they're past the confirmation stage.
+  const paid = isLive ? livePaid : isOrg ? (statusPaid || !!paidOverride) : !isUnconfirmedStage;
+
+  async function payNow(modeLabel: string) {
+    if (!onPayLive) return;
+    setPaying(true); setPayError("");
+    try {
+      await onPayLive(modeLabel, isOrg ? orgStage : undefined);
+      setShowPay(false);
+    } catch (e) {
+      setPayError((e as Error).message || "Payment failed — try again");
+    } finally {
+      setPaying(false);
+    }
+  }
 
   const fmtCard   = (v: string) => v.replace(/\D/g, "").slice(0, 16).replace(/(.{4})/g, "$1 ").trim();
   const fmtExpiry = (v: string) => { const d = v.replace(/\D/g, "").slice(0, 4); return d.length >= 3 ? d.slice(0, 2) + "/" + d.slice(2) : d; };
@@ -288,10 +446,12 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid }: { o
   const inputStyle: React.CSSProperties = { border: "1px solid var(--border)", background: "var(--card)", outline: "none", color: DARK, fontSize: 13 };
 
   return (
-    <Panel title="Payment method">
+    <Panel title="Payment">
       <div className="flex items-center justify-between gap-3 mb-2">
-        <p className="text-foreground" style={{ fontSize: 13 }}>Payment method: {paid ? "*****@upi" : "Not selected"}</p>
-        {isOrg && (paid ? (
+        <p className="text-foreground" style={{ fontSize: 13 }}>
+          Payment method: {paid ? (order.paymentMode || "—") : liveAwaitingConfirm ? "Chosen at payment" : "Not selected"}
+        </p>
+        {isOrg && !isLive && (paid ? (
           <span style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }} title="Already paid">Change</span>
         ) : (
           <button onClick={() => setShowPay(v => !v)} style={{ fontSize: 12, color: ACCENT, fontWeight: 600, background: "none", border: "none", cursor: "pointer" }}>
@@ -302,11 +462,45 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid }: { o
       <p className="text-foreground" style={{ fontSize: 13 }}>
         Payment status:{" "}
         <span style={{ fontWeight: 600, color: paid ? "#059669" : "#D97706" }}>
-          {paid ? "Paid" : "Pending"}
+          {paid ? "Paid" : liveAwaitingConfirm ? "Locked" : orgBalanceDue ? "Advance paid · balance due" : orgAdvanceDue ? "Advance due" : "Pending"}
         </span>
+        {paid && order.paymentDate ? <span className="text-muted-foreground" style={{ fontWeight: 400 }}> · {order.paymentDate}</span> : null}
       </p>
+      {paid && order.paymentReference && (
+        <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2 }}>Ref: {order.paymentReference}</p>
+      )}
 
-      {isOrg && !paid && showPay && (
+      {/* ── Individuals, live order: waiting for admin confirmation ── */}
+      {liveAwaitingConfirm && (
+        <div className="mt-3 rounded-xl px-3 py-2.5" style={{ background: ACCENT_BG, border: `1px solid ${ACCENT}` }}>
+          <p style={{ fontSize: 12, fontWeight: 600, color: ACCENT_TEXT }}>Waiting for Garm to confirm your order</p>
+          <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.5 }}>
+            Once your order is confirmed you'll see the final price here and can pay — production starts right after payment.
+          </p>
+        </div>
+      )}
+
+      {/* ── Individuals, live order: confirmed — pay now ── */}
+      {liveCanPay && !showPay && (
+        <button onClick={() => setShowPay(true)}
+          className="w-full mt-3 py-2.5 rounded-xl"
+          style={{ background: DARK, color: "#fff", fontWeight: 600, fontSize: 13, border: "none", cursor: "pointer" }}>
+          Pay {fmtINR(order.totalAmount) ?? order.price?.totalValue ?? "now"} — confirmed by Garm
+        </button>
+      )}
+
+      {/* ── Organisations, live order: advance then balance ── */}
+      {(orgAdvanceDue || orgBalanceDue) && !showPay && (
+        <button onClick={() => setShowPay(true)}
+          className="w-full mt-3 py-2.5 rounded-xl"
+          style={{ background: DARK, color: "#fff", fontWeight: 600, fontSize: 13, border: "none", cursor: "pointer" }}>
+          {orgAdvanceDue
+            ? `Pay advance ${fmtINR(orgPayAmount)} (${orgAdvancePct()}%) — production starts after this`
+            : `Pay balance ${fmtINR(orgPayAmount)} — shipping starts after this`}
+        </button>
+      )}
+
+      {((isOrg && !isLive && !paid) || liveCanPay || orgAdvanceDue || orgBalanceDue) && showPay && (
         <div className="mt-3 rounded-xl border border-border p-3">
           <p style={{ fontSize: 12, fontWeight: 600, color: DARK, marginBottom: 8 }}>Choose a payment method</p>
           {([["upi", "UPI", "Google Pay, PhonePe, Paytm & more"], ["card", "Card", "Credit or debit card"]] as const).map(([id, lbl, sub]) => {
@@ -369,10 +563,18 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid }: { o
             </div>
           )}
 
-          <button onClick={() => { if (canPay) { onMarkPaid?.(); setShowPay(false); } }} disabled={!canPay}
-            className="w-full mt-2.5 py-2.5 rounded-xl" style={{ background: canPay ? DARK : "#E5E7EB", color: canPay ? "#fff" : "#9CA3AF", fontWeight: 600, fontSize: 13, border: "none", cursor: canPay ? "pointer" : "not-allowed" }}>
-            Pay {order.price?.totalValue ?? "now"} by {method === "upi" ? "UPI" : "card"}
+          <button
+            onClick={() => {
+              if (!canPay || paying) return;
+              const modeLabel = method === "upi" ? "UPI" : "Card";
+              if (liveCanPay || orgAdvanceDue || orgBalanceDue) payNow(modeLabel);
+              else { onMarkPaid?.(); setShowPay(false); }
+            }}
+            disabled={!canPay || paying}
+            className="w-full mt-2.5 py-2.5 rounded-xl" style={{ background: canPay && !paying ? DARK : "#E5E7EB", color: canPay && !paying ? "#fff" : "#9CA3AF", fontWeight: 600, fontSize: 13, border: "none", cursor: canPay && !paying ? "pointer" : "not-allowed" }}>
+            {paying ? "Processing…" : `Pay ${(orgAdvanceDue || orgBalanceDue) ? fmtINR(orgPayAmount) : (fmtINR(order.totalAmount) ?? order.price?.totalValue ?? "now")} by ${method === "upi" ? "UPI" : "card"}`}
           </button>
+          {payError && <p style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>{payError}</p>}
           <p style={{ fontSize: 10, color: "#9ca3af", marginTop: 6, lineHeight: 1.5 }}>Demo checkout — no real charge is made. CVV is never stored.</p>
         </div>
       )}
@@ -441,6 +643,7 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
             <>
               {divider}{sec("Price details")}
               <DetailRow label="Items" value={order.price.rateLine}/>
+              {order.price.serviceFeeLine && <DetailRow label="Service fee" value={order.price.serviceFeeLine}/>}
               <DetailRow label={order.price.totalLabel} value={order.price.totalValue} accent/>
               {order.price.note && (
                 <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.5, marginTop: 1 }}>{order.price.note}</p>
@@ -576,6 +779,7 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
             {divider}{sec("Price details")}
             <DetailRow label="Rate" value={order.price.rateLine}/>
             {order.price.addOnLine && <DetailRow label="Stitching & packaging" value={order.price.addOnLine}/>}
+            {order.price.serviceFeeLine && <DetailRow label="Service fee" value={order.price.serviceFeeLine}/>}
             <DetailRow label={order.price.totalLabel} value={order.price.totalValue} accent/>
             {order.price.note && (
               <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.5, marginTop: 1 }}>{order.price.note}</p>
@@ -638,24 +842,40 @@ function ProcurementStageStrip({ status }: { status: OrderStatus }) {
 }
 
 // ─── Coordinator Card ─────────────────────────────────────────────────────────
-function CoordinatorCard({ onMessage }: { onMessage?: () => void }) {
+// Details come from the Garm Admin Portal (Settings → Procurement Manager).
+// When an order is assigned to an employee, only the NAME shown changes —
+// phone, WhatsApp and email are company-wide and stay the same, always.
+const DEFAULT_COORDINATOR: Coordinator = {
+  name: "Priya Raman",
+  role: "Owns quote, mill follow-up, QA and delivery",
+  phone: "+91 98400 12345",
+  whatsapp: "+91 98400 12345",
+  email: "support@garm.com",
+};
+
+function CoordinatorCard({ coordinator, employeeName, onMessage }: {
+  coordinator?: Coordinator | null; employeeName?: string; onMessage?: () => void;
+}) {
+  const c = coordinator ?? DEFAULT_COORDINATOR;
+  const name = employeeName || c.name;
+  const waDigits = (c.whatsapp || c.phone || "").replace(/\D/g, "");
   return (
     <Panel title="Your procurement manager">
       <div className="flex items-center gap-3 mb-3">
         <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
           style={{ background: ACCENT, color: "#fff", fontWeight: 700, fontSize: 16 }}>
-          P
+          {name.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-foreground" style={{ fontSize: 14, fontWeight: 600 }}>Priya Raman</p>
-          <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2 }}>Owns quote, mill follow-up, QA and delivery</p>
+          <p className="text-foreground" style={{ fontSize: 14, fontWeight: 600 }}>{name}</p>
+          <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2 }}>{c.role}</p>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-2">
         {([
-          [<Phone size={13} strokeWidth={1.5}/>, "Call", undefined],
-          [<MessageSquare size={13} strokeWidth={1.5}/>, "WhatsApp", onMessage],
-          [<Mail size={13} strokeWidth={1.5}/>, "Email", undefined],
+          [<Phone size={13} strokeWidth={1.5}/>, "Call", () => { window.location.href = `tel:${(c.phone || "").replace(/\s/g, "")}`; }],
+          [<MessageSquare size={13} strokeWidth={1.5}/>, "WhatsApp", () => { if (waDigits) window.open(`https://wa.me/${waDigits}`, "_blank"); else onMessage?.(); }],
+          [<Mail size={13} strokeWidth={1.5}/>, "Email", () => { window.location.href = `mailto:${c.email}`; }],
         ] as [React.ReactNode, string, (() => void) | undefined][]).map(([icon, label, handler]) => (
           <button key={String(label)} onClick={handler}
             className="rounded-xl py-2 flex items-center justify-center gap-1.5 border border-border text-foreground"
@@ -671,7 +891,13 @@ function CoordinatorCard({ onMessage }: { onMessage?: () => void }) {
 // ─── Payment Milestones ───────────────────────────────────────────────────────
 function PaymentMilestones({ order }: { order: OrderTrack }) {
   const isQuote = order.statusLabel === "Quote pending" || order.statusLabel === "Order placed";
-  const rows: [string, string, string][] = [
+  // Live orders show the REAL two-stage schedule from the backend.
+  const rows: [string, string, string][] = order.apiId
+    ? [
+        ["Advance payment", `${orgAdvancePct()}%`, ["partial", "paid"].includes(order.livePaymentStatus ?? "") ? "Received" : "Due after quote confirmation"],
+        ["Balance payment", `${100 - orgAdvancePct()}%`, order.livePaymentStatus === "paid" ? "Received" : "Due after the QC report"],
+      ]
+    : [
     ["Advance payment",    "30%", isQuote ? "Due after approval" : "Received"],
     ["Production payment", "50%", ["In production", "Quality check", "Shipped"].includes(order.statusLabel) ? "Received" : "Upcoming"],
     ["Final settlement",   "20%", order.statusLabel === "Shipped" ? "Due before dispatch" : "Upcoming"],
@@ -760,7 +986,51 @@ function SampleApprovalCard({ order }: { order: OrderTrack }) {
 }
 
 // ─── Document Vault ───────────────────────────────────────────────────────────
+// Live orders: real files — invoices/quotations/billing the Garm team uploaded
+// in the admin portal (tap to download), plus your own design/logo uploads.
+// Demo orders keep the old placeholder rows.
+const DOC_KIND_LABELS: Record<string, string> = {
+  INVOICE: "Invoice", QUOTATION: "Quotation", BILLING: "Billing", DESIGN: "Your design upload", OTHER: "Document",
+};
+
+function downloadDataUrl(dataUrl: string, name: string) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = name;
+  a.click();
+}
+
 function DocumentVault({ order }: { order: OrderTrack }) {
+  // ── Live order: show the real attached documents ──
+  if (order.apiId) {
+    const docs = order.documents ?? [];
+    if (docs.length === 0) return null;
+    return (
+      <div style={{ ...card, overflow: "hidden" }}>
+        <div className="px-4 py-3 flex items-center gap-2">
+          <FileText size={14} strokeWidth={1.5} className="text-muted-foreground"/>
+          <p className="text-foreground text-sm font-semibold">Documents</p>
+        </div>
+        {docs.map((d, i) => (
+          <button key={d._id ?? i}
+            onClick={() => downloadDataUrl(d.dataUrl, d.name)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left"
+            style={{ background: "transparent", border: "none", borderTop: "1px solid var(--border)", cursor: "pointer" }}>
+            <span className="flex items-center gap-2 text-foreground min-w-0" style={{ fontSize: 12, fontWeight: 500 }}>
+              <ReceiptText size={13} strokeWidth={1.5} style={{ color: ACCENT, flexShrink: 0 }}/>
+              <span className="min-w-0" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {d.name}
+                <span className="text-muted-foreground" style={{ fontWeight: 400 }}> · {DOC_KIND_LABELS[d.kind] ?? d.kind}{d.uploadedBy === "admin" ? " from Garm" : ""}</span>
+              </span>
+            </span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: ACCENT_TEXT, flexShrink: 0 }}>Download</span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  // ── Demo orders: legacy placeholder rows ──
   const documentsAvailable = !order.isNew && ["Quality check", "Shipped", "Delivered", "Completed"].includes(order.statusLabel);
   if (!documentsAvailable) return null;
 
@@ -818,14 +1088,106 @@ function StarRating({ value, onChange }: { value: number; onChange?: (v: number)
   );
 }
 
+// ─── Return / damage request modal ────────────────────────────────────────────
+// Raises a support ticket of type "return" against a delivered order, with
+// damage photos. The admin verifies the photos and approves/declines; the
+// customer follows it under Account › Help & support › Track my tickets.
+const RETURN_REASONS = ["Damaged / defective item", "Wrong item received", "Wrong size / fit", "Quality not as expected", "Missing items", "Other"];
+function ReturnModal({ order, onClose, onDone }: { order: OrderTrack; onClose: () => void; onDone: (ref: string) => void }) {
+  const [reason, setReason] = useState(RETURN_REASONS[0]);
+  const [details, setDetails] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function addImages(files: FileList | null) {
+    if (!files) return;
+    const room = 5 - images.length;
+    const picked = Array.from(files).slice(0, room);
+    const read = (f: File) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); });
+    const okType = (f: File) => /^image\/(png|jpe?g|webp|gif)$/i.test(f.type);
+    const okSize = (f: File) => f.size <= 4 * 1024 * 1024;
+    const valid = picked.filter((f) => okType(f) && okSize(f));
+    if (valid.length < picked.length) setError("Some files were skipped — only images up to 4MB each.");
+    const dataUrls = await Promise.all(valid.map(read));
+    setImages((prev) => [...prev, ...dataUrls].slice(0, 5));
+  }
+
+  async function submit() {
+    if (!details.trim()) { setError("Please describe the problem."); return; }
+    setBusy(true); setError("");
+    try {
+      const { ticket } = await supportApi.create({
+        type: "return",
+        category: "Return / Damage",
+        subject: `${reason} — ${order.id}`,
+        message: details.trim(),
+        orderRef: order.id,
+        images,
+      });
+      onDone(ticket.ref);
+    } catch (e) {
+      setError((e as Error).message || "Couldn't submit. Please try again.");
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-end" style={{ background: "rgba(0,0,0,0.4)" }} onClick={onClose}>
+      <div className="w-full bg-background rounded-t-3xl p-5 max-h-[88%] overflow-y-auto" onClick={(e) => e.stopPropagation()} style={{ animation: "trackPopIn .25s ease" }}>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-foreground text-base" style={{ fontWeight: 700 }}>Report a problem / Return</p>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"><ChevronDown size={16}/></button>
+        </div>
+        <p className="text-muted-foreground text-xs mb-3">Order {order.id}. Tell us what's wrong and add photos — our team will review and get back to you.</p>
+
+        <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>What's the issue?</p>
+        <div className="relative mb-3">
+          <select value={reason} onChange={(e) => setReason(e.target.value)} className="w-full bg-card border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm outline-none appearance-none pr-10" style={{ ...fnt, cursor: "pointer" }}>
+            {RETURN_REASONS.map((r) => <option key={r}>{r}</option>)}
+          </select>
+          <ChevronDown size={15} strokeWidth={1.8} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#6b7280", pointerEvents: "none" }}/>
+        </div>
+
+        <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Describe the problem</p>
+        <textarea value={details} onChange={(e) => setDetails(e.target.value)} placeholder="e.g. Two t-shirts arrived with stitching coming apart at the seam." className="w-full bg-card border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm outline-none resize-none h-20 mb-3" style={fnt}/>
+
+        <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Photos of the damage ({images.length}/5)</p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {images.map((src, i) => (
+            <div key={i} className="relative" style={{ width: 64, height: 64 }}>
+              <img src={src} className="w-full h-full object-cover rounded-lg" style={{ border: "1px solid var(--border)" }}/>
+              <button onClick={() => setImages((p) => p.filter((_, x) => x !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-foreground text-white flex items-center justify-center" style={{ fontSize: 11 }}>×</button>
+            </div>
+          ))}
+          {images.length < 5 && (
+            <label className="flex items-center justify-center rounded-lg cursor-pointer" style={{ width: 64, height: 64, border: "1.5px dashed var(--border)", color: "#9ca3af" }}>
+              <Package size={18}/>
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => addImages(e.target.files)}/>
+            </label>
+          )}
+        </div>
+
+        {error && <p style={{ fontSize: 12, color: "#b91c1c", marginBottom: 10 }}>{error}</p>}
+        <button onClick={submit} disabled={busy || !details.trim()} style={busy || !details.trim() ? { ...btnPrimary, background: "#e5e7eb", color: "#9ca3af" } : btnPrimary}>
+          {busy ? "Submitting…" : "Submit return request"}
+        </button>
+        <div style={{ height: 8 }}/>
+      </div>
+    </div>
+  );
+}
+
 // ─── Past Order Detail ────────────────────────────────────────────────────────
 function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: () => void }) {
   const [rating, setRating]         = useState(0);
   const [feedback, setFeedback]     = useState("");
   const [ratingDone, setRatingDone] = useState(false);
+  const [returnOpen, setReturnOpen] = useState(false);
+  const [returnRef, setReturnRef]   = useState("");
 
   return (
     <div className="flex flex-col gap-3">
+      {returnOpen && <ReturnModal order={order} onClose={() => setReturnOpen(false)} onDone={(ref) => { setReturnRef(ref); setReturnOpen(false); }}/>}
       <OrderDetailsCard order={order}/>
 
       {/* Payment details */}
@@ -876,6 +1238,19 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
       </Panel>
 
       <DocumentVault order={order}/>
+
+      {/* Return / damage — raise a verified return request against this order */}
+      {returnRef ? (
+        <div className="rounded-2xl p-3.5" style={{ background: "#e8f5e9", border: "1px solid #a5d6a7" }}>
+          <p className="text-emerald-800 text-sm" style={{ fontWeight: 600 }}>Return request submitted · {returnRef}</p>
+          <p className="text-emerald-700 text-xs mt-1">Our team is reviewing your photos. Track the outcome under Account › Help &amp; support › Track my tickets.</p>
+        </div>
+      ) : (
+        <button onClick={() => setReturnOpen(true)} className="w-full rounded-2xl py-3 text-sm flex items-center justify-center gap-2"
+          style={{ border: "1.5px solid var(--border)", background: "var(--card)", color: "#b91c1c", fontWeight: 600 }}>
+          <RotateCcw size={15} strokeWidth={1.6}/> Report a problem / Return
+        </button>
+      )}
 
       {onReorder && (
         <button onClick={onReorder} style={btnAccent}>
@@ -960,11 +1335,13 @@ function TrackCoachmark({ storageKey, targetId, title, body }: {
 }
 
 // ─── Order Card ───────────────────────────────────────────────────────────────
-function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen, headerId }: {
+function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen, headerId, coordinator, onPayLive }: {
   order: OrderTrack; accountType?: "personal" | "organisation";
   onMessage?: () => void; onReorder?: () => void; onEditOrder?: (payload?: DraftPayload) => void;
   paidOverride?: boolean; onMarkPaid?: () => void; forceOpen?: boolean;
   onDeliveredOpen?: () => void; headerId?: string;
+  coordinator?: Coordinator | null;
+  onPayLive?: (order: OrderTrack, mode: string, stage?: "advance" | "balance" | "full") => Promise<void>;
 }) {
   const [open, setOpen] = useState(order.defaultOpen || forceOpen);
   const firedRef = React.useRef(false);
@@ -1016,7 +1393,9 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
         style={{ background: "transparent", border: "none", cursor: "pointer" }}>
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-muted-foreground" style={{ fontSize: 11 }}>{order.id}</span>
+            <span className="text-muted-foreground" style={{ fontSize: 11 }}>
+              {order.id === "FL-PENDING" ? "Ref assigning…" : order.id}
+            </span>
             <StatusBadge label={order.statusLabel} cls={order.statusColor}/>
           </div>
           <p className="text-foreground" style={{ fontSize: 14, fontWeight: 600 }}>{order.name}</p>
@@ -1100,8 +1479,9 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
 
               {/* Sub-cards */}
               <div className="mt-3 flex flex-col gap-3">
-                <CoordinatorCard onMessage={onMessage}/>
-                <PaymentMethodCard order={order} accountType={accountType} paidOverride={paidOverride} onMarkPaid={onMarkPaid}/>
+                <CoordinatorCard coordinator={coordinator} employeeName={order.assignedEmployee} onMessage={onMessage}/>
+                <PaymentMethodCard order={order} accountType={accountType} paidOverride={paidOverride} onMarkPaid={onMarkPaid}
+                  onPayLive={order.apiId && onPayLive ? (mode, stage) => onPayLive(order, mode, stage) : undefined}/>
                 <OrderDetailsCard order={order} canChange={canChange} accountType={accountType} onEdit={() => onEditOrder?.(order.editPayload)}/>
                 {accountType !== "personal" && CHANGEABLE_STATUSES.includes(order.statusLabel) && !order.isAccessoryOrder && <SampleApprovalCard order={order}/>}
                 <DocumentVault order={order}/>
@@ -1128,17 +1508,124 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   onOrderDelivered?: () => void;
 }) {
   const [filter, setFilter] = useState<TrackFilter>("active");
-  const newSubmittedOrder = buildNewSubmittedOrder(newOrderSummary);
+  const newSubmittedOrder = buildNewSubmittedOrder(newOrderSummary, accountType);
+
+  // ── Live orders from the backend ─────────────────────────────────────────
+  // null = fetch hasn't succeeded (offline / signed out) → fall back to the
+  // built-in demo orders so the tab never looks broken. Once the fetch works,
+  // ONLY real orders are shown. Polled so admin-side changes (confirmation,
+  // status updates) appear without reopening the tab.
+  const [liveOrders, setLiveOrders] = useState<OrderTrack[] | null>(null);
+  const [coordinator, setCoordinator] = useState<Coordinator | null>(null);
+  const [pendingSync, setPendingSync] = useState(() => readPendingOrders().length);
+  // Popups: admin confirmed your order (pay now) / payment success.
+  const [confirmedPopup, setConfirmedPopup] = useState<{ ref: string; amount?: number } | null>(null);
+  const [paySuccess, setPaySuccess] = useState<{ ref: string; amount?: number } | null>(null);
+  // Order card force-opened from a popup's "View & pay" button.
+  const [localTarget, setLocalTarget] = useState<string | null>(null);
+
+  // Detect admin-side status transitions between refreshes so the customer
+  // gets an explicit in-app popup AND a system notification (Android/iOS
+  // tray, browser notification on web) the moment something changes.
+  function detectConfirmations(orders: OrderTrack[]) {
+    let seen: Record<string, string> = {};
+    try { seen = JSON.parse(localStorage.getItem("fl_seen_admin_status") || "{}"); } catch { /* ignore */ }
+    for (const o of orders) {
+      const prev = seen[o.id];
+      const cur = o.adminStatus;
+      if (cur && prev && prev !== cur) {
+        if (cur === "CONFIRMED" && o.livePaymentStatus !== "paid") {
+          setConfirmedPopup({ ref: o.id, amount: o.totalAmount });
+          notifyDevice("Order confirmed 🎉", `${o.id} is confirmed by Garm${o.totalAmount ? ` — pay ₹${o.totalAmount.toLocaleString("en-IN")} to start production` : ""}.`);
+        }
+        if (["ASSIGNED", "IN_PROGRESS"].includes(cur) && !["ASSIGNED", "IN_PROGRESS"].includes(prev)) {
+          notifyDevice("In production 🧵", `${o.id} — your garments are being made.`);
+        }
+        if (cur === "SHIPPED") {
+          notifyDevice("Shipped 🚚", `${o.id} is on the way${o.etaDate && o.etaDate !== "TBD" ? ` — arriving ${o.etaDate}` : ""}.`);
+        }
+        if (cur === "DELIVERED") {
+          notifyDevice("Delivered ✅", `${o.id} was delivered. Thank you for ordering with Garm!`);
+        }
+      }
+      if (cur) seen[o.id] = cur;
+    }
+    try { localStorage.setItem("fl_seen_admin_status", JSON.stringify(seen)); } catch { /* ignore */ }
+  }
+
+  // Retry any orders that couldn't reach the backend when they were submitted
+  // (offline, expired session…). Runs before every live refresh, so a queued
+  // order lands in the admin portal as soon as connectivity is back.
+  async function flushPendingOrders() {
+    const queue = readPendingOrders();
+    if (queue.length === 0) { setPendingSync(0); return; }
+    const remaining: typeof queue = [];
+    for (const item of queue) {
+      try {
+        const { order } = await ordersApi.create(item.payload);
+        if (order.orderRef) rememberOrderSummary(order.orderRef, item.summary);
+      } catch {
+        remaining.push(item);
+      }
+    }
+    writePendingOrders(remaining);
+    setPendingSync(remaining.length);
+  }
+
+  async function refreshLive() {
+    if (!authToken.get()) { setPendingSync(readPendingOrders().length); return; }
+    await flushPendingOrders();
+    try {
+      const { orders } = await ordersApi.list();
+      const summaries = readOrderSummaries();
+      const mapped = orders.filter(o => o.status !== "Draft").map(o => apiOrderToTrack(o, summaries));
+      detectConfirmations(mapped);
+      setLiveOrders(mapped);
+    } catch { /* keep whatever we had */ }
+  }
+
+  useEffect(() => {
+    initNotifications();
+    refreshLive();
+    const loadCoordinator = () => coordinatorApi.get().then(d => setCoordinator(d.coordinator)).catch(() => {});
+    loadCoordinator();
+    const t = setInterval(refreshLive, 30_000);
+    // Coordinator contact is edited in the admin portal — refresh it too so a
+    // changed name/phone/WhatsApp reaches the customer without an app reload.
+    const c = setInterval(loadCoordinator, 60_000);
+    return () => { clearInterval(t); clearInterval(c); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handlePayLive(order: OrderTrack, mode: string, stage?: "advance" | "balance" | "full") {
+    if (!order.apiId) return;
+    await ordersApi.pay(order.apiId, mode, undefined, stage);
+    // Success popup — the payment status also flows straight to the admin
+    // portal (its Orders page polls the shared database).
+    setPaySuccess({ ref: order.id, amount: order.totalAmount });
+    notifyDevice("Payment received ✅", `${order.id} — payment successful. Production starts shortly.`);
+    setConfirmedPopup(null);
+    await refreshLive();
+  }
 
   useEffect(() => {
     if (targetOrderId) {
-      const order = allOrders.find(o => o.id === targetOrderId);
+      const order = [...(liveOrders ?? []), ...allOrders].find(o => o.id === targetOrderId);
       if (order && PAST_STATUSES.includes(order.statusLabel)) setFilter("past");
       else if (order) setFilter("active");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetOrderId]);
 
-  const base = showNew ? [newSubmittedOrder, ...allOrders] : allOrders;
+  // Live mode: real orders only (plus the just-submitted local card while the
+  // backend copy hasn't landed yet). Fallback: the original demo orders.
+  let base: OrderTrack[];
+  if (liveOrders) {
+    const showLocalNew = showNew && !liveOrders.some(o => o.id === newSubmittedOrder.id);
+    base = showLocalNew ? [newSubmittedOrder, ...liveOrders] : liveOrders;
+  } else {
+    base = showNew ? [newSubmittedOrder, ...allOrders] : allOrders;
+  }
   const filtered = base.filter(o => {
     if (filter === "active") return [...ACTIVE_STATUSES, ...(showNew ? ["Order placed" as OrderStatus] : [])].includes(o.statusLabel);
     if (filter === "past")   return PAST_STATUSES.includes(o.statusLabel);
@@ -1152,11 +1639,49 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
       <style>{`
         @keyframes trackActivePulse{0%,100%{box-shadow:0 0 0 4px ${ACCENT_BG}}50%{box-shadow:0 0 0 7px rgba(200,169,126,0.06)}}
-        @media (prefers-reduced-motion:reduce){.track-anim-off,[style*="trackActivePulse"]{animation:none!important}}
+        @keyframes trackPopIn{0%{transform:scale(.85);opacity:0}100%{transform:scale(1);opacity:1}}
+        @media (prefers-reduced-motion:reduce){.track-anim-off,[style*="trackActivePulse"],[style*="trackPopIn"]{animation:none!important}}
       `}</style>
+
+      {/* ── "Order confirmed — pay now" notification popup ── */}
+      {confirmedPopup && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center px-6" style={{ background: "rgba(13,13,13,0.55)" }}>
+          <div className="w-full rounded-3xl p-5 text-center" style={{ background: "var(--background)", animation: "trackPopIn .25s ease", boxShadow: "0 20px 50px rgba(0,0,0,0.3)" }}>
+            <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center" style={{ background: ACCENT_BG, border: `2px solid ${ACCENT}` }}>
+              <ClipboardCheck size={26} strokeWidth={1.5} style={{ color: ACCENT_TEXT }}/>
+            </div>
+            <p style={{ fontSize: 16, fontWeight: 700, color: DARK }}>Order confirmed!</p>
+            <p className="text-muted-foreground mt-1.5" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+              Garm has confirmed <b style={{ color: DARK }}>{confirmedPopup.ref}</b>.
+              {confirmedPopup.amount ? <> Pay <b style={{ color: DARK }}>{fmtINR(confirmedPopup.amount)}</b> to start production.</> : " Pay now to start production."}
+            </p>
+            <button onClick={() => { setLocalTarget(confirmedPopup.ref); setConfirmedPopup(null); }} style={{ ...btnPrimary, marginTop: 16 }}>
+              <Wallet size={15} strokeWidth={1.5}/> View & pay
+            </button>
+            <button onClick={() => setConfirmedPopup(null)} style={{ ...btnSecondary, marginTop: 8 }}>Later</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Payment success popup ── */}
+      {paySuccess && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center px-6" style={{ background: "rgba(13,13,13,0.55)" }}>
+          <div className="w-full rounded-3xl p-5 text-center" style={{ background: "var(--background)", animation: "trackPopIn .25s ease", boxShadow: "0 20px 50px rgba(0,0,0,0.3)" }}>
+            <div className="w-14 h-14 rounded-full mx-auto mb-3 flex items-center justify-center" style={{ background: "#ECFDF5", border: "2px solid #059669" }}>
+              <Check size={28} strokeWidth={2.5} style={{ color: "#059669" }}/>
+            </div>
+            <p style={{ fontSize: 16, fontWeight: 700, color: DARK }}>Payment received!</p>
+            <p className="text-muted-foreground mt-1.5" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+              {paySuccess.amount ? <><b style={{ color: DARK }}>{fmtINR(paySuccess.amount)}</b> paid for </> : "Paid for "}
+              <b style={{ color: DARK }}>{paySuccess.ref}</b>. The Garm team has been notified — production starts shortly. Follow every step right here in Track.
+            </p>
+            <button onClick={() => { setLocalTarget(paySuccess.ref); setPaySuccess(null); }} style={{ ...btnPrimary, marginTop: 16 }}>Done</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Filter tabs — segmented control ── */}
       <div className="px-5 pt-4 pb-3 flex-shrink-0">
@@ -1177,6 +1702,21 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
           ))}
         </div>
       </div>
+
+      {/* ── Pending-sync notice — an order couldn't reach the server yet ── */}
+      {pendingSync > 0 && (
+        <div className="mx-5 mb-3 flex-shrink-0 rounded-xl px-3.5 py-2.5" style={{ background: "#FFFBEB", border: "1px solid #FDE68A" }}>
+          <p style={{ fontSize: 12, fontWeight: 700, color: "#92400E" }}>
+            {pendingSync} order{pendingSync === 1 ? "" : "s"} waiting to sync
+          </p>
+          <p style={{ fontSize: 11, color: "#92400E", lineHeight: 1.5, marginTop: 2 }}>
+            We couldn't reach Garm's servers — your order is saved on this device and will be submitted automatically. Check your connection.
+          </p>
+          <button onClick={refreshLive} className="mt-1.5 px-3 py-1.5 rounded-lg" style={{ fontSize: 11.5, fontWeight: 700, color: "#92400E", background: "#FEF3C7", border: "1px solid #FDE68A", cursor: "pointer" }}>
+            Retry now
+          </button>
+        </div>
+      )}
 
       {/* ── Order list ── */}
       <div className="flex-1 overflow-y-auto px-5 pb-4 min-h-0" style={{ scrollbarWidth: "none" }}>
@@ -1199,9 +1739,11 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
               onEditOrder={onEditOrder}
               paidOverride={paidOrderIds?.includes(order.id)}
               onMarkPaid={() => onMarkOrderPaid?.(order.id)}
-              forceOpen={order.id === targetOrderId}
+              forceOpen={order.id === targetOrderId || order.id === localTarget}
               onDeliveredOpen={PAST_STATUSES.includes(order.statusLabel) ? onOrderDelivered : undefined}
               headerId={i === 0 ? "coachmark-track-first-order" : undefined}
+              coordinator={coordinator}
+              onPayLive={handlePayLive}
             />
           ))
         )}

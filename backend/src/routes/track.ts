@@ -11,10 +11,12 @@ router.use(requireAuth);
 
 router.get("/:orderRef", async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    // Accept either MongoDB _id or the human-readable orderRef (e.g. "FL-2047")
+    // Accept either MongoDB _id or the human-readable orderRef (e.g. "FL-2047",
+    // with or without a leading "#" — older records/screens used "#FL-…").
     const { orderRef } = req.params;
-    const query = orderRef.startsWith("FL-")
-      ? { orderRef: `#${orderRef}`, userId: req.userId }
+    const clean = orderRef.replace(/^#/, "");
+    const query = clean.startsWith("FL-")
+      ? { orderRef: { $in: [clean, `#${clean}`] }, userId: req.userId }
       : { _id: orderRef, userId: req.userId };
 
     const order = await Order.findOne(query).select("-__v");
@@ -46,7 +48,7 @@ router.get("/:orderRef", async (req: AuthRequest, res: Response, next: NextFunct
 
 router.get("/", async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const activeStatuses = ["Quote pending","Order placed","In production","Quality check","Shipped"];
+    const activeStatuses = ["Quote pending","Order placed","Order confirmed","In production","Quality check","Shipped"];
     const orders = await Order
       .find({ userId: req.userId, status: { $in: activeStatuses } })
       .sort({ createdAt: -1 })

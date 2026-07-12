@@ -14,6 +14,7 @@ import accountRouter from "./routes/account";
 import quotesRouter  from "./routes/quotes";
 import trackRouter   from "./routes/track";
 import tryonRouter   from "./routes/tryon";
+import supportRouter from "./routes/support";
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -36,17 +37,21 @@ app.use(cors({
 }));
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 // Try-on selfies are larger than normal payloads — parse them with a higher limit
-// before the global 1mb parser runs.
+// before the global 1mb parser runs. Orders can carry design/logo reference
+// uploads (base64), so they get a higher limit too.
 app.use("/api/tryon", express.json({ limit: "12mb" }));
+app.use("/api/orders", express.json({ limit: "25mb" }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 
-// Strict limit on OTP endpoints to prevent abuse
+// Strict limit on OTP endpoints to prevent abuse. Relaxed outside production so local
+// dev/testing (repeated resends, wrong-code retries) doesn't get locked out for 15
+// minutes at a time — the real limit still applies wherever this actually matters.
 const otpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
+  max: process.env.NODE_ENV === "production" ? 5 : 100,
   message: { error: "Too many OTP requests — please wait 15 minutes before trying again." },
   standardHeaders: true,
   legacyHeaders: false,
@@ -71,6 +76,7 @@ app.use("/api/account", accountRouter);
 app.use("/api/quotes",  quotesRouter);
 app.use("/api/track",   trackRouter);
 app.use("/api/tryon",   tryonRouter);
+app.use("/api/support", supportRouter);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 

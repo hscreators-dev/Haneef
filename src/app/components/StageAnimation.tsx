@@ -28,7 +28,10 @@ export function stageFromLabel(label: string): OrderStage {
   if (l.includes("ship"))                              return "shipped";
   if (l.includes("quality") || l.includes("qa"))       return "qc";
   if (l.includes("production"))                        return "production";
-  if (l.includes("sourc") || l.includes("quote") || l.includes("review") || l.includes("approv")) return "sourcing";
+  // Confirmation + payment sit between "just placed" and production — the
+  // sourcing/paperwork scene reads closest for both.
+  if (l.includes("sourc") || l.includes("quote") || l.includes("review") || l.includes("approv") ||
+      l.includes("confirm") || l.includes("payment")) return "sourcing";
   return "placed";
 }
 

@@ -5,6 +5,12 @@
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
 
+// The Garm Admin Portal's backend — source of truth for the catalog
+// (categories/products/stock availability) and the procurement-coordinator
+// card. Orders/auth/account stay on BASE_URL (this app's own backend); both
+// backends share the same MongoDB for orders.
+const ADMIN_BASE_URL = import.meta.env.VITE_ADMIN_API_URL ?? "http://localhost:5050/api/garm";
+
 // ─── Token storage ────────────────────────────────────────────────────────────
 
 export const token = {
@@ -20,6 +26,7 @@ async function request<T>(
   path: string,
   body?: unknown,
   auth = true,
+  base: string = BASE_URL,
 ): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (auth) {
@@ -27,7 +34,7 @@ async function request<T>(
     if (t) headers["Authorization"] = `Bearer ${t}`;
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${base}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
@@ -42,6 +49,7 @@ async function request<T>(
 }
 
 const get  = <T>(path: string) => request<T>("GET",    path);
+const adminGet = <T>(path: string) => request<T>("GET", path, undefined, false, ADMIN_BASE_URL);
 const post = <T>(path: string, body?: unknown) => request<T>("POST",   path, body);
 const put  = <T>(path: string, body?: unknown) => request<T>("PUT",    path, body);
 const patch= <T>(path: string, body?: unknown) => request<T>("PATCH",  path, body);
@@ -50,8 +58,10 @@ const del  = <T>(path: string) => request<T>("DELETE", path);
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export const auth = {
+  // `devCode` is only present until a real SMS/email gateway (Twilio/Gmail)
+  // is configured on the backend — see server/README.md "Garm App: auth (OTP)".
   sendOTP: (identity: string, mode: "phone" | "email") =>
-    post<{ success: boolean; message: string }>("/auth/send-otp", { identity, mode }, ),
+    post<{ success: boolean; message: string; devCode?: string }>("/auth/send-otp", { identity, mode }, ),
 
   verifyOTP: async (identity: string, otp: string, mode: "phone" | "email") => {
     const data = await post<{ token: string; user: UserProfile }>("/auth/verify-otp", { identity, otp, mode });
@@ -77,6 +87,11 @@ export const orders = {
   cancel: (id: string)      => del<{ success: boolean; order: Order }>(`/orders/${id}`),
   reorder:(id: string)      => post<{ order: Order }>(`/orders/${id}/reorder`),
   getQuote: (id: string)    => get<{ quote: Quote }>(`/orders/${id}/quote`),
+  // Payments. Individuals: one full payment after admin confirmation.
+  // Organisations: stage "advance" (unlocks production) then "balance"
+  // (after the QC report — unlocks shipping). Gates enforced server-side.
+  pay: (id: string, mode: string, reference?: string, stage?: "advance" | "balance" | "full") =>
+    post<{ order: Order }>(`/orders/${id}/pay`, { mode, reference, stage }),
 };
 
 // ─── Account ──────────────────────────────────────────────────────────────────
@@ -93,6 +108,7 @@ export const account = {
   getPayment: ()              => get<{ paymentMethods: PaymentMethod[] }>("/account/payment"),
   addPayment: (body: Omit<PaymentMethod,"_id">) => post<{ paymentMethods: PaymentMethod[] }>("/account/payment", body),
   deletePayment: (id: string) => del<{ paymentMethods: PaymentMethod[] }>(`/account/payment/${id}`),
+  setDefaultPayment: (id: string) => put<{ paymentMethods: PaymentMethod[] }>(`/account/payment/${id}/default`),
 };
 
 // ─── Quotes ───────────────────────────────────────────────────────────────────
@@ -102,6 +118,82 @@ export const quotes = {
   get:     (id: string)      => get<{ quote: Quote }>(`/quotes/${id}`),
   approve: (id: string)      => post<{ quote: Quote }>(`/quotes/${id}/approve`),
   reject:  (id: string, note?: string) => post<{ quote: Quote }>(`/quotes/${id}/reject`, { note }),
+};
+
+// ─── Catalog (categories & products, managed live from the Garm Admin Portal) ─
+
+export const catalog = {
+  categories: () => adminGet<{ categories: Category[] }>("/catalog/categories"),
+  products:   () => adminGet<{ products: Product[] }>("/catalog/products"),
+};
+
+// ─── Coordinator ("Your procurement manager" — configured in the admin portal) ─
+
+export interface Coordinator {
+  name: string;
+  role: string;
+  phone: string;
+  whatsapp: string;
+  email: string;
+}
+
+export const coordinator = {
+  get: () => adminGet<{ coordinator: Coordinator }>("/coordinator"),
+};
+
+// ─── Support tickets (this app's own backend — authenticated) ─────────────────
+
+export interface TicketMessage { from: "customer" | "admin"; authorName: string; body: string; at: string; }
+export interface SupportTicket {
+  _id: string;
+  ref: string;
+  subject: string;
+  category: string;
+  orderRef?: string;
+  type: "general" | "return";
+  images?: string[];
+  returnStatus: "NONE" | "REQUESTED" | "APPROVED" | "DECLINED";
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
+  priority: "LOW" | "NORMAL" | "HIGH";
+  messages: TicketMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const support = {
+  list:   () => get<{ tickets: SupportTicket[] }>("/support/tickets"),
+  get:    (id: string) => get<{ ticket: SupportTicket }>(`/support/tickets/${id}`),
+  create: (body: { category?: string; subject: string; message: string; orderRef?: string; type?: "general" | "return"; images?: string[] }) =>
+    post<{ ticket: SupportTicket }>("/support/tickets", body),
+  reply:  (id: string, body: string) =>
+    post<{ ticket: SupportTicket }>(`/support/tickets/${id}/messages`, { body }),
+};
+
+// ─── Order-form configuration (which custom-order sections show — admin-controlled) ─
+
+export interface OrderFormConfig {
+  style: boolean;
+  materials: boolean;
+  sizes: boolean;
+  referenceUpload: boolean;
+  livePreview: boolean;
+}
+
+// Service-fee schedule (set in the admin portal): % by customer type, a lower
+// slab for bulk orders, and a ₹ floor for tiny orders.
+export interface ServiceFeeConfig {
+  b2cPercent: number;
+  b2cPerPiece: number; // ₹ per piece, Individuals — each piece carries handling cost
+  b2bPercent: number;
+  bulkQtyThreshold: number;
+  bulkPercent: number;
+  minFee: number;
+  surplusDiscountPercent?: number; // % off garment rate when Surplus fabric is chosen
+  orgAdvancePercent?: number; // % advance organisations pay before production
+}
+
+export const orderConfig = {
+  get: () => adminGet<{ orderForm: OrderFormConfig; serviceFee?: ServiceFeeConfig; features?: Record<string, boolean> }>("/order-config"),
 };
 
 // ─── Virtual try-on ("live picture") ──────────────────────────────────────────
@@ -149,14 +241,30 @@ export interface Address {
 
 export interface PaymentMethod {
   _id?: string;
-  type: "bank" | "upi";
+  type: "bank" | "upi" | "card";
   bankName?: string;
   accountNumber?: string;
   ifsc?: string;
   accountHolder?: string;
   upiId?: string;
   upiProvider?: string;
+  // Card fields — only ever last4 + non-sensitive metadata. Full PAN and CVV
+  // are never sent to or stored by this backend (no PCI-DSS tokenization here).
+  cardLast4?: string;
+  cardNetwork?: "visa" | "mastercard" | "rupay";
+  cardType?: "credit" | "debit";
+  cardHolderName?: string;
+  cardExpiry?: string;
   isDefault: boolean;
+}
+
+export interface OrderDocument {
+  _id?: string;
+  name: string;
+  kind: "INVOICE" | "QUOTATION" | "BILLING" | "DESIGN" | "OTHER";
+  dataUrl: string;
+  uploadedBy: "admin" | "customer";
+  createdAt?: string;
 }
 
 export interface Order {
@@ -171,16 +279,42 @@ export interface Order {
   garmentType?: string;
   fabric?: string;
   gsm?: string;
+  weave?: string;
+  fabricSource?: string;
   qty: number;
   sizes: { label: string; qty: number }[];
   colors: { hex: string; pantone?: string; label: string }[];
   accessoryItems: { categoryId: string; categoryLabel: string; itemName: string; qty: number }[];
+  stitching?: string;
+  packaging?: string;
+  deliveryAddress?: string;
+  deliveryCity?: string;
+  deliveryPin?: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  notes?: string;
   status: string;
+  adminStatus?: string;       // NEW | CONFIRMED | PAID | … (drives the payment gate)
   trackSteps: { label: string; sub: string; status: string }[];
   etaDate?: string;
   quoteAmount?: number;
-  paymentStatus?: string;
+  serviceFee?: number;
+  confirmedAt?: string;
+  paymentStatus?: string;     // unpaid | partial | paid
+  paymentMode?: string;
+  paymentDate?: string;
+  paymentReference?: string;
+  assignedEmployee?: string;  // employee name shown on the coordinator card
+  total?: number;
+  // Attachments: customer design/logo refs (uploaded at submit) and admin
+  // documents (invoice/quotation/billing, downloadable in the app).
+  documents?: OrderDocument[];
+  // Per-garment line items (product · style, size, colour, qty) — what the
+  // admin portal's Order Items table renders.
+  lines?: { p: string; size: string; color: string; qty: number; unit: number }[];
   createdAt?: string;
+  updatedAt?: string; // last change (admin status moves, payments…) — drives notifications
 }
 
 export interface Quote {
@@ -193,6 +327,38 @@ export interface Quote {
   status: "pending" | "approved" | "rejected" | "expired";
   rejectionNote?: string;
   createdAt?: string;
+}
+
+export interface Category {
+  id: number;
+  name: string;
+  appliesTo: ("B2C" | "B2B")[]; // B2C = individual, B2B = organisation
+  image: string | null;
+}
+
+export interface Product {
+  id: number;
+  name: string;
+  categoryId: number;
+  appliesTo: ("B2C" | "B2B")[];
+  productType?: "GARMENT" | "ACCESSORY" | "OTHER";
+  inStock?: boolean; // false = shown greyed out ("Out of stock"), not orderable
+  price: number;
+  sizes: string[];
+  colors: { label: string; hex: string }[]; // real swatches, never bare text
+  // Admin-defined spec dropdowns (Material, Finish, Print method…) — replace
+  // the app's built-in per-category defaults for this product when present.
+  specFields?: { label: string; options: string[]; hint?: string }[];
+  // Garment configurator lists managed in the admin's Catalog — when present
+  // they OVERRIDE the app's built-in lists for this product; when empty or
+  // missing the app falls back to its own hardcoded options (never breaks).
+  styles?: string[];
+  fabricOptions?: string[];
+  gsmOptions?: string[];
+  weaveOptions?: string[];
+  moq: number;
+  status: "ACTIVE" | "INACTIVE";
+  image: string | null;
 }
 
 export interface TrackOrder {
