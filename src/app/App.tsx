@@ -453,7 +453,8 @@ function fmtPhone(canonical: string): string {
 // not let them pick a different account type the second time round.
 type IdentityBits = { phone?: string; email?: string };
 function identityKey(id: IdentityBits): string | null {
-  if (id.phone) return "phone:" + id.phone.replace(/\D/g, "");
+  // Last 10 digits only — so "+916380339944" and "6380339944" are the SAME key.
+  if (id.phone) return "phone:" + id.phone.replace(/\D/g, "").slice(-10);
   if (id.email) return "email:" + id.email.trim().toLowerCase();
   return null;
 }

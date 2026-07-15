@@ -88,10 +88,12 @@ router.post("/verify-otp", async (req: Request, res: Response, next: NextFunctio
       ? [...new Set([canon, canon.slice(1), canon.slice(3), identity])] // +91X…, 91X…, bare 10-digit, as-typed
       : [...new Set([canon, identity])];
     const filter  = mode === "phone" ? { phone: { $in: variants } } : { email: { $in: variants } };
-    const update  = mode === "phone" ? { phone: canon } : { email: canon };
-    const user    = await User.findOneAndUpdate(filter, { $setOnInsert: update }, {
-      upsert: true, new: true, setDefaultsOnInsert: true,
-    });
+    // If duplicates exist from the old exact-match era, prefer the record that
+    // completed onboarding (has the name) — never resurrect a nameless "Guest".
+    let user = await User.findOne(filter).sort({ onboardingComplete: -1, createdAt: 1 });
+    if (!user) {
+      user = await User.create(mode === "phone" ? { phone: canon } : { email: canon });
+    }
     // Heal a legacy-format record so future logins hit the canonical value.
     if (mode === "phone" && user.phone !== canon) { user.phone = canon; await user.save(); }
     else if (mode === "email" && user.email !== canon) { user.email = canon; await user.save(); }
