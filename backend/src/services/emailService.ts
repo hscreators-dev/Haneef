@@ -18,6 +18,11 @@ function getTransporter(): nodemailer.Transporter | null {
       port: Number(process.env.SMTP_PORT ?? 587),
       secure: (process.env.SMTP_SECURE ?? (process.env.SMTP_PORT === "465" ? "true" : "false")) === "true",
       auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+      // Never let a broken/unreachable SMTP host hang the login request —
+      // fail fast so send-otp can fall back (dev code) quickly.
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
     });
     return transporter;
   }
@@ -26,6 +31,9 @@ function getTransporter(): nodemailer.Transporter | null {
     transporter = nodemailer.createTransport({
       service: "gmail",
       auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
     });
     return transporter;
   }
