@@ -16,9 +16,12 @@ const SendOTPSchema = z.object({
   mode: z.enum(["phone", "email"]),
 });
 
+// Keep the accepted OTP length in sync with otpService's OTP_LENGTH — hard-coding
+// 6 here silently rejected every valid code whenever OTP_LENGTH was changed.
+const OTP_LENGTH = parseInt(process.env.OTP_LENGTH ?? "6");
 const VerifyOTPSchema = z.object({
   identity: z.string().min(5),
-  otp:      z.string().length(6),
+  otp:      z.string().length(OTP_LENGTH),
   mode:     z.enum(["phone", "email"]),
 });
 

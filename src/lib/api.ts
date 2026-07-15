@@ -60,8 +60,12 @@ const del  = <T>(path: string) => request<T>("DELETE", path);
 function isDevOtpFallbackEnabled(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname.toLowerCase();
+  // Local dev only. `github.io` was previously included, which meant the public
+  // GitHub Pages build minted a fake client-side session (dev-<ts> token) with no
+  // real backend — logins looked to work but nothing persisted. Opt in explicitly
+  // with VITE_DEV_OTP=true for a hosted demo; never on by default off localhost.
   const explicit = import.meta.env.VITE_DEV_OTP === 'true';
-  return explicit || host.includes('localhost') || host.includes('127.0.0.1') || host.includes('github.io');
+  return explicit || host === 'localhost' || host === '127.0.0.1';
 }
 
 let pendingDevOtp: { identity: string; mode: 'phone' | 'email'; code: string } | null = null;
