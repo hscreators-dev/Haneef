@@ -1243,12 +1243,40 @@ function HelpSupportScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: bool
   const [error, setError] = useState("");
   const [view, setView] = useState<"form" | "tickets" | { thread: string }>("form");
   const [coord, setCoord] = useState<Coordinator | null>(null);
+  // Open tickets already raised — used to stop the customer opening a second
+  // ticket for the same thing (which showed up as duplicates on the admin side).
+  const [openTickets, setOpenTickets] = useState<SupportTicket[]>([]);
+  const [dupTicket, setDupTicket] = useState<SupportTicket | null>(null);
 
   useEffect(() => { coordinatorApi.get().then(d => setCoord(d.coordinator)).catch(() => {}); }, []);
+  useEffect(() => {
+    supportApi.list().then(d => setOpenTickets((d.tickets || []).filter(t => t.status === "OPEN" || t.status === "IN_PROGRESS"))).catch(() => {});
+  }, [raisedRef]);
 
-  async function raise() {
+  // An existing OPEN ticket in the same category is very likely the same issue.
+  function findDuplicate(): SupportTicket | null {
+    const sub = subject.trim().toLowerCase();
+    // pull an order ref like FL-2048 out of the subject/details, if present
+    const refMatch = (subject + " " + details).match(/fl-?\s?\d{3,}/i);
+    const ref = refMatch ? refMatch[0].replace(/\s/g, "").toLowerCase() : null;
+    return openTickets.find(t => {
+      // Strongest signal: an existing open ticket for the SAME order.
+      if (ref && t.orderRef && t.orderRef.toLowerCase().replace(/\s/g, "").includes(ref.replace(/[^a-z0-9]/g, ""))) return true;
+      // Same category is a likely duplicate (e.g. two "Return / damage" tickets).
+      if (t.category && category && t.category === category) return true;
+      // Or an identical subject line.
+      if (sub && t.subject && t.subject.trim().toLowerCase() === sub) return true;
+      return false;
+    }) || null;
+  }
+
+  async function raise(force = false) {
     if (!subject.trim() || !details.trim()) return;
-    setBusy(true); setError("");
+    if (!force) {
+      const dup = findDuplicate();
+      if (dup) { setDupTicket(dup); return; }
+    }
+    setBusy(true); setError(""); setDupTicket(null);
     try {
       const { ticket } = await supportApi.create({ category, subject: subject.trim(), message: details.trim() });
       setRaisedRef(ticket.ref);
@@ -1299,10 +1327,23 @@ function HelpSupportScreen({ onBack, isOrg }: { onBack: () => void; isOrg?: bool
           <p className="text-muted-foreground mb-1.5" style={{ fontSize:12 }}>Details</p>
           <textarea value={details} onChange={e => setDetails(e.target.value)} placeholder="Tell us what happened, and your order number if you have one" className={INP + " mb-3 block"} style={{ ...fnt, resize:"none", height:90 }}/>
           {error && <p style={{ fontSize: 12, color: "#b91c1c", marginBottom: 10 }}>{error}</p>}
-          <button onClick={raise} disabled={!subject.trim() || !details.trim() || busy}
-            style={subject.trim() && details.trim() && !busy ? btnPrimary : { ...btnPrimary, background:"#e5e7eb", color:"#9ca3af", cursor:"not-allowed" }}>
-            {busy ? "Raising…" : "Raise ticket"}
-          </button>
+          {dupTicket ? (
+            <div className="rounded-xl p-3 mb-2" style={{ background: "#fff7ed", border: "1px solid #fed7aa" }}>
+              <p style={{ fontSize: 12.5, fontWeight: 700, color: "#9a3412" }}>You already have an open ticket for this</p>
+              <p style={{ fontSize: 11.5, color: "#9a3412", marginTop: 3, lineHeight: 1.5 }}>
+                {dupTicket.ref} · “{dupTicket.subject}”. Adding your new details there keeps everything in one place and gets a faster reply.
+              </p>
+              <div className="flex gap-2 mt-2.5">
+                <button onClick={() => setView({ thread: dupTicket._id })} className="flex-1 rounded-xl py-2.5 text-sm" style={btnPrimary}>Open that ticket</button>
+                <button onClick={() => raise(true)} disabled={busy} className="flex-1 rounded-xl border border-border py-2.5 text-sm text-foreground" style={{ fontWeight: 500 }}>{busy ? "Raising…" : "Create anyway"}</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => raise()} disabled={!subject.trim() || !details.trim() || busy}
+              style={subject.trim() && details.trim() && !busy ? btnPrimary : { ...btnPrimary, background:"#e5e7eb", color:"#9ca3af", cursor:"not-allowed" }}>
+              {busy ? "Raising…" : "Raise ticket"}
+            </button>
+          )}
         </div>
       )}
       <p className="text-muted-foreground mb-2" style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em" }}>Reach us directly</p>

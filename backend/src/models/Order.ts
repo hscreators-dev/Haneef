@@ -153,6 +153,8 @@ export interface IOrder extends Document {
   // contact/email/WhatsApp shown to the customer stay the company-wide
   // coordinator details configured in the admin portal (never per-employee).
   assignedEmployee?: string;
+  trackingCourier?: string;
+  trackingNumber?: string;
   manufacturer?: string;
   qcResult: QcResult;
   adminPayStatus: AdminPayStatus;
@@ -266,6 +268,8 @@ const OrderSchema = new Schema<IOrder>(
       default: "NEW",
     },
     assignedEmployee: String,
+    trackingCourier: String,
+    trackingNumber: String,
     manufacturer: { type: String, default: "—" },
     qcResult: { type: String, enum: ["PENDING","PASSED","FAILED","REWORK","N/A"], default: "PENDING" },
     adminPayStatus: { type: String, enum: ["PENDING","PARTIAL","COMPLETED"], default: "PENDING" },
