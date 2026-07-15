@@ -45,6 +45,8 @@ export interface IOrderDocument {
   kind: "INVOICE" | "QUOTATION" | "BILLING" | "DESIGN" | "OTHER";
   dataUrl: string;              // data: URL (base64) — kept small, per-file cap enforced at the route
   uploadedBy: "admin" | "customer";
+  generated?: boolean;          // built by the admin's invoice generator (vs uploaded)
+  visible?: boolean;            // false = draft, hidden from the customer until "sent"
   createdAt?: Date;
 }
 
@@ -196,6 +198,8 @@ const OrderDocumentSchema = new Schema<IOrderDocument>({
   kind:       { type: String, enum: ["INVOICE", "QUOTATION", "BILLING", "DESIGN", "OTHER"], default: "OTHER" },
   dataUrl:    { type: String, required: true },
   uploadedBy: { type: String, enum: ["admin", "customer"], required: true },
+  generated:  { type: Boolean, default: false },
+  visible:    { type: Boolean, default: true },
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
 const OrderSchema = new Schema<IOrder>(

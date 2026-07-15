@@ -301,6 +301,8 @@ export interface OrderDocument {
   kind: "INVOICE" | "QUOTATION" | "BILLING" | "DESIGN" | "OTHER";
   dataUrl: string;
   uploadedBy: "admin" | "customer";
+  generated?: boolean;
+  visible?: boolean; // false = draft the admin hasn't sent yet
   createdAt?: string;
 }
 

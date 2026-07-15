@@ -1003,7 +1003,9 @@ function downloadDataUrl(dataUrl: string, name: string) {
 function DocumentVault({ order }: { order: OrderTrack }) {
   // ── Live order: show the real attached documents ──
   if (order.apiId) {
-    const docs = order.documents ?? [];
+    // Only show documents the admin has actually sent — a generated invoice
+    // stays a hidden draft (visible:false) until the admin clicks "Send".
+    const docs = (order.documents ?? []).filter((d) => d.visible !== false);
     if (docs.length === 0) return null;
     return (
       <div style={{ ...card, overflow: "hidden" }}>
@@ -1593,7 +1595,17 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
     // Coordinator contact is edited in the admin portal — refresh it too so a
     // changed name/phone/WhatsApp reaches the customer without an app reload.
     const c = setInterval(loadCoordinator, 60_000);
-    return () => { clearInterval(t); clearInterval(c); };
+    // Refresh the moment the customer returns to the app — so a payment the
+    // admin just recorded (or a doc they just sent) shows immediately, instead
+    // of waiting up to 30s for the next poll.
+    const onFocus = () => { if (document.visibilityState === "visible") refreshLive(); };
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(t); clearInterval(c);
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
