@@ -31,24 +31,32 @@ router.post("/send-otp", async (req: Request, res: Response, next: NextFunction)
 
     const otp = await generateOTP(identity, mode);
 
+    // Dev-OTP escape hatch: when ALLOW_DEV_OTP=true, the code is returned in the
+    // response (and shown on-screen by the app) so you can log in for FREE with
+    // NO SMS/email gateway — handy for demos or when SMS isn't wired. Off by
+    // default; while it's on, anyone who knows an email/phone can sign in as it,
+    // so turn it back off before real users rely on the app.
+    const devOtp = process.env.ALLOW_DEV_OTP === "true";
+
     // Deliver via the configured provider (see services/smsService.ts and
     // emailService.ts — provider-agnostic, no Twilio required). If a real
     // gateway isn't configured they fall back to a console log in dev. In
     // production a delivery failure is a hard error (don't issue a code no one
-    // receives); in dev it's swallowed so you can test with the console code.
+    // receives); in dev — or when dev-OTP is on — it's swallowed so you can test
+    // with the on-screen code.
     try {
       if (mode === "phone") await sendSMS(identity, otp);
       else await sendEmail(identity, otp);
     } catch (gatewayErr) {
-      if (process.env.NODE_ENV === "production") throw gatewayErr;
+      if (process.env.NODE_ENV === "production" && !devOtp) throw gatewayErr;
     }
 
     res.json({
       success: true,
       message: `OTP sent to ${identity}`,
-      // Echo the code ONLY outside production so local testing works without a
-      // real gateway. Never returned in production — there it must be delivered.
-      ...(process.env.NODE_ENV !== "production" ? { devCode: otp } : {}),
+      // Echo the code outside production, OR whenever ALLOW_DEV_OTP is on, so
+      // testing works without a real gateway. Never echoed in normal production.
+      ...(process.env.NODE_ENV !== "production" || devOtp ? { devCode: otp } : {}),
     });
   } catch (err) {
     next(err);
