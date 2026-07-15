@@ -162,8 +162,15 @@ router.delete("/:id", async (req: AuthRequest, res: Response, next: NextFunction
     if (!cancellable.includes(order.status)) {
       return next(httpError(`Cannot cancel an order in '${order.status}' status`, 400));
     }
+    // Money has moved — cancellation needs a human (refund handling), not a button.
+    if (order.paymentStatus === "paid" || order.paymentStatus === "partial") {
+      return next(httpError("This order already has a payment on it — contact your Garm coordinator to cancel and arrange a refund.", 400));
+    }
 
     order.status = "Cancelled";
+    // Keep the ADMIN side in step — otherwise the portal still shows the order
+    // as live and it could be confirmed/produced after the customer cancelled.
+    order.adminStatus = "CANCELLED";
     await order.save();
     res.json({ success: true, order });
   } catch (err) { next(err); }
@@ -220,9 +227,11 @@ router.post("/:id/pay", async (req: AuthRequest, res: Response, next: NextFuncti
       if (!verified) {
         return next(httpError("Payment could not be verified. Please complete payment through the secure gateway.", 402));
       }
-    } else if (process.env.NODE_ENV === "production") {
+    } else if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEMO_PAYMENTS !== "true") {
       // Safety net: refuse silent self-asserted payments in production even if
       // the flag was forgotten — better to block than to hand out free orders.
+      // ALLOW_DEMO_PAYMENTS=true re-enables the demo checkout on a live deploy
+      // for end-to-end TESTING; turn it off before real customers pay.
       return next(httpError("Online payment isn't available yet — please contact your Garm coordinator to pay.", 503));
     }
 
