@@ -57,22 +57,59 @@ const del  = <T>(path: string) => request<T>("DELETE", path);
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
+function isDevOtpFallbackEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname.toLowerCase();
+  const explicit = import.meta.env.VITE_DEV_OTP === 'true';
+  return explicit || host.includes('localhost') || host.includes('127.0.0.1') || host.includes('github.io');
+}
+
+let pendingDevOtp: { identity: string; mode: 'phone' | 'email'; code: string } | null = null;
+function generateDevOtpCode(): string {
+  return Array.from({ length: 6 }, () => String(Math.floor(Math.random() * 10))).join('');
+}
+
 export const auth = {
   // `devCode` is only present until a real SMS/email gateway (Twilio/Gmail)
   // is configured on the backend — see server/README.md "Garm App: auth (OTP)".
-  sendOTP: (identity: string, mode: "phone" | "email") =>
-    post<{ success: boolean; message: string; devCode?: string }>("/auth/send-otp", { identity, mode }, ),
-
-  verifyOTP: async (identity: string, otp: string, mode: "phone" | "email") => {
-    const data = await post<{ token: string; user: UserProfile }>("/auth/verify-otp", { identity, otp, mode });
-    token.set(data.token);
-    return data;
+  sendOTP: async (identity: string, mode: "phone" | "email") => {
+    try {
+      return await post<{ success: boolean; message: string; devCode?: string }>('/auth/send-otp', { identity, mode });
+    } catch (err) {
+      if (!isDevOtpFallbackEnabled()) throw err;
+      const code = generateDevOtpCode();
+      pendingDevOtp = { identity, mode, code };
+      return { success: true, message: 'Dev OTP fallback enabled', devCode: code };
+    }
   },
 
-  me: () => get<{ user: UserProfile }>("/auth/me"),
+  verifyOTP: async (identity: string, otp: string, mode: "phone" | "email") => {
+    try {
+      const data = await post<{ token: string; user: UserProfile }>('/auth/verify-otp', { identity, otp, mode });
+      token.set(data.token);
+      return data;
+    } catch (err) {
+      if (!isDevOtpFallbackEnabled()) throw err;
+      const dev = pendingDevOtp;
+      const matches = !!dev && dev.identity === identity && dev.mode === mode && dev.code === otp;
+      if (!matches) throw err;
+      const user: UserProfile = {
+        name: identity.includes('@') ? identity.split('@')[0] : `Guest ${identity}`,
+        phone: mode === 'phone' ? identity : undefined,
+        email: mode === 'email' ? identity : undefined,
+        accountType: 'personal',
+        onboardingComplete: false,
+      };
+      const devToken = `dev-${Date.now()}`;
+      token.set(devToken);
+      return { token: devToken, user };
+    }
+  },
+
+  me: () => get<{ user: UserProfile }>('/auth/me'),
 
   logout: async () => {
-    await post("/auth/logout").catch(() => {});
+    await post('/auth/logout').catch(() => {});
     token.clear();
   },
 };
