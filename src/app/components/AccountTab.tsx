@@ -1662,6 +1662,14 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
   onSignOut?: () => void;
 }) {
   const [screen, setScreen]           = useState<Screen>("main");
+  // Open support tickets — shown as a badge on the Help & support row so the
+  // customer can see at a glance that something is active.
+  const [openTicketCount, setOpenTicketCount] = useState(0);
+  useEffect(() => {
+    supportApi.list()
+      .then(d => setOpenTicketCount((d.tickets || []).filter(t => t.status === "OPEN" || t.status === "IN_PROGRESS").length))
+      .catch(() => {});
+  }, [screen]);
   // 2FA is a real profile field now (persisted server-side), not local-only UI state.
   const twoFAEnabled = !!profile?.twoFAEnabled;
 
@@ -1714,7 +1722,7 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
     [
       { icon:<Bell      size={16} strokeWidth={1.5}/>, label:"Notifications",        s:"notifications_settings" as Screen },
       { icon:<Key       size={16} strokeWidth={1.5}/>, label:"Security & 2FA",       s:"security"              as Screen, badge: twoFAEnabled ? "2FA on" : "2FA off", bc: twoFAEnabled ? "text-emerald-600" : "text-red-500" },
-      { icon:<FileText  size={16} strokeWidth={1.5}/>, label:"Help & support",       s:"help_support"          as Screen },
+      { icon:<FileText  size={16} strokeWidth={1.5}/>, label:"Help & support",       s:"help_support"          as Screen, ...(openTicketCount > 0 ? { badge: `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}`, bc: "text-amber-600" } : {}) },
       { icon:<FileText  size={16} strokeWidth={1.5}/>, label:"FAQ",                  s:"faq"                   as Screen },
     ],
     [

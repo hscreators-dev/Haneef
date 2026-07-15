@@ -53,8 +53,37 @@ export async function initNotifications(): Promise<void> {
   } catch { /* permission prompts must never break the app */ }
 }
 
+// ── Notification sound ────────────────────────────────────────────────────────
+// A short two-tone chime via WebAudio — no audio file needed, works everywhere.
+// Browsers only allow sound after the user has interacted with the page once,
+// so failures are swallowed silently (the visual notification still shows).
+let _audioCtx: AudioContext | null = null;
+export function playChime(): void {
+  try {
+    type WK = typeof window & { webkitAudioContext?: typeof AudioContext };
+    const Ctx = window.AudioContext || (window as WK).webkitAudioContext;
+    if (!Ctx) return;
+    if (!_audioCtx) _audioCtx = new Ctx();
+    if (_audioCtx.state === "suspended") void _audioCtx.resume();
+    const now = _audioCtx.currentTime;
+    [[880, 0], [1174.66, 0.12]].forEach(([freq, delay]) => {
+      const osc = _audioCtx!.createOscillator();
+      const gain = _audioCtx!.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + delay);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + delay + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + delay + 0.35);
+      osc.connect(gain).connect(_audioCtx!.destination);
+      osc.start(now + delay);
+      osc.stop(now + delay + 0.4);
+    });
+  } catch { /* sound must never break the app */ }
+}
+
 /** Show a system notification (native tray on device, browser notification on web). */
 export async function notifyDevice(title: string, body: string): Promise<void> {
+  playChime();
   await loadNativePlugin();
   try {
     if (localNotifications) {

@@ -12,6 +12,7 @@ import { TrackTab } from "./components/TrackTab";
 import { AccountTab, type UserProfile, orgTypeDefs, OrgTypeSelect } from "./components/AccountTab";
 import { NotificationsScreen } from "./components/NotificationsScreen";
 import { fetchUnreadCount } from "../lib/notifCenter";
+import { playChime } from "../lib/notify";
 import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
 import { auth as authApi, account as accountApi, orders as ordersApi, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
 import { readPendingOrders, writePendingOrders, rememberOrderSummary } from "../lib/orderSync";
@@ -2001,7 +2002,11 @@ export default function App() {
   useEffect(() => {
     if (authStep !== "app" || showNotifications) return;
     let alive = true;
-    const refresh = () => { fetchUnreadCount().then((n) => { if (alive) setNotifUnread(n); }); };
+    const refresh = () => { fetchUnreadCount().then((n) => {
+      if (!alive) return;
+      // New unread notification arrived since the last poll — chime once.
+      setNotifUnread((prev) => { if (n > prev && prev >= 0) playChime(); return n; });
+    }); };
     refresh();
     const t = setInterval(refresh, 60000);
     return () => { alive = false; clearInterval(t); };
@@ -2235,7 +2240,26 @@ export default function App() {
       };
       setUserProfile(mapped);
       rememberIdentity(identity, mapped); // offline fallback cache only
-      setAuthStep(remoteProfile.onboardingComplete && remoteProfile.name ? "app" : "onboarding");
+      // Returning user? Go straight in. If the backend record is missing the
+      // onboarding flag (e.g. it was offline when they first onboarded), fall
+      // back to the local registry and HEAL the backend — never ask a returning
+      // user their name/location again.
+      if (remoteProfile.onboardingComplete && remoteProfile.name) {
+        setAuthStep("app");
+      } else {
+        const key = identityKey(identity);
+        const cached = key ? loadIdentityRegistry()[key] : undefined;
+        if (cached?.name) {
+          setUserProfile({ ...cached, ...identity });
+          setAuthStep("app");
+          accountApi.updateProfile({
+            name: cached.name, accountType: cached.accountType, orgName: cached.orgName,
+            orgType: cached.orgType, onboardingComplete: true,
+          }).catch(() => {});
+        } else {
+          setAuthStep("onboarding");
+        }
+      }
       // Load the saved default delivery address (if any) so New Order can pre-fill it
       // instead of asking the returning user for it again. Best-effort.
       accountApi.getAddresses().then(res => {
