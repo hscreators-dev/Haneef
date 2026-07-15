@@ -75,12 +75,26 @@ router.post("/verify-otp", async (req: Request, res: Response, next: NextFunctio
       return next(httpError("Invalid or expired OTP", 401));
     }
 
-    // Upsert user
-    const filter  = mode === "phone" ? { phone: identity } : { email: identity };
-    const update  = mode === "phone" ? { phone: identity } : { email: identity };
+    // Upsert user — with NORMALISED identity. Previously the match used the
+    // raw string, so "+91 63803 39944", "6380339944" and "+916380339944" each
+    // created a separate account and a returning user looked like a nameless
+    // "Guest". Now every phone format maps to ONE canonical "+91XXXXXXXXXX"
+    // account (emails: lowercased), and legacy-format records are matched and
+    // healed to the canonical form.
+    const canon = mode === "phone"
+      ? `+91${identity.replace(/\D/g, "").slice(-10)}`
+      : identity.trim().toLowerCase();
+    const variants = mode === "phone"
+      ? [...new Set([canon, canon.slice(1), canon.slice(3), identity])] // +91X…, 91X…, bare 10-digit, as-typed
+      : [...new Set([canon, identity])];
+    const filter  = mode === "phone" ? { phone: { $in: variants } } : { email: { $in: variants } };
+    const update  = mode === "phone" ? { phone: canon } : { email: canon };
     const user    = await User.findOneAndUpdate(filter, { $setOnInsert: update }, {
       upsert: true, new: true, setDefaultsOnInsert: true,
     });
+    // Heal a legacy-format record so future logins hit the canonical value.
+    if (mode === "phone" && user.phone !== canon) { user.phone = canon; await user.save(); }
+    else if (mode === "email" && user.email !== canon) { user.email = canon; await user.save(); }
 
     const token = signToken(user._id.toString());
 
