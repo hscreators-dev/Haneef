@@ -237,7 +237,8 @@ function buildNewSubmittedOrder(summary?: SubmittedOrderSummary | null, accountT
     sizeBreakdown: summary.sizeBreakdown,
     stitching: summary.stitching,
     packaging: summary.packaging,
-    price: summary.price,
+    // A just-submitted order is never paid yet — never claim "Total paid".
+    price: summary.price ? { ...summary.price, totalLabel: summary.price.totalLabel === "Total paid" ? "Total payable" : summary.price.totalLabel } : undefined,
     editPayload: summary.editPayload,
     referenceMethod: summary.referenceMethod,
     referenceFiles: summary.referenceFiles,
@@ -1730,7 +1731,18 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   // empty/loading state below covers the rest.
   let base: OrderTrack[];
   if (liveOrders) {
-    const showLocalNew = showNew && !liveOrders.some(o => o.id === newSubmittedOrder.id);
+    // Retire the local "just submitted" placeholder once its real order exists on
+    // the backend — otherwise it lingers in Active (with the stale summary price /
+    // "Total paid" label) and duplicates the live card (which may already be
+    // Cancelled/Delivered in Past). Two sync paths:
+    //  • Online create → the summary id becomes the real ref → dedupe by ref.
+    //  • Offline/pending → id stays "FL-PENDING" → show only while it's still
+    //    unsynced (pending queue non-empty); once it syncs, drop it.
+    const showLocalNew = showNew && (
+      newSubmittedOrder.id === "FL-PENDING"
+        ? pendingSync > 0
+        : !liveOrders.some(o => o.id === newSubmittedOrder.id)
+    );
     base = showLocalNew ? [newSubmittedOrder, ...liveOrders] : liveOrders;
   } else {
     base = showNew ? [newSubmittedOrder] : [];
