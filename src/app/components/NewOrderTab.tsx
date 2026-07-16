@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 import { tryon as tryonApi } from "../../lib/api";
-import { useCatalogAvailability, adminStylesFor, adminMaterialsFor, adminPaletteFor, adminGarmentPrice } from "../../lib/useCatalogAvailability";
+import { useCatalogAvailability, adminStylesFor, adminMaterialsFor, adminPaletteFor, adminGarmentPrice, adminOptionDelta, adminBasePrice } from "../../lib/useCatalogAvailability";
 import { useOrderFormConfig, calcServiceFee, surplusDiscountPct } from "../../lib/useOrderFormConfig";
 
 const ACCENT      = "#C8A97E";
@@ -726,6 +726,115 @@ function weaveAddOnPerPc(weave?: string): number {
 // Base garment rate (fabric + weave) per piece — before stitching/packaging add-ons.
 function garmentRatePerPc(fabric?: string, weave?: string): number {
   return fabricRatePerPc(fabric) + weaveAddOnPerPc(weave);
+}
+
+// ─── Per-option price labels shown INSIDE each dropdown ───────────────────────
+// So the customer sees exactly what each fabric / GSM / weave / style costs
+// (matching the admin Catalog) instead of the price silently changing. When the
+// admin has priced this product's options, we show the admin's +₹ delta; else we
+// fall back to the built-in label the caller provides.
+function optionDeltaLabel(
+  garmentName: string | undefined,
+  dim: "fabric" | "gsm" | "weave" | "style",
+  option: string,
+  audience: "B2C" | "B2B",
+  fallback?: (o: string) => string,
+): string {
+  const d = garmentName ? adminOptionDelta(garmentName, dim, option, audience) : null;
+  if (d == null) return fallback ? fallback(option) : "";
+  return d > 0 ? ` · +${inr(d)}/pc` : " · included";
+}
+
+// ─── Two-line "suits you" guidance for each material choice ───────────────────
+// Plain-language help so a non-expert customer can pick confidently. Matched by
+// keyword (case-insensitive) with a friendly default, so admin-added options
+// still get a sensible tip.
+function fabricSuggestion(name?: string): string {
+  const f = (name || "").toLowerCase();
+  if (/\bfr\b|fire|retardant|hi-?vis|protective/.test(f)) return "Safety-grade fabric built for protection. Best for industrial and site uniforms.";
+  if (/bamboo|organic/.test(f))            return "Eco-friendly, ultra-soft and breathable. Great for sensitive skin and daily wear.";
+  if (/linen/.test(f))                     return "Light and airy, keeps you cool. Perfect for summer and smart-casual looks.";
+  if (/slub|premium|poplin|oxford/.test(f))return "Textured premium finish with a refined look. Ideal for fashion and formal tees.";
+  if (/dri-?fit|performance|poly|polyester|mesh/.test(f)) return "Moisture-wicking and quick-dry. Ideal for sports, gym and active wear.";
+  if (/pique|interlock/.test(f))           return "Structured knit that holds shape. The classic choice for polos.";
+  if (/blend/.test(f))                     return "Balances softness with durability. Holds colour and shape wash after wash.";
+  if (/cotton|jersey|knit/.test(f))        return "Soft, breathable and skin-friendly. Best for everyday tees and warm weather.";
+  return "A versatile everyday fabric — comfortable and easy to care for.";
+}
+function gsmSuggestion(name?: string): string {
+  const g = (name || "").toLowerCase();
+  const num = parseInt((g.match(/(\d{2,3})/) || [])[1] || "0", 10);
+  if (/light/.test(g) || (num && num <= 170)) return "Lightweight and airy — cooler to wear. Best for summer and inner layers.";
+  if (/premium|heavy/.test(g) || (num && num >= 210)) return "Thicker, premium feel — more durable and opaque. Great for winter and standout tees.";
+  if (/standard|medium/.test(g) || (num && num >= 171 && num <= 209)) return "Balanced weight — comfortable year-round. The safe all-purpose choice.";
+  return "Balanced weight for everyday comfort and easy wear.";
+}
+function weaveSuggestion(name?: string): string {
+  const w = (name || "").toLowerCase();
+  if (/twill|serge/.test(w))          return "Diagonal weave — stronger and drapes well. Naturally resists wrinkles.";
+  if (/pique/.test(w))                return "Textured polo-style knit — breathable and smart. The classic polo look.";
+  if (/interlock|double/.test(w))     return "Dense double-knit — smooth on both sides and holds shape well.";
+  if (/jersey|knit/.test(w))          return "Soft and stretchy with good give. Comfortable for tees and active wear.";
+  if (/mesh|ripstop/.test(w))         return "Breathable and lightweight with an airy feel. Great for sportswear.";
+  if (/plain|custom/.test(w))         return "Smooth, classic finish. Versatile for prints and everyday wear.";
+  return "A reliable weave for everyday comfort and durability.";
+}
+function styleSuggestion(name?: string): string {
+  const s = (name || "").toLowerCase();
+  if (/v-?neck/.test(s))              return "Flattering neckline that elongates the frame. A smart-casual favourite.";
+  if (/collar|polo/.test(s))         return "Smart, semi-formal look. Great for office wear, events and team kits.";
+  if (/henley/.test(s))              return "Buttoned placket — casual yet refined. A step up from a basic tee.";
+  if (/raglan/.test(s))              return "Sporty sleeve seams for easy movement. Ideal for active and athleisure styles.";
+  if (/oversize/.test(s))            return "Relaxed, trendy drape. A streetwear favourite for a laid-back look.";
+  if (/round ?neck|crew/.test(s))    return "Classic everyday fit — easy, casual and goes with anything.";
+  if (/kurta|sherwani|dhoti|ethnic/.test(s)) return "Traditional ethnic silhouette. Perfect for festive and formal occasions.";
+  return "A comfortable, versatile choice that works for most occasions.";
+}
+// Small muted two-line helper text shown under a selector.
+function SuggestLine({ text }: { text: string }) {
+  return (
+    <div className="flex items-start gap-1.5 mt-1 mb-2" style={{ paddingLeft: 2 }}>
+      <Lightbulb size={12} strokeWidth={1.8} style={{ color: "#B45309", flexShrink: 0, marginTop: 1.5 }} />
+      <p style={{ fontSize: 11, lineHeight: 1.45, color: "#6b7280" }}>{text}</p>
+    </div>
+  );
+}
+// Itemised "how this price is built" line — base + each chosen option's ₹ delta.
+// Only renders when the admin has priced this product's options, so the customer
+// sees exactly why the total is what it is (no silent price jumps). Returns null
+// otherwise so built-in-priced garments are unaffected.
+function PriceBreakdown({ name, sel, audience }: {
+  name?: string;
+  sel: { fabric?: string; gsm?: string; weave?: string; style?: string };
+  audience: "B2C" | "B2B";
+}) {
+  const base = name ? adminBasePrice(name, audience) : null;
+  if (base == null) return null;
+  const parts: { label: string; amt: number }[] = [];
+  const add = (dim: "fabric" | "gsm" | "weave" | "style", label: string, opt?: string) => {
+    if (!opt) return;
+    const d = adminOptionDelta(name!, dim, opt, audience);
+    if (d != null) parts.push({ label, amt: d });
+  };
+  add("style", "Style", sel.style);
+  add("fabric", "Fabric", sel.fabric);
+  add("gsm", "GSM", sel.gsm);
+  add("weave", "Weave", sel.weave);
+  const total = base + parts.reduce((s, p) => s + p.amt, 0);
+  return (
+    <div className="px-3 py-2 mb-3 rounded-xl" style={{ background: "var(--muted)", border: "1px solid var(--border)" }}>
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5" style={{ fontSize: 11, color: "#6b7280" }}>
+        <span>Base {inr(base)}</span>
+        {parts.map((p) => (
+          <span key={p.label}>· {p.label} {p.amt > 0 ? `+${inr(p.amt)}` : "included"}</span>
+        ))}
+      </div>
+      <div className="flex items-baseline justify-between mt-1">
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Price per piece</span>
+        <span style={{ fontSize: 16, fontWeight: 800, color: DARK }}>{inr(total)}<span style={{ fontSize: 11, fontWeight: 600 }}>/pc</span></span>
+      </div>
+    </div>
+  );
 }
 
 // ─── Garment catalog (what kind of dress) ─────────────────────────────────────
@@ -2015,7 +2124,9 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                       <SelectField
                         options={garmentStyleOptions(it.name)}
                         value={lines[0]?.style ?? garmentStyleOptions(it.name)[0]}
+                        priceFor={o => optionDeltaLabel(it.name, "style", o, "B2C")}
                         onChange={v => setGarmentStyle(it.name, v)}/>
+                      <SuggestLine text={styleSuggestion(lines[0]?.style ?? garmentStyleOptions(it.name)[0])} />
                     </div>
                   )}
                   {lines.map(line => (
@@ -2848,24 +2959,28 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                   {garmentStyleOptions(l.name).length > 0 && (
                     <div>
                       <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5, fontWeight: 500 }}>Style</p>
-                      <SelectField options={garmentStyleOptions(l.name)} value={l.style ?? garmentStyleOptions(l.name)[0]} onChange={v => updateLine(l.id, { style: v })}/>
+                      <SelectField options={garmentStyleOptions(l.name)} value={l.style ?? garmentStyleOptions(l.name)[0]} priceFor={o => optionDeltaLabel(l.name, "style", o, "B2B")} onChange={v => updateLine(l.id, { style: v })}/>
+                      <SuggestLine text={styleSuggestion(l.style ?? garmentStyleOptions(l.name)[0])} />
                     </div>
                   )}
 
                   {/* Material */}
                   <div>
                     <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5, fontWeight: 500 }}>Fabric</p>
-                    <div className="mb-2"><SelectField options={mo.fabricOptions} value={mo.fabricOptions.includes(l.material.fabric) ? l.material.fabric : mo.fabricOptions[0]} onChange={v => updateLine(l.id, { material: { ...l.material, fabric: v } })}/></div>
+                    <div className="mb-1"><SelectField options={mo.fabricOptions} value={mo.fabricOptions.includes(l.material.fabric) ? l.material.fabric : mo.fabricOptions[0]} priceFor={o => optionDeltaLabel(l.name, "fabric", o, "B2B")} onChange={v => updateLine(l.id, { material: { ...l.material, fabric: v } })}/></div>
+                    <SuggestLine text={fabricSuggestion(l.material.fabric)} />
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>GSM weight</p>
-                        <SelectField options={mo.gsmOptions} value={mo.gsmOptions.includes(l.material.gsm) ? l.material.gsm : mo.gsmOptions[0]} onChange={v => updateLine(l.id, { material: { ...l.material, gsm: v } })}/>
+                        <SelectField options={mo.gsmOptions} value={mo.gsmOptions.includes(l.material.gsm) ? l.material.gsm : mo.gsmOptions[0]} priceFor={o => optionDeltaLabel(l.name, "gsm", o, "B2B")} onChange={v => updateLine(l.id, { material: { ...l.material, gsm: v } })}/>
                       </div>
                       <div>
                         <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Weave</p>
-                        <SelectField options={mo.weaveOptions} value={mo.weaveOptions.includes(l.material.weave) ? l.material.weave : mo.weaveOptions[0]} onChange={v => updateLine(l.id, { material: { ...l.material, weave: v } })}/>
+                        <SelectField options={mo.weaveOptions} value={mo.weaveOptions.includes(l.material.weave) ? l.material.weave : mo.weaveOptions[0]} priceFor={o => optionDeltaLabel(l.name, "weave", o, "B2B", ox => { const a = weaveAddOnPerPc(ox); return a > 0 ? ` · +${inr(a)}/pc` : ""; })} onChange={v => updateLine(l.id, { material: { ...l.material, weave: v } })}/>
                       </div>
                     </div>
+                    <SuggestLine text={`${gsmSuggestion(l.material.gsm)} · ${weaveSuggestion(l.material.weave)}`} />
+                    <PriceBreakdown name={l.name} sel={{ fabric: l.material.fabric, gsm: l.material.gsm, weave: l.material.weave, style: l.style }} audience="B2B" />
                     <p className="text-right mt-1" style={{ fontSize: 11, color:"#1a4a8a", fontWeight: 600 }}>{inr(rate)}/pc · subtotal {inr(rate * l.qty)}</p>
                   </div>
 
@@ -6416,17 +6531,20 @@ function PersonaOrderForm({
                         </div>
                         <div className="px-3 py-2.5">
                           <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Fabric</p>
-                          <div className="mb-2"><SelectField options={o.fabricOptions} value={fabricVal} onChange={v => setMatFor(name, { fabric: v })} /></div>
+                          <div className="mb-1"><SelectField options={o.fabricOptions} value={fabricVal} priceFor={ox => optionDeltaLabel(name, "fabric", ox, priceAudience)} onChange={v => setMatFor(name, { fabric: v })} /></div>
+                          <SuggestLine text={fabricSuggestion(fabricVal)} />
                           <div className="grid grid-cols-2 gap-2">
                             <div>
                               <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>GSM weight</p>
-                              <SelectField options={o.gsmOptions} value={gsmVal} onChange={v => setMatFor(name, { gsm: v })} />
+                              <SelectField options={o.gsmOptions} value={gsmVal} priceFor={ox => optionDeltaLabel(name, "gsm", ox, priceAudience)} onChange={v => setMatFor(name, { gsm: v })} />
                             </div>
                             <div>
                               <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Weave</p>
-                              <SelectField options={o.weaveOptions} value={weaveVal} onChange={v => setMatFor(name, { weave: v })} priceFor={ox => { const a = weaveAddOnPerPc(ox); return a > 0 ? ` · +${inr(a)}` : ""; }} />
+                              <SelectField options={o.weaveOptions} value={weaveVal} priceFor={ox => optionDeltaLabel(name, "weave", ox, priceAudience, oy => { const a = weaveAddOnPerPc(oy); return a > 0 ? ` · +${inr(a)}` : ""; })} onChange={v => setMatFor(name, { weave: v })} />
                             </div>
                           </div>
+                          <SuggestLine text={`${gsmSuggestion(gsmVal)} · ${weaveSuggestion(weaveVal)}`} />
+                          <PriceBreakdown name={name} sel={{ fabric: fabricVal, gsm: gsmVal, weave: weaveVal, style: garmentCart.find(g => g.name === name)?.style }} audience={priceAudience} />
                         </div>
                       </div>
                     );
@@ -6435,23 +6553,33 @@ function PersonaOrderForm({
               ) : (
                 <>
                   <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>{cfg.fabricLabel}</p>
-                  <div className="mb-2"><SelectField options={cfg.fabricOptions} value={material.fabric} onChange={v => setMaterial(m => ({ ...m, fabric: v }))} priceFor={o => ` · ${inr(fabricSource === "surplus" ? Math.max(1, Math.round(fabricRatePerPc(o) * (1 - surplusDiscountPct() / 100))) : fabricRatePerPc(o))}/pc`} /></div>
-                  {/* The price of what's currently selected — big and unmissable */}
-                  <div className="flex items-baseline justify-between px-3 py-2 mb-3 rounded-xl" style={{ background: fabricSource === "surplus" ? "#ecfdf5" : "var(--muted)", border: `1px solid ${fabricSource === "surplus" ? "#a7f3d0" : "var(--border)"}` }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Your price with this fabric</span>
-                    <span className="flex items-baseline gap-1.5">
-                      {fabricSource === "surplus" && (
-                        <span style={{ fontSize: 12.5, color: "#9ca3af", textDecoration: "line-through" }}>{inr(garmentPriceForFabric(selectedGarment, material.fabric, material.weave, "fresh", material.gsm, priceAudience))}</span>
-                      )}
-                      <span style={{ fontSize: 17, fontWeight: 800, color: fabricSource === "surplus" ? "#047857" : DARK }}>{inr(garmentRate)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
-                    </span>
-                  </div>
+                  <div className="mb-1"><SelectField options={cfg.fabricOptions} value={material.fabric} onChange={v => setMaterial(m => ({ ...m, fabric: v }))}
+                    priceFor={o => optionDeltaLabel(selectedGarment?.name, "fabric", o, priceAudience, ox => ` · ${inr(fabricSource === "surplus" ? Math.max(1, Math.round(fabricRatePerPc(ox) * (1 - surplusDiscountPct() / 100))) : fabricRatePerPc(ox))}/pc`)} /></div>
+                  <SuggestLine text={fabricSuggestion(material.fabric)} />
 
                   <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>GSM weight</p>
-                  <div className="mb-3"><SelectField options={cfg.gsmOptions} value={material.gsm} onChange={v => setMaterial(m => ({ ...m, gsm: v }))} /></div>
+                  <div className="mb-1"><SelectField options={cfg.gsmOptions} value={material.gsm} onChange={v => setMaterial(m => ({ ...m, gsm: v }))}
+                    priceFor={o => optionDeltaLabel(selectedGarment?.name, "gsm", o, priceAudience)} /></div>
+                  <SuggestLine text={gsmSuggestion(material.gsm)} />
 
                   <p className="text-muted-foreground mb-1.5" style={{ fontSize: 12 }}>Weave</p>
-                  <SelectField options={cfg.weaveOptions} value={material.weave} onChange={v => setMaterial(m => ({ ...m, weave: v }))} priceFor={o => { const a = weaveAddOnPerPc(o); return a > 0 ? ` · +${inr(a)}/pc` : ` · included`; }} />
+                  <div className="mb-1"><SelectField options={cfg.weaveOptions} value={material.weave} onChange={v => setMaterial(m => ({ ...m, weave: v }))}
+                    priceFor={o => optionDeltaLabel(selectedGarment?.name, "weave", o, priceAudience, ox => { const a = weaveAddOnPerPc(ox); return a > 0 ? ` · +${inr(a)}/pc` : ` · included`; })} /></div>
+                  <SuggestLine text={weaveSuggestion(material.weave)} />
+
+                  {/* Itemised breakdown (admin-priced) OR a single clear total */}
+                  <PriceBreakdown name={selectedGarment?.name} sel={{ fabric: material.fabric, gsm: material.gsm, weave: material.weave, style: selectedGarment?.style }} audience={priceAudience} />
+                  {adminBasePrice(selectedGarment?.name ?? "", priceAudience) == null && (
+                    <div className="flex items-baseline justify-between px-3 py-2 mb-1 rounded-xl" style={{ background: fabricSource === "surplus" ? "#ecfdf5" : "var(--muted)", border: `1px solid ${fabricSource === "surplus" ? "#a7f3d0" : "var(--border)"}` }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Your price per piece</span>
+                      <span className="flex items-baseline gap-1.5">
+                        {fabricSource === "surplus" && (
+                          <span style={{ fontSize: 12.5, color: "#9ca3af", textDecoration: "line-through" }}>{inr(garmentPriceForFabric(selectedGarment, material.fabric, material.weave, "fresh", material.gsm, priceAudience))}</span>
+                        )}
+                        <span style={{ fontSize: 17, fontWeight: 800, color: fabricSource === "surplus" ? "#047857" : DARK }}>{inr(garmentRate)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
+                      </span>
+                    </div>
+                  )}
                 </>
               )}
             </Section>

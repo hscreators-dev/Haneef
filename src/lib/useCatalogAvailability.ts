@@ -100,6 +100,33 @@ export function adminGarmentPrice(
   return Math.max(1, Math.round(total));
 }
 
+/**
+ * The admin's ₹ delta for ONE option within ONE dimension (fabric / GSM / weave /
+ * style) of a product — i.e. the exact amount the Catalog says that choice adds
+ * to the base price. Returns null when the admin hasn't priced this dimension for
+ * this product, so the caller falls back to its built-in per-option labels.
+ * This lets each dropdown in the app show the SAME per-option price the admin set
+ * (e.g. Weave · Twill +₹20, Jersey +₹30), instead of a built-in guess.
+ */
+export function adminOptionDelta(
+  name: string,
+  dim: "fabric" | "gsm" | "weave" | "style",
+  option: string,
+  audience?: "B2C" | "B2B",
+): number | null {
+  const p = cachedGarment(name, audience);
+  const m = p?.optionPrices?.[dim];
+  if (!m || Object.keys(m).length === 0) return null; // dimension not priced by admin
+  return m[option] ?? 0;
+}
+
+/** The admin base price for a product (null ⇒ not admin-priced) — the ₹ the
+ * per-option deltas are added on top of, so the app can show an itemised breakdown. */
+export function adminBasePrice(name: string, audience?: "B2C" | "B2B"): number | null {
+  const p = cachedGarment(name, audience);
+  return p?.price && p.price > 0 && p.optionPrices ? p.price : null;
+}
+
 /** Admin colour palette for a garment — null ⇒ use the app's built-in palette. */
 export function adminPaletteFor(name: string, audience?: "B2C" | "B2B"): { label: string; hex: string }[] | null {
   const p = cachedGarment(name, audience);
