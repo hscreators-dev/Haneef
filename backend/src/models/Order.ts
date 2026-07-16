@@ -135,10 +135,18 @@ export interface IOrder extends Document {
   serviceFee?: number;       // ₹ service fee included in total (shown as its own line)
   quoteApprovedAt?: Date;
   confirmedAt?: Date;        // when the admin accepted/confirmed the order (B2C gate)
-  paymentStatus?: "unpaid" | "partial" | "paid";
+  paymentStatus?: "unpaid" | "partial" | "paid" | "refunded" | "partial_refund";
   paymentMode?: string;
   paymentDate?: Date;
   paymentReference?: string;
+
+  // Cancellation & refund (admin-issued from the Garm Admin Portal)
+  cancelledAt?: Date;
+  cancelReason?: string;
+  refundAmount?: number;
+  refundedAt?: Date;
+  refundReason?: string;
+  refundReference?: string;
 
   // Coordinator
   coordinatorId?: mongoose.Types.ObjectId;
@@ -256,10 +264,18 @@ const OrderSchema = new Schema<IOrder>(
     serviceFee:      { type: Number, default: 0 },
     quoteApprovedAt: Date,
     confirmedAt:     Date,
-    paymentStatus:   { type: String, enum: ["unpaid","partial","paid"], default: "unpaid" },
+    paymentStatus:   { type: String, enum: ["unpaid","partial","paid","refunded","partial_refund"], default: "unpaid" },
     paymentMode:     String,
     paymentDate:     Date,
     paymentReference: String,
+
+    // ── Cancellation & refund (admin-issued) ──
+    cancelledAt:     Date,
+    cancelReason:    String,
+    refundAmount:    { type: Number, default: 0 },
+    refundedAt:      Date,
+    refundReason:    String,
+    refundReference: String,
 
     coordinatorId: { type: Schema.Types.ObjectId, ref: "User" },
     notes: String,

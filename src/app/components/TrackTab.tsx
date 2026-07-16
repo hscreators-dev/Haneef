@@ -41,7 +41,7 @@ const btnAccent: React.CSSProperties = { ...btnPrimary, background: ACCENT };
 // ─── Types ────────────────────────────────────────────────────────────────────
 type StepStatus = "done" | "active" | "pending";
 interface TrackStep { label: string; sub: string; status: StepStatus; icon: React.ReactNode }
-type OrderStatus = "In production" | "Quality check" | "Shipped" | "Quote pending" | "Order placed" | "Order confirmed" | "Delivered" | "Completed";
+type OrderStatus = "In production" | "Quality check" | "Shipped" | "Quote pending" | "Order placed" | "Order confirmed" | "Delivered" | "Completed" | "Cancelled";
 
 interface OrderTrack {
   id: string; name: string; statusLabel: OrderStatus; statusColor: string;
@@ -49,7 +49,8 @@ interface OrderTrack {
   // ── Live-backend fields (real orders fetched from the API) ──
   apiId?: string;            // Mongo _id — presence marks this as a LIVE order
   adminStatus?: string;      // NEW | CONFIRMED | PAID | … (drives the payment gate)
-  livePaymentStatus?: string; // unpaid | partial | paid
+  livePaymentStatus?: string; // unpaid | partial | paid | refunded | partial_refund
+  cancelReason?: string; refundAmount?: number; refundedAt?: string; refundReason?: string;
   assignedEmployee?: string; // name shown on the coordinator card for this order
   rating?: number;           // customer rating 1–5 (persisted on the order)
   ratingFeedback?: string;
@@ -248,7 +249,7 @@ function buildNewSubmittedOrder(summary?: SubmittedOrderSummary | null, accountT
 }
 
 const ACTIVE_STATUSES: OrderStatus[]     = ["Order placed", "Order confirmed", "Quote pending", "In production", "Quality check", "Shipped"];
-const PAST_STATUSES: OrderStatus[]       = ["Delivered", "Completed"];
+const PAST_STATUSES: OrderStatus[]       = ["Delivered", "Completed", "Cancelled"];
 const CHANGEABLE_STATUSES: OrderStatus[] = ["Order placed", "Quote pending"];
 
 // ─── Live order → OrderTrack mapping ─────────────────────────────────────────
@@ -261,6 +262,7 @@ const STATUS_COLORS: Record<OrderStatus, string> = {
   "Shipped":         "text-blue-700 bg-blue-50",
   "Delivered":       "text-emerald-700 bg-emerald-50",
   "Completed":       "text-stone-600 bg-stone-100",
+  "Cancelled":       "text-red-700 bg-red-50",
 };
 
 function iconForStepLabel(label: string, status: StepStatus): React.ReactNode {
@@ -290,8 +292,10 @@ function orgAdvanceAmount(total?: number): number { return Math.round(((total ??
 // display summary saved locally at submit time (keyed by orderRef).
 function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSummary>): OrderTrack {
   const summary = o.orderRef ? summaries[o.orderRef] : undefined;
-  const statusLabel = ((["In production","Quality check","Shipped","Quote pending","Order placed","Order confirmed","Delivered","Completed"] as OrderStatus[])
-    .includes(o.status as OrderStatus) ? o.status : "Order placed") as OrderStatus;
+  const statusLabel: OrderStatus = (o.adminStatus === "CANCELLED" || o.status === "Cancelled")
+    ? "Cancelled"
+    : (((["In production","Quality check","Shipped","Quote pending","Order placed","Order confirmed","Delivered","Completed"] as OrderStatus[])
+        .includes(o.status as OrderStatus) ? o.status : "Order placed") as OrderStatus);
   const steps: TrackStep[] = (o.trackSteps || []).map((s) => ({
     label: s.label, sub: s.sub || "–",
     status: (s.status === "done" || s.status === "active" ? s.status : "pending") as StepStatus,
@@ -361,6 +365,10 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
     rating: o.rating,
     ratingFeedback: o.ratingFeedback,
     livePaymentStatus: o.paymentStatus,
+    cancelReason: o.cancelReason,
+    refundAmount: o.refundAmount,
+    refundedAt: o.refundedAt ? new Date(o.refundedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : undefined,
+    refundReason: o.refundReason,
     assignedEmployee: o.assignedEmployee,
     totalAmount: amount,
     documents: o.documents,
@@ -1423,10 +1431,29 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
       )}
 
       {/* New order banner */}
-      {order.isNew && (
+      {order.isNew && order.statusLabel !== "Cancelled" && (
         <div className="px-4 py-2 border-b border-border" style={{ background: ACCENT_BG }}>
           <span style={{ fontSize: 11, color: ACCENT_TEXT, fontWeight: 500 }}>
             Newly submitted — awaiting coordinator review
+          </span>
+        </div>
+      )}
+
+      {/* Cancelled banner */}
+      {order.statusLabel === "Cancelled" && (
+        <div className="px-4 py-2 border-b border-border" style={{ background: "#fef2f2" }}>
+          <span style={{ fontSize: 11, color: "#b91c1c", fontWeight: 600 }}>
+            Order cancelled{order.cancelReason ? ` · ${order.cancelReason}` : ""}
+            {(order.refundAmount ?? 0) > 0 ? ` · Refund ${fmtINR(order.refundAmount)} issued` : ""}
+          </span>
+        </div>
+      )}
+
+      {/* Refund banner (order not cancelled but a refund was issued, e.g. damage) */}
+      {order.statusLabel !== "Cancelled" && (order.refundAmount ?? 0) > 0 && (
+        <div className="px-4 py-2 border-b border-border" style={{ background: "#fffbeb" }}>
+          <span style={{ fontSize: 11, color: "#92400e", fontWeight: 600 }}>
+            Refund issued · {fmtINR(order.refundAmount)}{order.refundReason ? ` · ${order.refundReason}` : ""}{order.refundedAt ? ` · ${order.refundedAt}` : ""}
           </span>
         </div>
       )}

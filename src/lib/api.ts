@@ -348,10 +348,17 @@ export interface Order {
   quoteAmount?: number;
   serviceFee?: number;
   confirmedAt?: string;
-  paymentStatus?: string;     // unpaid | partial | paid
+  paymentStatus?: string;     // unpaid | partial | paid | refunded | partial_refund
   paymentMode?: string;
   paymentDate?: string;
   paymentReference?: string;
+  // Cancellation & refund (issued by the admin)
+  cancelledAt?: string;
+  cancelReason?: string;
+  refundAmount?: number;
+  refundedAt?: string;
+  refundReason?: string;
+  refundReference?: string;
   assignedEmployee?: string;  // employee name shown on the coordinator card
   rating?: number;            // customer rating 1–5 (set once delivered)
   ratingFeedback?: string;
