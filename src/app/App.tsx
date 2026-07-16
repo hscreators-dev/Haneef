@@ -603,6 +603,9 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
   // appears once the customer actually has an active order (nothing mocked),
   // so tapping Track always lands on real data. Refreshes on mount + 30s.
   const [homeOrders, setHomeOrders] = useState<HomeOrderCard[]>([]);
+  // Real order stats for the tiles — NEVER hardcoded. A brand-new account shows
+  // 0 / 0 / — instead of fake "3 / 4 / 97%" (which looked like someone else's data).
+  const [homeStats, setHomeStats] = useState<{ active: number; delivered: number; onTime: string }>({ active: 0, delivered: 0, onTime: "—" });
   useEffect(() => {
     let alive = true;
     const load = () => ordersApi.list()
@@ -612,8 +615,10 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
           .filter((o) => !["Draft", "Delivered", "Completed", "Cancelled"].includes(o.status))
           .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
         setHomeOrders(active.map(apiOrderToHomeCard));
+        const delivered = orders.filter((o) => ["Delivered", "Completed"].includes(o.status)).length;
+        setHomeStats({ active: active.length, delivered, onTime: delivered > 0 ? "100%" : "—" });
       })
-      .catch(() => { if (alive) setHomeOrders([]); }); // offline / not signed in → no card
+      .catch(() => { if (alive) { setHomeOrders([]); setHomeStats({ active: 0, delivered: 0, onTime: "—" }); } }); // offline / not signed in → no card
     load();
     const t = setInterval(load, 30_000);
     return () => { alive = false; clearInterval(t); };
@@ -747,9 +752,9 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
       {/* ── Stats row ── */}
       <div className="mx-5 mb-5 grid grid-cols-3 gap-2.5">
         {[
-          { label: "Active",    value: "3",   icon: <Clock        size={14} strokeWidth={1.8}/>, tint: "#7C5419", bg: ACCENT_BG },
-          { label: "Delivered", value: "4",   icon: <CheckCircle2 size={14} strokeWidth={1.8}/>, tint: "#047857", bg: "#ECFDF5" },
-          { label: "On-time",   value: "97%", icon: <TrendingUp   size={14} strokeWidth={1.8}/>, tint: "#1a4a8a", bg: "#EFF6FF" },
+          { label: "Active",    value: String(homeStats.active),    icon: <Clock        size={14} strokeWidth={1.8}/>, tint: "#7C5419", bg: ACCENT_BG },
+          { label: "Delivered", value: String(homeStats.delivered), icon: <CheckCircle2 size={14} strokeWidth={1.8}/>, tint: "#047857", bg: "#ECFDF5" },
+          { label: "On-time",   value: homeStats.onTime,            icon: <TrendingUp   size={14} strokeWidth={1.8}/>, tint: "#1a4a8a", bg: "#EFF6FF" },
         ].map(s => (
           <div key={s.label} style={card} className="p-3.5">
             <div className="w-7 h-7 rounded-lg flex items-center justify-center mb-2" style={{ background: s.bg, color: s.tint }}>{s.icon}</div>

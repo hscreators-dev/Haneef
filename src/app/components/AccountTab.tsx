@@ -10,10 +10,12 @@ import {
   account as accountApi,
   support as supportApi,
   coordinator as coordinatorApi,
+  orders as ordersApi,
   type PaymentMethod as ApiPaymentMethod,
   type Address as ApiAddress,
   type SupportTicket,
   type Coordinator,
+  type Order as ApiOrder,
 } from "../../lib/api";
 
 const ACCENT      = "#C8A97E";
@@ -1146,14 +1148,30 @@ function NotificationsSettings({ onBack }: { onBack: () => void }) {
 }
 
 // ─── Order History + Order Detail ─────────────────────────────────────────────
-const historyOrders = [
-  { id:"#FL-2035", name:"Cotton Jersey — White",       qty:"100 pcs", gsm:"GSM 180", date:"Jun 10, 2025", status:"Delivered",  color:"text-emerald-700 bg-emerald-50", fabric:"100% Cotton Jersey", stitching:"Single needle stitch", packaging:"Individual poly bag" },
-  { id:"#FL-2029", name:"Oxford Shirt Fabric — Sky Blue", qty:"250 pcs", gsm:"GSM 200", date:"May 20, 2025", status:"Delivered", color:"text-emerald-700 bg-emerald-50", fabric:"Oxford Cotton", stitching:"Double needle stitch", packaging:"Bulk / Loose packing" },
-  { id:"#FL-2021", name:"Polyester Sports Kit",        qty:"80 pcs",  gsm:"GSM 130", date:"Apr 12, 2025", status:"Delivered",  color:"text-emerald-700 bg-emerald-50", fabric:"Dri-fit Polyester", stitching:"Flatlock stitch", packaging:"Bundle packing" },
-  { id:"#FL-2018", name:"School Twill — Blue",          qty:"400 pcs", gsm:"GSM 240", date:"Mar 5, 2025",  status:"Completed", color:"text-stone-600 bg-stone-100",    fabric:"Heavy Cotton Twill", stitching:"Single needle stitch", packaging:"Bulk / Loose packing" },
-];
+// Completed-order card shape shown in Account → Order history. Built ONLY from
+// the signed-in customer's real orders (never hardcoded demo data, which would
+// surface as another customer's orders).
+interface HistoryOrder {
+  id: string; name: string; qty: string; gsm: string; date: string;
+  status: string; color: string; fabric: string; stitching: string; packaging: string;
+}
 
-function OrderDetail({ order, onBack, onReorder }: { order: typeof historyOrders[0]; onBack: () => void; onReorder: (id: string) => void }) {
+function mapHistoryOrder(o: ApiOrder): HistoryOrder {
+  return {
+    id: o.orderRef ? `#${o.orderRef}` : "#—",
+    name: o.garmentType || o.serviceLabel || o.lines?.[0]?.p || "Custom order",
+    qty: `${o.qty || 0} pcs`,
+    gsm: o.gsm || "—",
+    date: o.createdAt ? new Date(o.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "",
+    status: o.status,
+    color: o.status === "Completed" ? "text-stone-600 bg-stone-100" : "text-emerald-700 bg-emerald-50",
+    fabric: o.fabric || "—",
+    stitching: o.stitching || "—",
+    packaging: o.packaging || "—",
+  };
+}
+
+function OrderDetail({ order, onBack, onReorder }: { order: HistoryOrder; onBack: () => void; onReorder: (id: string) => void }) {
   return (
     <SubScreen title="Order details" sub={order.id} onBack={onBack}>
       {/* Status */}
@@ -1194,13 +1212,37 @@ function OrderDetail({ order, onBack, onReorder }: { order: typeof historyOrders
 }
 
 function OrderHistory({ onBack, onReorder }: { onBack: () => void; onReorder: (id: string) => void }) {
-  const [selected, setSelected] = useState<typeof historyOrders[0] | null>(null);
+  const [selected, setSelected] = useState<HistoryOrder | null>(null);
+  const [orders, setOrders] = useState<HistoryOrder[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    ordersApi.list()
+      .then(({ orders }) => {
+        if (!alive) return;
+        const past = orders
+          .filter(o => ["Delivered", "Completed"].includes(o.status))
+          .sort((a, b) => Date.parse(b.createdAt || "") - Date.parse(a.createdAt || ""))
+          .map(mapHistoryOrder);
+        setOrders(past);
+      })
+      .catch(() => { if (alive) setOrders([]); }); // offline / not signed in → empty
+    return () => { alive = false; };
+  }, []);
 
   if (selected) return <OrderDetail order={selected} onBack={() => setSelected(null)} onReorder={onReorder}/>;
 
+  const list = orders ?? [];
   return (
-    <SubScreen title="Order history" sub={`${historyOrders.length} completed orders`} onBack={onBack}>
-      {historyOrders.map(o => (
+    <SubScreen title="Order history" sub={orders === null ? "Loading…" : `${list.length} completed order${list.length === 1 ? "" : "s"}`} onBack={onBack}>
+      {orders !== null && list.length === 0 && (
+        <div className="text-center py-12">
+          <Package size={28} className="text-muted-foreground mx-auto mb-3" strokeWidth={1.5}/>
+          <p className="text-foreground text-sm" style={{ fontWeight: 500 }}>No completed orders yet</p>
+          <p className="text-muted-foreground" style={{ fontSize: 12, marginTop: 2 }}>Your delivered orders will appear here</p>
+        </div>
+      )}
+      {list.map(o => (
         <button key={o.id} onClick={() => setSelected(o)} className="w-full bg-card border border-border rounded-2xl p-4 mb-3 text-left" style={{ cursor:"pointer" }}>
           <div className="flex items-start justify-between mb-1">
             <div>
@@ -1716,7 +1758,7 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
       { icon:<CreditCard size={16} strokeWidth={1.5}/>,label:"Payment details",       s:"payment"               as Screen },
     ],
     [
-      { icon:<Clock     size={16} strokeWidth={1.5}/>, label:"Order history",        s:"order_history"         as Screen, badge:`${historyOrders.length} orders`,  bc:"text-amber-600" },
+      { icon:<Clock     size={16} strokeWidth={1.5}/>, label:"Order history",        s:"order_history"         as Screen },
       { icon:<FileText  size={16} strokeWidth={1.5}/>, label:"My tech packs",        s:"tech_packs"            as Screen },
     ],
     [

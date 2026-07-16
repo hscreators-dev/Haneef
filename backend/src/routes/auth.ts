@@ -101,6 +101,15 @@ router.post("/verify-otp", async (req: Request, res: Response, next: NextFunctio
     if (mode === "phone" && user.phone !== canon) { user.phone = canon; await user.save(); }
     else if (mode === "email" && user.email !== canon) { user.email = canon; await user.save(); }
 
+    // Self-heal poisoned accounts: a user who already has a name IS onboarded.
+    // An earlier bug (empty orgType rejected the profile PUT) meant many personal
+    // accounts saved their name but never got onboardingComplete=true, so they
+    // were re-asked to onboard on every login. If we see a name, mark it done.
+    if (user.name && user.name.trim() && !user.onboardingComplete) {
+      user.onboardingComplete = true;
+      await user.save();
+    }
+
     const token = signToken(user._id.toString());
 
     res.json({

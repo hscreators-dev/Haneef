@@ -35,19 +35,40 @@ router.post("/tickets", async (req: AuthRequest, res: Response, next: NextFuncti
     const data = CreateTicketSchema.parse(req.body);
     const isReturn = data.type === "return";
 
-    // Prevent duplicate RETURNS for the same order. If the customer already has
-    // an active return (not yet resolved/closed) against this order, don't let
-    // them open a second one — point them back to the existing ticket instead.
-    if (isReturn && data.orderRef) {
+    // ── Server-enforced duplicate guard ──────────────────────────────────────
+    // The app has a client-side check too, but it can be raced (ticket list not
+    // yet refreshed) or bypassed, which is how the same customer ended up with
+    // two open tickets for one issue on the admin side. Enforce it here so it
+    // can't be worked around.
+    //
+    // 1) Any second OPEN/IN_PROGRESS ticket for the SAME order (regardless of
+    //    type — a return + a general query about one order are still "one issue"
+    //    to the ops team).
+    if (data.orderRef) {
       const existing = await SupportTicket.findOne({
-        userId: req.userId, type: "return", orderRef: data.orderRef,
+        userId: req.userId, orderRef: data.orderRef,
         status: { $in: ["OPEN", "IN_PROGRESS"] },
       }).select("ref _id");
       if (existing) {
         return res.status(409).json({
-          error: `You've already raised a return for order ${data.orderRef} (ticket ${existing.ref}). Please continue in that ticket.`,
+          error: `You already have an open ticket for order ${data.orderRef} (ticket ${existing.ref}). Please continue in that ticket.`,
           existingTicketId: existing._id,
           existingRef: existing.ref,
+        });
+      }
+    }
+    // 2) Double-submit / same-issue guard for tickets with no order ref: an
+    //    existing open ticket with the same (case-insensitive) subject.
+    {
+      const subjectExact = new RegExp(`^\\s*${data.subject.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i");
+      const dup = await SupportTicket.findOne({
+        userId: req.userId, status: { $in: ["OPEN", "IN_PROGRESS"] }, subject: subjectExact,
+      }).select("ref _id");
+      if (dup) {
+        return res.status(409).json({
+          error: `You already have an open ticket for "${data.subject.trim()}" (ticket ${dup.ref}). Please continue in that ticket.`,
+          existingTicketId: dup._id,
+          existingRef: dup.ref,
         });
       }
     }

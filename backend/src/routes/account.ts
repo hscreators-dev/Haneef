@@ -20,24 +20,40 @@ router.get("/profile", async (req: AuthRequest, res: Response, next: NextFunctio
 
 // ─── PUT /api/account/profile ─────────────────────────────────────────────────
 
+// Empty strings from the app's onboarding/profile forms (e.g. a personal user
+// never picks an orgType, so it arrives as "") must NOT be written to enum
+// fields — `orgType: ""` fails the model's enum validator, the whole PUT 400s,
+// and because the app calls this fire-and-forget, `onboardingComplete: true`
+// was silently lost, re-asking every personal user to onboard on each login.
+// Coerce blanks to undefined so they're simply omitted from the update.
+const blankToUndef = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
+const ORG_TYPES = ["school","college","corporate","hospital","industry","hospitality","sports","government","ngo"] as const;
+
 const ProfileSchema = z.object({
-  name:        z.string().min(1).optional(),
-  email:       z.string().email().optional(),
-  phone:       z.string().optional(),
-  accountType: z.enum(["organisation","personal"]).optional(),
-  orgName:     z.string().optional(),
-  orgType:     z.string().optional(),
-  orgBoard:    z.string().optional(),
-  designation: z.string().optional(),
+  name:        z.preprocess(blankToUndef, z.string().min(1).optional()),
+  email:       z.preprocess(blankToUndef, z.string().email().optional()),
+  phone:       z.preprocess(blankToUndef, z.string().optional()),
+  accountType: z.preprocess(blankToUndef, z.enum(["organisation","personal"]).optional()),
+  orgName:     z.preprocess(blankToUndef, z.string().optional()),
+  orgType:     z.preprocess(blankToUndef, z.enum(ORG_TYPES).optional()),
+  orgBoard:    z.preprocess(blankToUndef, z.string().optional()),
+  designation: z.preprocess(blankToUndef, z.string().optional()),
+  avatarUrl:   z.preprocess(blankToUndef, z.string().optional()),
+  twoFAEnabled: z.boolean().optional(),
   onboardingComplete: z.boolean().optional(),
 }).strict();
 
 router.put("/profile", async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const data = ProfileSchema.parse(req.body);
+    // Drop keys that resolved to undefined so we never $set a blank onto an
+    // enum/validated field (which would reject the whole update).
+    const update = Object.fromEntries(
+      Object.entries(data).filter(([, v]) => v !== undefined)
+    );
     const user = await User.findByIdAndUpdate(
       req.userId,
-      { $set: data },
+      { $set: update },
       { new: true, runValidators: true }
     ).select("-__v -paymentMethods");
     if (!user) return next(httpError("User not found", 404));

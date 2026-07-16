@@ -1622,21 +1622,24 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
 
   useEffect(() => {
     if (targetOrderId) {
-      const order = [...(liveOrders ?? []), ...allOrders].find(o => o.id === targetOrderId);
+      const order = (liveOrders ?? []).find(o => o.id === targetOrderId);
       if (order && PAST_STATUSES.includes(order.statusLabel)) setFilter("past");
       else if (order) setFilter("active");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetOrderId]);
 
-  // Live mode: real orders only (plus the just-submitted local card while the
-  // backend copy hasn't landed yet). Fallback: the original demo orders.
+  // Real orders ONLY. Never fall back to demo data — showing built-in sample
+  // orders (#FL-2041 etc.) to a signed-in customer looks like another person's
+  // orders leaking into their account. While the first fetch is still in flight
+  // (`liveOrders === null`) we show nothing but the just-submitted card, and the
+  // empty/loading state below covers the rest.
   let base: OrderTrack[];
   if (liveOrders) {
     const showLocalNew = showNew && !liveOrders.some(o => o.id === newSubmittedOrder.id);
     base = showLocalNew ? [newSubmittedOrder, ...liveOrders] : liveOrders;
   } else {
-    base = showNew ? [newSubmittedOrder, ...allOrders] : allOrders;
+    base = showNew ? [newSubmittedOrder] : [];
   }
   const filtered = base.filter(o => {
     if (filter === "active") return [...ACTIVE_STATUSES, ...(showNew ? ["Order placed" as OrderStatus] : [])].includes(o.statusLabel);
