@@ -313,10 +313,22 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
   // is its own row below, so rate × qty + fee = total exactly — showing the
   // fee-inclusive total divided by pieces here would double-count the fee.
   const goodsAmount = amount != null ? Math.max(0, amount - (o.serviceFee || 0)) : undefined;
+  // Full open breakdown from the stored order lines (product · colour × qty = ₹)
+  // so the customer sees exactly what makes up the total — no cryptic per-piece
+  // magic. GST is included in the prices; we break out how much of it is tax.
+  const lineItems = (o.lines ?? [])
+    .filter((l) => l.qty > 0 && l.unit > 0)
+    .map((l) => ({
+      label: `${l.p}${l.size && l.size !== "—" ? ` · ${l.size}` : ""}${l.color && l.color !== "—" ? ` · ${l.color}` : ""} · ${l.qty} × ${fmtINR(l.unit)}`,
+      value: fmtINR(l.qty * l.unit) ?? "—",
+    }));
+  const taxIncluded = goodsAmount ? Math.max(0, Math.round(goodsAmount - goodsAmount / 1.18)) : 0;
   const livePrice: OrderPrice | undefined = o._id
     ? {
         kind: "fixed",
         rateLine: o.qty && goodsAmount ? `${fmtINR(Math.round(goodsAmount / o.qty))}/pc × ${o.qty} pcs` : (summary?.price?.rateLine ?? "—"),
+        items: lineItems.length > 0 ? lineItems : summary?.price?.items,
+        taxLine: taxIncluded > 0 ? `${fmtINR(taxIncluded)} — included in prices` : summary?.price?.taxLine,
         serviceFeeLine: o.serviceFee ? fmtINR(o.serviceFee) : summary?.price?.serviceFeeLine,
         totalLabel: isPaid ? "Total paid" : "Total payable",
         totalValue: fmtINR(amount) ?? summary?.price?.totalValue ?? "—",
@@ -677,7 +689,10 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
           {order.price && (
             <>
               {divider}{sec("Price details")}
-              <DetailRow label="Items" value={order.price.rateLine}/>
+              {order.price.items?.length
+                ? order.price.items.map((it, i) => <DetailRow key={`${it.label}-${i}`} label={it.label} value={it.value}/>)
+                : <DetailRow label="Items" value={order.price.rateLine}/>}
+              {order.price.taxLine && <DetailRow label="GST (18%)" value={order.price.taxLine}/>}
               {order.price.serviceFeeLine && <DetailRow label="Service fee" value={order.price.serviceFeeLine}/>}
               <DetailRow label={order.price.totalLabel} value={order.price.totalValue} accent/>
               {order.price.note && (
@@ -812,8 +827,11 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
         {order.price && (
           <>
             {divider}{sec("Price details")}
-            <DetailRow label="Rate" value={order.price.rateLine}/>
+            {order.price.items?.length
+              ? order.price.items.map((it, i) => <DetailRow key={`${it.label}-${i}`} label={it.label} value={it.value}/>)
+              : <DetailRow label="Rate" value={order.price.rateLine}/>}
             {order.price.addOnLine && <DetailRow label="Stitching & packaging" value={order.price.addOnLine}/>}
+            {order.price.taxLine && <DetailRow label="GST (18%)" value={order.price.taxLine}/>}
             {order.price.serviceFeeLine && <DetailRow label="Service fee" value={order.price.serviceFeeLine}/>}
             <DetailRow label={order.price.totalLabel} value={order.price.totalValue} accent/>
             {order.price.note && (

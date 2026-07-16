@@ -3782,6 +3782,11 @@ export interface OrderPrice {
   totalLabel: string;      // "Total paid" | "Estimated total"
   totalValue: string;      // "₹700" | "₹6,300 – ₹7,700"
   note?: string;
+  // Full open breakdown — one row per product (name · colour × qty = ₹line),
+  // shown in Track so the customer sees exactly what makes up the total.
+  items?: { label: string; value: string }[];
+  // GST already included in the item prices, broken out for transparency.
+  taxLine?: string;        // e.g. "₹173 (18% GST, included)"
 }
 
 export interface SubmittedOrderSummary {
@@ -5525,9 +5530,24 @@ function PersonaOrderForm({
         : { kind: "estimate", rateLine, totalLabel: "Estimated total", totalValue: inr(accessoryTotalAmt),
             note: "Indicative — your coordinator confirms the final price before production." };
     } else if (persona === "individual") {
+      // Full open breakdown: one row per garment-colour line (qty × ₹rate = ₹),
+      // finishing, then GST (already included in the prices) broken out — the
+      // same rows the Review card shows, so Review and Track always match.
+      const breakdownItems = [
+        ...garmentCart.map(g => {
+          const m = matFor(garmentKey(g));
+          const r = garmentPriceForFabric(g, m.fabric, m.weave, fabricSource, m.gsm, priceAudience);
+          return { label: `${g.name}${g.style ? ` · ${g.style}` : ""} · ${g.colorLabel} · ${g.qty} × ${inr(r)}`, value: inr(g.qty * r) };
+        }),
+        ...(garmentCartQty * finishingPerPc > 0 ? [{ label: `Finishing · ${garmentCartQty} pcs`, value: inr(garmentCartQty * finishingPerPc) }] : []),
+      ];
+      const goodsTotal = individualPayableBase; // garments + finishing, GST-inclusive
+      const taxIncluded = Math.max(0, Math.round(goodsTotal - goodsTotal / 1.18));
       price = {
         kind: "fixed",
         rateLine: `${qty} ${qty > 1 ? "pieces" : "piece"} · ${garmentCart.length} garment${garmentCart.length !== 1 ? "s" : ""}`,
+        items: breakdownItems,
+        taxLine: taxIncluded > 0 ? `${inr(taxIncluded)} — included in prices` : undefined,
         serviceFeeLine: individualServiceFee > 0 ? `${inr(individualServiceFee)} (${orderFormCfg.fee.b2cPercent}% + ${inr(orderFormCfg.fee.b2cPerPiece)}/pc)` : undefined,
         totalLabel: "Total paid",
         totalValue: inr(individualPayable),
@@ -6838,6 +6858,9 @@ function PersonaOrderForm({
                 { label: `Stitching · ${stitchOpt?.label ?? "Standard"}`, value: stitchCost > 0 ? `+${inr(stitchCost)}/pc` : "included" },
                 { label: `Packaging · ${packOpt?.label ?? "Standard"}`, value: packCost > 0 ? `+${inr(packCost)}/pc` : "included" },
                 { label: "Finishing", value: garmentCartQty * finishingPerPc > 0 ? inr(garmentCartQty * finishingPerPc) : "included" },
+                // GST is already inside the prices above — broken out so the
+                // customer sees it (same line appears in Track's Price details).
+                { label: "GST (18%)", value: `${inr(Math.max(0, Math.round(individualPayableBase - individualPayableBase / 1.18)))} — included` },
                 ...(individualServiceFee > 0 ? [{ label: `Service fee (${orderFormCfg.fee.b2cPercent}% + ${inr(orderFormCfg.fee.b2cPerPiece)}/pc)`, value: inr(individualServiceFee) }] : []),
                 { label: "Total pieces", value: `${garmentCartQty} pcs`, strong: true },
               ]
