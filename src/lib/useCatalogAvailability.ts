@@ -59,6 +59,29 @@ export function adminMaterialsFor(name: string, audience?: "B2C" | "B2B"): {
   };
 }
 
+/**
+ * Admin-priced garment total = base price + the ₹ deltas the admin set for the
+ * chosen fabric / GSM / weave / style. Returns null when the admin hasn't
+ * configured option prices (or no base) for this product, so the caller falls
+ * back to its built-in multiplier pricing. This is what makes each fabric / GSM
+ * / weave / style individually priceable from the admin Catalog.
+ */
+export function adminGarmentPrice(
+  name: string,
+  sel: { fabric?: string; gsm?: string; weave?: string; style?: string },
+  audience?: "B2C" | "B2B",
+): number | null {
+  const p = cachedGarment(name, audience);
+  if (!p || !p.price) return null;
+  const op = p.optionPrices;
+  const nKeys = (m?: Record<string, number>) => (m ? Object.keys(m).length : 0);
+  const hasDeltas = !!op && (nKeys(op.fabric) + nKeys(op.gsm) + nKeys(op.weave) + nKeys(op.style)) > 0;
+  if (!hasDeltas) return null; // admin hasn't priced options — use built-in pricing
+  const d = (m?: Record<string, number>, k?: string) => (m && k && m[k]) ? m[k] : 0;
+  const total = p.price + d(op!.fabric, sel.fabric) + d(op!.gsm, sel.gsm) + d(op!.weave, sel.weave) + d(op!.style, sel.style);
+  return Math.max(1, Math.round(total));
+}
+
 /** Admin colour palette for a garment — null ⇒ use the app's built-in palette. */
 export function adminPaletteFor(name: string, audience?: "B2C" | "B2B"): { label: string; hex: string }[] | null {
   const p = cachedGarment(name, audience);

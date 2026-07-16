@@ -406,6 +406,15 @@ export interface Product {
   fabricOptions?: string[];
   gsmOptions?: string[];
   weaveOptions?: string[];
+  // Per-option ₹ price adjustments (delta from `price`), set in the admin
+  // Catalog. When present, the app prices each fabric/GSM/weave/style from these
+  // instead of its built-in multiplier.
+  optionPrices?: {
+    style?: Record<string, number>;
+    fabric?: Record<string, number>;
+    gsm?: Record<string, number>;
+    weave?: Record<string, number>;
+  };
   moq: number;
   status: "ACTIVE" | "INACTIVE";
   image: string | null;

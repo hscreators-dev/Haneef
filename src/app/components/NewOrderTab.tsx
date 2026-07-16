@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 import { tryon as tryonApi } from "../../lib/api";
-import { useCatalogAvailability, adminStylesFor, adminMaterialsFor, adminPaletteFor } from "../../lib/useCatalogAvailability";
+import { useCatalogAvailability, adminStylesFor, adminMaterialsFor, adminPaletteFor, adminGarmentPrice } from "../../lib/useCatalogAvailability";
 import { useOrderFormConfig, calcServiceFee, surplusDiscountPct } from "../../lib/useOrderFormConfig";
 
 const ACCENT      = "#C8A97E";
@@ -814,12 +814,20 @@ function fabricPriceMultiplier(fabric?: string): number {
   if (/poly|polyester|blend/.test(f))                       return 0.9;
   return 1;
 }
-// Per-piece garment price = catalog base × fabric multiplier + weave add-on.
-// When no garment is selected (legacy), fall back to the fabric-only rate.
-function garmentPriceForFabric(garment: SelectedGarment | null, fabric?: string, weave?: string, source?: "fresh" | "surplus"): number {
-  const base = !garment
-    ? garmentRatePerPc(fabric, weave)
-    : Math.round(garment.basePrice * fabricPriceMultiplier(fabric)) + weaveAddOnPerPc(weave);
+// Per-piece garment price. FIRST preference: the admin's per-option prices
+// (base + fabric/GSM/weave/style ₹ deltas set in the Catalog) so the admin fully
+// controls pricing. If the admin hasn't priced this product's options, fall back
+// to the built-in catalog base × fabric multiplier + weave add-on.
+function garmentPriceForFabric(garment: SelectedGarment | null, fabric?: string, weave?: string, source?: "fresh" | "surplus", gsm?: string): number {
+  let base: number;
+  const admin = garment ? adminGarmentPrice(garment.name, { fabric, gsm, weave, style: garment.style }) : null;
+  if (admin != null) {
+    base = admin;
+  } else {
+    base = !garment
+      ? garmentRatePerPc(fabric, weave)
+      : Math.round(garment.basePrice * fabricPriceMultiplier(fabric)) + weaveAddOnPerPc(weave);
+  }
   // Surplus (mill leftover) fabric is genuinely cheaper — apply the discount
   // set in the Garm Admin Portal (Settings → Order Form → Service Fee).
   return source === "surplus" ? Math.max(1, Math.round(base * (1 - surplusDiscountPct() / 100))) : base;
@@ -2799,7 +2807,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
         {cart.map(l => {
           const open = openId === l.id;
           const mo = materialOptionsForGarment(l.name);
-          const rate = garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice }, l.material.fabric, l.material.weave, fabricSource);
+          const rate = garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice, style: l.style }, l.material.fabric, l.material.weave, fabricSource, l.material.gsm);
           const allocated = orgLineAllocated(l);
           const sizeDone = allocated === l.qty;
           const catLabel = garmentCatalog.find(c => c.id === l.categoryId)?.label ?? "";
@@ -5061,7 +5069,7 @@ function PersonaOrderForm({
   // and size distribution alone used to be enough to "complete" a line, which let
   // someone reach Review having never chosen a colour.
   const orgCartComplete = orgCart.length > 0 && orgCart.every(l => l.qty >= ORG_GARMENT_MOQ && orgLineAllocated(l) === l.qty && l.colors.length > 0);
-  const orgCartRate = (l: OrgGarmentLine) => garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice }, l.material.fabric, l.material.weave, fabricSource);
+  const orgCartRate = (l: OrgGarmentLine) => garmentPriceForFabric({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice, style: l.style }, l.material.fabric, l.material.weave, fabricSource, l.material.gsm);
   const orgCartSubtotal = orgCart.reduce((s, l) => s + orgCartRate(l) * l.qty, 0);
   // Stitching/packaging is chosen per garment now, so the finishing add-on is
   // totalled up per line (each garment can have a different finishing cost).
@@ -5250,12 +5258,12 @@ function PersonaOrderForm({
   // ── Derived pricing (shared by the Sizes estimate, Review, footer & submit) ──
   // Garment per-pc rate comes from the chosen fabric + weave; finishing adds the
   // selected stitching + packaging. Accessory orders are priced from the catalog.
-  const garmentRate    = garmentPriceForFabric(selectedGarment, material.fabric, material.weave, fabricSource);
+  const garmentRate    = garmentPriceForFabric(selectedGarment, material.fabric, material.weave, fabricSource, material.gsm);
   const finishingPerPc = perPcCost(stitchingOpts.find(s => s.id === packaging.stitch)?.cost)
     + perPcCost(packagingOpts.find(p => p.id === packaging.packing)?.cost);
   const accessoryTotalAmt = accessoryOrderTotal(accessoryQtyData, accSpecState);
   // Individual cart subtotal — every garment line priced for the chosen fabric/weave.
-  const garmentCartSubtotal = garmentCart.reduce((s, g) => s + g.qty * garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource), 0);
+  const garmentCartSubtotal = garmentCart.reduce((s, g) => s + g.qty * garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource, matFor(g.name).gsm), 0);
   // The amount an individual pays (fixed) — garments + finishing, or accessory
   // total — PLUS the admin-configured service fee, shown as its own line.
   const orderFormCfg = useOrderFormConfig();
@@ -5772,7 +5780,7 @@ function PersonaOrderForm({
                   <>
                     {garmentCart.map(g => line(
                       `${indivCartMixed ? `${indivAudienceShort(g.categoryId)} · ` : ""}${g.name}${g.style ? ` · ${g.style}` : ""} · ${lineColourSummary(g)} × ${g.qty}`,
-                      `${inr(garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource))}/pc`
+                      `${inr(garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource, matFor(g.name).gsm))}/pc`
                     ))}
                     {line("Total pieces", `${garmentCartQty} pcs`)}
                   </>
@@ -6317,7 +6325,7 @@ function PersonaOrderForm({
                   : orgCart.length > 0
                     ? { g: { categoryId: orgCart[0].categoryId, name: orgCart[0].name, basePrice: orgCart[0].basePrice }, m: orgCart[0].material }
                     : selectedGarment ? { g: selectedGarment, m: material } : null;
-                const priceOf = (src: "fresh" | "surplus") => rep ? garmentPriceForFabric(rep.g, rep.m.fabric, rep.m.weave, src) : null;
+                const priceOf = (src: "fresh" | "surplus") => rep ? garmentPriceForFabric(rep.g, rep.m.fabric, rep.m.weave, src, rep.m.gsm) : null;
                 const freshPc = priceOf("fresh");
                 const surplusPc = priceOf("surplus");
                 const moreThanOne = persona === "individual" ? new Set(garmentCart.map(g => g.name)).size > 1 : orgCart.length > 1;
@@ -6381,8 +6389,8 @@ function PersonaOrderForm({
                           <span className="flex items-center gap-1.5 flex-shrink-0">
                             {(() => {
                               const gLine = { categoryId: "mens" as const, name, basePrice: garmentCart.find(g => g.name === name)!.basePrice };
-                              const fresh = garmentPriceForFabric(gLine, fabricVal, weaveVal, "fresh");
-                              const now = garmentPriceForFabric(gLine, fabricVal, weaveVal, fabricSource);
+                              const fresh = garmentPriceForFabric(gLine, fabricVal, weaveVal, "fresh", gsmVal);
+                              const now = garmentPriceForFabric(gLine, fabricVal, weaveVal, fabricSource, gsmVal);
                               return (
                                 <span className="flex items-baseline gap-1.5">
                                   {fabricSource === "surplus" && fresh !== now && (
@@ -6423,7 +6431,7 @@ function PersonaOrderForm({
                     <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Your price with this fabric</span>
                     <span className="flex items-baseline gap-1.5">
                       {fabricSource === "surplus" && (
-                        <span style={{ fontSize: 12.5, color: "#9ca3af", textDecoration: "line-through" }}>{inr(garmentPriceForFabric(selectedGarment, material.fabric, material.weave, "fresh"))}</span>
+                        <span style={{ fontSize: 12.5, color: "#9ca3af", textDecoration: "line-through" }}>{inr(garmentPriceForFabric(selectedGarment, material.fabric, material.weave, "fresh", material.gsm))}</span>
                       )}
                       <span style={{ fontSize: 17, fontWeight: 800, color: fabricSource === "surplus" ? "#047857" : DARK }}>{inr(garmentRate)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
                     </span>
@@ -6676,7 +6684,7 @@ function PersonaOrderForm({
             : persona === "individual"
             ? [
                 ...garmentCart.map(g => {
-                  const r = garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource);
+                  const r = garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource, matFor(g.name).gsm);
                   return { label: `${g.name} · ${g.colorLabel} · ${g.qty} × ${inr(r)}`, value: inr(g.qty * r) };
                 }),
                 { label: `Stitching · ${stitchOpt?.label ?? "Standard"}`, value: stitchCost > 0 ? `+${inr(stitchCost)}/pc` : "included" },
