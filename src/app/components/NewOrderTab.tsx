@@ -1967,7 +1967,7 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
   return (
     <div>
       <p className="text-muted-foreground mb-3" style={{ fontSize: 12, lineHeight: 1.5 }}>
-        Tap <strong>Add</strong> on a garment, then pick its colour and quantity. Every colour is its own piece.
+        Tap <strong>Add</strong> on the garments you want. You’ll choose colours and quantity on the next step.
       </p>
 
       {/* ── Add more order — a warm "who else?" invitation, kept above the fold ── */}
@@ -2087,34 +2087,25 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                 opacity: inStock ? 1 : 0.5,
               }}>
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => { if (added) setOpenItem(openItem === it.name ? null : it.name); }}
-                  className="flex-1 min-w-0 flex items-center gap-2.5 text-left"
-                  style={{ background:"none", border:"none", padding:0, cursor: added ? "pointer" : "default" }}>
+                <div className="flex-1 min-w-0 flex items-center gap-2.5">
                   <GarmentThumb name={it.name} size={40} onOpen={n => onViewPhotos?.(n)}/>
                   <div className="flex-1 min-w-0">
                     <p style={{ fontSize: 13, fontWeight: added ? 700 : 500, color: added ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
-                    {added && openItem !== it.name
-                      ? <p style={{ fontSize: 11, color:"#7c5419", fontWeight: 600 }}>{lines[0]?.style ? `${lines[0].style} · ` : ""}{lines.length} colour{lines.length !== 1 ? "s" : ""} · {lines.reduce((s, l) => s + l.qty, 0)} pcs</p>
-                      : <p style={{ fontSize: 11, color: added ? "#7c5419" : "#9ca3af", fontWeight: added ? 600 : 400 }}>
+                    {added
+                      ? <p style={{ fontSize: 11, color:"#7c5419", fontWeight: 600 }}>Added — set colours &amp; quantity on the next step</p>
+                      : <p style={{ fontSize: 11, color: "#9ca3af", fontWeight: 400 }}>
                           From {inr(fromRate)}/pc{setPieces ? ` · ${setPieces.length}-piece set` : topOnly ? " · top only" : ""}
                         </p>}
                   </div>
                   {added && (
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      {openItem !== it.name && lines.map(l => (
-                        <span key={l.colorHex} className="w-4 h-4 rounded-full" style={{ background: l.colorHex, border:"1px solid rgba(0,0,0,0.15)" }}/>
-                      ))}
-                      <ChevronDown size={15} className="text-muted-foreground" style={{ transform: openItem === it.name ? "rotate(180deg)" : "none", transition:"transform 0.2s" }}/>
-                    </div>
+                    <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "#7c5419" }}>
+                      <Check size={12} strokeWidth={3} style={{ color: "#fff" }}/>
+                    </span>
                   )}
-                </button>
+                </div>
                 {added && (
                   <RemoveChip title={`Remove ${it.name} from this order`}
-                    onRemove={() => {
-                      onChange(cart.filter(g => !sameLine(g, it.name)));
-                      if (openItem === it.name) setOpenItem(null);
-                    }}/>
+                    onRemove={() => { onChange(cart.filter(g => !sameLine(g, it.name))); if (openItem === it.name) setOpenItem(null); }}/>
                 )}
                 {!added && inStock && (
                   <button onClick={() => addGarment(it)} className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0"
@@ -2126,97 +2117,6 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                   <span className="px-3 py-1.5 rounded-full flex-shrink-0" style={{ border:"1px solid var(--border)", color:"#9ca3af", fontSize:11, fontWeight:600 }}>Out of stock</span>
                 )}
               </div>
-
-              {/* Colour lines for this garment */}
-              {added && openItem === it.name && (
-                <div className="mt-2.5 flex flex-col gap-2">
-                  {/* What's in the box — full set vs top only, so nobody has to guess */}
-                  {(setPieces || topOnly) && (
-                    <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-2 rounded-lg" style={{ background: ACCENT_BG, border: "0.5px solid rgba(200,169,126,0.5)" }}>
-                      <span style={{ fontSize: 10.5, fontWeight: 700, color: "#7c5419" }}>{setPieces ? "Full set includes:" : "Top only"}</span>
-                      {setPieces?.map(p => (
-                        <span key={p} className="px-2 py-0.5 rounded-full" style={{ background: "var(--card)", border: "1px solid rgba(200,169,126,0.5)", fontSize: 10.5, fontWeight: 600, color: "#374151" }}>{p}</span>
-                      ))}
-                      {topOnly && <span style={{ fontSize: 10.5, color: "#92400e" }}>— bottom &amp; dupatta not included</span>}
-                    </div>
-                  )}
-
-                  {/* Style is now chosen on the next step (Material), above Fabric,
-                      so the customer sees how it affects the price in one place. */}
-                  {lines.map(line => (
-                    <div key={line.colorHex} className="flex flex-col gap-1.5 px-2.5 py-2 rounded-xl" style={{ background: "var(--card)", boxShadow: "0 1px 3px rgba(13,13,13,0.05)" }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full flex-shrink-0" style={{ background: line.colorHex, border:"1px solid rgba(0,0,0,0.15)" }}/>
-                        <span className="flex-1" style={{ fontSize: 12, fontWeight: 600, color: DARK }}>{line.colorLabel}</span>
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <button onClick={() => setLineQty(it.name, line.colorHex, line.qty - 1)} className="w-6 h-6 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Minus size={11}/></button>
-                          <input type="text" inputMode="numeric" pattern="[0-9]*" value={line.qty}
-                            onChange={e => setLineQty(it.name, line.colorHex, parseInt(digitsOnly(e.target.value)) || 0)}
-                            onFocus={selectAllOnFocus} onClick={selectAllOnFocus} onMouseUp={preventSelectionCollapse}
-                            className="text-center bg-card border border-border rounded-lg" style={{ width: 40, fontSize: 12, fontWeight: 600, outline:"none", padding:"2px 3px" }}/>
-                          <button onClick={() => setLineQty(it.name, line.colorHex, line.qty + 1)} className="w-6 h-6 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor:"pointer" }}><Plus size={11}/></button>
-                          <button onClick={() => removeLine(it.name, line.colorHex)} className="ml-0.5" style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af" }}><X size={13}/></button>
-                        </div>
-                      </div>
-                      {/* Colour swatches to change this line's colour */}
-                      {setPieces && (
-                        <p className="pl-7" style={{ fontSize: 10.5, fontWeight: 600, color: "#6b7280" }}>{setPieces[0]} colour</p>
-                      )}
-                      <div className="flex flex-wrap gap-1.5 pl-7">
-                        {palette.map(p => {
-                          const isThis = p.hex === line.colorHex;
-                          const takenByOther = usedHexes.has(p.hex) && !isThis;
-                          return (
-                            <button key={p.hex} title={takenByOther ? `${p.label} already added` : p.label}
-                              onClick={() => setLineColor(it.name, line.colorHex, p.hex, p.label)}
-                              disabled={takenByOther}
-                              className="w-5 h-5 rounded-full"
-                              style={{ background: p.hex, border: isThis ? `2.5px solid ${DARK}` : "1.5px solid rgba(0,0,0,0.12)", opacity: takenByOther ? 0.3 : 1, cursor: takenByOther ? "not-allowed" : "pointer" }}/>
-                          );
-                        })}
-                      </div>
-
-                      {/* Per-piece colours for sets — salwar, dupatta, pyjama… */}
-                      {setPieces && setPieces.length > 1 && (
-                        <div className="flex flex-col gap-2 pl-7 pt-1.5 mt-0.5" style={{ borderTop: "1px dashed var(--border)" }}>
-                          {setPieces.slice(1).map(piece => {
-                            const sel = line.pieceColors?.[piece];
-                            return (
-                              <div key={piece}>
-                                <p style={{ fontSize: 10.5, fontWeight: 600, color: "#6b7280", marginBottom: 4 }}>{piece} colour</p>
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                  <button onClick={() => setLinePieceColor(it.name, line.colorHex, piece, null)}
-                                    className="px-2 py-0.5 rounded-full"
-                                    style={{
-                                      fontSize: 10, fontWeight: 600, cursor: "pointer",
-                                      border: `1.5px solid ${!sel ? DARK : "var(--border)"}`,
-                                      background: !sel ? "rgba(13,13,13,0.05)" : "var(--card)",
-                                      color: !sel ? DARK : "#9ca3af",
-                                    }}>
-                                    Match {setPieces[0].toLowerCase()}
-                                  </button>
-                                  {palette.map(p => (
-                                    <button key={p.hex} title={p.label}
-                                      onClick={() => setLinePieceColor(it.name, line.colorHex, piece, p.hex, p.label)}
-                                      className="w-5 h-5 rounded-full"
-                                      style={{ background: p.hex, border: sel?.hex === p.hex ? `2.5px solid ${DARK}` : "1.5px solid rgba(0,0,0,0.12)", cursor: "pointer" }}/>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {canAddColor && (
-                    <button onClick={() => addGarment(it)} className="flex items-center gap-1 self-start px-2.5 py-1 rounded-full"
-                      style={{ border:`1px dashed ${ACCENT}`, background: ACCENT_BG, color:"#7c5419", cursor:"pointer", fontSize:11, fontWeight:600 }}>
-                      <Plus size={11}/> Add another colour
-                    </button>
-                  )}
-                </div>
-              )}
             </div>
           );
         })}
@@ -6532,19 +6432,23 @@ function PersonaOrderForm({
                     const gStyle    = rep.style ?? styleOpts[0];
                     const setStyleFor = (v: string) => setGarmentCart(prev => prev.map(g => sameG(g) ? { ...g, style: v } : g));
                     const gLine: SelectedGarment = { categoryId: rep.categoryId, name, basePrice: rep.basePrice, style: gStyle };
-                    // Colours chosen for THIS garment (matched by category+name+gender, so
-                    // Men's and Women's "T-Shirts" stay separate) + the palette to toggle.
+                    // Colours + per-colour QUANTITY for THIS garment (matched by
+                    // category+name+gender). Each colour is its own cart line with its
+                    // own qty — this is where the customer sets "10 black, 5 navy…".
                     const colourLines = garmentCart.filter(sameG);
                     const palette = individualPaletteFor(name);
+                    const usedHexes = new Set(colourLines.map(l => l.colorHex));
                     const tmpl = colourLines[0];
-                    const toggleColour = (hex: string, label: string) => setGarmentCart(prev => {
-                      const has = prev.some(g => sameG(g) && g.colorHex === hex);
-                      if (has) {
-                        if (prev.filter(sameG).length <= 1) return prev; // keep at least one colour
-                        return prev.filter(g => !(sameG(g) && g.colorHex === hex));
-                      }
-                      return [...prev, { ...tmpl, colorHex: hex, colorLabel: label, qty: tmpl?.qty || 1, sizes: undefined, pieceColors: undefined }];
-                    });
+                    const setColourQty = (hex: string, q: number) =>
+                      setGarmentCart(prev => prev.map(g => sameG(g) && g.colorHex === hex ? { ...g, qty: Math.max(1, q) } : g));
+                    const removeColour = (hex: string) =>
+                      setGarmentCart(prev => prev.filter(sameG).length <= 1 ? prev : prev.filter(g => !(sameG(g) && g.colorHex === hex)));
+                    const setColourHex = (oldHex: string, hex: string, label: string) =>
+                      setGarmentCart(prev => prev.some(g => sameG(g) && g.colorHex === hex) ? prev : prev.map(g => sameG(g) && g.colorHex === oldHex ? { ...g, colorHex: hex, colorLabel: label } : g));
+                    const addColour = () => { const next = palette.find(p => !usedHexes.has(p.hex)); if (!next || !tmpl) return; setGarmentCart(prev => [...prev, { ...tmpl, colorHex: next.hex, colorLabel: next.label, qty: 1, sizes: undefined, pieceColors: undefined }]); };
+                    const canAddColour = palette.some(p => !usedHexes.has(p.hex));
+                    const garmentPcs = colourLines.reduce((s, l) => s + l.qty, 0);
+                    const perPcPrice = garmentPriceForFabric(gLine, fabricVal, weaveVal, fabricSource, gsmVal, priceAudience);
                     const audienceTag = indivCartMixed ? indivAudienceShort(rep.categoryId) : "";
                     return (
                       <div key={key} className="rounded-xl border border-border overflow-hidden">
@@ -6561,21 +6465,48 @@ function PersonaOrderForm({
                               <SuggestLine text={styleSuggestion(gStyle)} />
                             </>
                           )}
-                          {/* Colour — the same colours picked in step 1, editable here too */}
-                          <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Colour{colourLines.length > 1 ? `s · ${colourLines.length} chosen` : ""}</p>
-                          <div className="flex flex-wrap gap-1.5 mb-1">
-                            {palette.map(pc => {
-                              const on = colourLines.some(l => l.colorHex === pc.hex);
-                              return (
-                                <button key={pc.hex} type="button" title={pc.label} onClick={() => toggleColour(pc.hex, pc.label)}
-                                  className="rounded-full flex items-center justify-center" style={{ width: 26, height: 26, background: pc.hex, cursor: "pointer",
-                                    border: on ? `2px solid ${DARK}` : "1px solid rgba(0,0,0,0.15)", boxShadow: on ? "0 0 0 2px rgba(200,169,126,0.35)" : "none" }}>
-                                  {on && <Check size={12} strokeWidth={3} style={{ color: pc.hex.toLowerCase() === "#ffffff" || pc.hex.toLowerCase() === "#fff" ? "#111" : "#fff" }} />}
-                                </button>
-                              );
-                            })}
+                          {/* Colour & quantity — one row per colour, each with its own pcs */}
+                          <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Colour &amp; quantity</p>
+                          <div className="flex flex-col gap-1.5 mb-1">
+                            {colourLines.map(l => (
+                              <div key={l.colorHex} className="flex flex-col gap-1.5 px-2.5 py-2 rounded-xl" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
+                                <div className="flex items-center gap-2">
+                                  <div className="w-5 h-5 rounded-full flex-shrink-0" style={{ background: l.colorHex, border: "1px solid rgba(0,0,0,0.15)" }}/>
+                                  <span className="flex-1" style={{ fontSize: 12, fontWeight: 600, color: DARK }}>{l.colorLabel}</span>
+                                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                                    <button onClick={() => setColourQty(l.colorHex, l.qty - 1)} className="w-6 h-6 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor: "pointer" }}><Minus size={11}/></button>
+                                    <input type="text" inputMode="numeric" pattern="[0-9]*" value={l.qty}
+                                      onChange={e => setColourQty(l.colorHex, parseInt(digitsOnly(e.target.value)) || 1)}
+                                      onFocus={selectAllOnFocus} onClick={selectAllOnFocus} onMouseUp={preventSelectionCollapse}
+                                      className="text-center bg-card border border-border rounded-lg" style={{ width: 42, fontSize: 12, fontWeight: 600, outline: "none", padding: "2px 3px" }}/>
+                                    <button onClick={() => setColourQty(l.colorHex, l.qty + 1)} className="w-6 h-6 rounded-full border border-border bg-card flex items-center justify-center" style={{ cursor: "pointer" }}><Plus size={11}/></button>
+                                    <span className="text-muted-foreground" style={{ fontSize: 10.5 }}>pcs</span>
+                                    {colourLines.length > 1 && (
+                                      <button onClick={() => removeColour(l.colorHex)} title="Remove colour" className="ml-0.5" style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af" }}><X size={13}/></button>
+                                    )}
+                                  </div>
+                                </div>
+                                {/* Swatches to change this colour */}
+                                <div className="flex flex-wrap gap-1.5 pl-7">
+                                  {palette.map(p => {
+                                    const isThis = p.hex === l.colorHex;
+                                    const taken = usedHexes.has(p.hex) && !isThis;
+                                    return (
+                                      <button key={p.hex} title={taken ? `${p.label} already added` : p.label} disabled={taken}
+                                        onClick={() => setColourHex(l.colorHex, p.hex, p.label)} className="w-5 h-5 rounded-full"
+                                        style={{ background: p.hex, border: isThis ? `2.5px solid ${DARK}` : "1.5px solid rgba(0,0,0,0.12)", opacity: taken ? 0.3 : 1, cursor: taken ? "not-allowed" : "pointer" }}/>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                          <SuggestLine text="Tap to add or remove colours. Each colour is made as its own set — sizes are split per colour on the next step." />
+                          {canAddColour && (
+                            <button onClick={addColour} className="flex items-center gap-1 self-start px-2.5 py-1 rounded-full mb-1"
+                              style={{ border: `1px dashed ${ACCENT}`, background: ACCENT_BG, color: "#7c5419", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                              <Plus size={11}/> Add another colour
+                            </button>
+                          )}
                           <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Fabric</p>
                           <div className="mb-1"><SelectField options={o.fabricOptions} value={fabricVal} priceFor={ox => optionDeltaLabel(name, "fabric", ox, priceAudience)} onChange={v => setMatFor(key, { fabric: v })} /></div>
                           <SuggestLine text={fabricSuggestion(fabricVal)} />
@@ -6592,6 +6523,11 @@ function PersonaOrderForm({
                           <SuggestLine text={`${gsmSuggestion(gsmVal)} · ${weaveSuggestion(weaveVal)}`} />
                           {/* Itemised price breakdown — the one price the customer reads */}
                           <PriceBreakdown garment={gLine} fabric={fabricVal} gsm={gsmVal} weave={weaveVal} source={fabricSource} audience={priceAudience} />
+                          {/* Garment total = per-piece price × total pieces (all colours) */}
+                          <div className="flex items-center justify-between px-3 py-2 mt-1 rounded-xl" style={{ background: ACCENT_BG, border: "1px solid rgba(200,169,126,0.4)" }}>
+                            <span style={{ fontSize: 11.5, color: "#7c5419", fontWeight: 600 }}>{colourLines.length} colour{colourLines.length !== 1 ? "s" : ""} · {garmentPcs} pcs × {inr(perPcPrice)}</span>
+                            <span style={{ fontSize: 14, color: "#7c5419", fontWeight: 800 }}>{inr(garmentPcs * perPcPrice)}</span>
+                          </div>
                         </div>
                       </div>
                     );
