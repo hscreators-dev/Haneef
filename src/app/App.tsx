@@ -2064,6 +2064,10 @@ export default function App() {
   const [ratingVal, setRatingVal]             = useState(0);
   const [ratingFeedback, setRatingFeedback]   = useState("");
   const [ratingDone, setRatingDone]           = useState(false);
+  const [ratingBusy, setRatingBusy]           = useState(false);
+  // The delivered order the popup is rating (id + label), so the rating persists
+  // to the RIGHT order on the backend and shows in Track + the admin portal.
+  const [ratingOrder, setRatingOrder]         = useState<{ apiId?: string; ref: string; name: string } | null>(null);
   const [targetOrderId, setTargetOrderId]     = useState<string | null>(null);
   const [userProfile, setUserProfile]         = useState<UserProfile>({ name: "", avatar: null, accountType: "personal" });
   // The user's default saved delivery address, so New Order can pre-fill it instead of
@@ -2185,50 +2189,63 @@ export default function App() {
     setActiveTab(tab);
     setTargetOrderId(orderId ?? null);
   }
+  // Create the order on the backend AT SUBMIT — the moment the customer taps
+  // "Submit order", not when they later tap "Track your order". Previously the
+  // create was attached to the Track button, so tapping "Back to Home" lost the
+  // order entirely and the admin only received it once the customer opened Track.
+  function handleOrderPlaced(summary?: SubmittedOrderSummary) {
+    if (!summary) return;
+    setNewOrderSummary(summary);
+    const payload = summaryToOrderPayload(summary, userProfile);
+    // Create with retry/backoff so the order reaches the admin portal even if the
+    // backend is briefly cold (Render free tier). On repeated failure it's queued
+    // and the app-level poller + Track both keep retrying — never silently lost.
+    (async () => {
+      const order = await createOrderWithRetry(payload);
+      if (order?.orderRef) {
+        rememberOrderSummary(order.orderRef, summary);
+        // Swap the local placeholder ref for the real one so the "just submitted"
+        // card and the live order line up as one — the SAME ref the admin shows.
+        setNewOrderSummary({ ...summary, id: order.orderRef });
+      } else {
+        writePendingOrders([...readPendingOrders(), { payload, summary, queuedAt: Date.now() }]);
+      }
+    })();
+  }
+
+  // "Track your order" button on the success screen. The order is already
+  // created (at submit, above), so this only navigates to the Track tab.
   function handleOrderSubmitted(summary?: SubmittedOrderSummary) {
-    setNewOrderSummary(summary ?? null);
+    if (summary) setNewOrderSummary(summary);
     setShowNewOrder(true);
     setResumeDraft(null); // editing finished — don't silently reopen this edit in the New order tab
     setActiveTab("track");
-    // ⚠️ Do NOT show rating popup here — only show after order is delivered
-
-    // ── Submit the real order to the backend ──────────────────────────────
-    // This is what makes the order land in the Garm Admin Portal (shared
-    // MongoDB). The admin then Accepts & Confirms it there, which unlocks the
-    // payment step here for individuals. The rich display summary is stored
-    // locally keyed by orderRef so Track can show every configured detail
-    // alongside the live status from the server.
-    if (summary) {
-      const payload = summaryToOrderPayload(summary, userProfile);
-      // Create with retry/backoff so the order reaches the admin portal at SUBMIT
-      // time even if the backend is briefly cold (Render free tier sleeps and the
-      // first request can fail while it wakes). Previously this was a single
-      // attempt, so a cold backend meant the order only synced when the customer
-      // later opened Track — the admin saw nothing until then.
-      (async () => {
-        const order = await createOrderWithRetry(payload);
-        if (order?.orderRef) {
-          rememberOrderSummary(order.orderRef, summary);
-          // Swap the local placeholder ref for the real one so the "just
-          // submitted" card and the live order line up as one — the SAME
-          // reference the admin portal shows.
-          setNewOrderSummary({ ...summary, id: order.orderRef });
-        } else {
-          // Still unreachable after retries: queue it. The app-level poller AND
-          // Track both retry automatically, and Track shows a "waiting to sync"
-          // notice — the order is never silently dropped.
-          writePendingOrders([...readPendingOrders(), { payload, summary, queuedAt: Date.now() }]);
-        }
-      })();
-    }
   }
   // Org payment "Paid" must survive card collapse/remount, so it lives here (by order id).
   function handleMarkOrderPaid(id: string) {
     setPaidOrderIds(prev => prev.includes(id) ? prev : [...prev, id]);
   }
-  function handleOrderDelivered() {
-    // Called by TrackTab when user opens a delivered order
-    if (!ratingDone) setShowRatingPopup(true);
+  function handleOrderDelivered(order?: { apiId?: string; id: string; name: string; rating?: number }) {
+    // Called by TrackTab when the customer opens a delivered order. Show the
+    // rating popup for THIS order — but only if it hasn't already been rated
+    // (order.rating comes from the backend), so it never nags twice.
+    if (!order || order.rating) return;
+    setRatingOrder({ apiId: order.apiId, ref: order.id, name: order.name });
+    setRatingVal(0);
+    setRatingFeedback("");
+    setShowRatingPopup(true);
+  }
+
+  // Persist the popup rating to the specific order, then close.
+  async function submitPopupRating() {
+    if (ratingVal < 1 || ratingBusy) return;
+    setRatingBusy(true);
+    try {
+      if (ratingOrder?.apiId) await ordersApi.rate(ratingOrder.apiId, ratingVal, ratingFeedback.trim() || undefined);
+      setRatingDone(true);
+      setShowRatingPopup(false);
+    } catch { /* keep popup open so they can retry */ }
+    finally { setRatingBusy(false); }
   }
   // Reopen a submitted order (org, before production) in the editor at the Review step.
   function handleEditOrder(payload?: DraftPayload) {
@@ -2417,7 +2434,7 @@ export default function App() {
         ) : (
           <>
             {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
-            {activeTab === "order"   && <NewOrderTab key={resumeDraft?.id ?? "new"} onNavigate={handleNavigate} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>}
+            {activeTab === "order"   && <NewOrderTab key={resumeDraft?.id ?? "new"} onNavigate={handleNavigate} onOrderPlaced={handleOrderPlaced} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>}
             {activeTab === "track"   && (
               <TrackTab
                 showNew={showNewOrder}
@@ -2506,10 +2523,57 @@ export default function App() {
         />
       )}
 
-      {/* Rating is handled inline in the Track past-order detail now (persisted to
-          the backend, visible to the admin). The old global popup was a second,
-          unpersisted rating UI that showed a hardcoded demo order and re-appeared
-          after rating — removed to avoid the double prompt. */}
+      {/* Rating popup — shown once when a delivered order is opened (and not yet
+          rated). Persists the rating to THAT order on the backend, so it shows in
+          Track and in the admin portal. */}
+      {showRatingPopup && ratingOrder && (
+        <div className="absolute inset-0 z-50 flex flex-col justify-end"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={() => setShowRatingPopup(false)}>
+          <div className="bg-background rounded-t-3xl px-5 py-6" onClick={e => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-border rounded-full mx-auto mb-4"/>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 rounded-xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                <Package size={20} className="text-emerald-500" strokeWidth={1.5}/>
+              </div>
+              <div>
+                <p className="text-foreground text-sm font-semibold">How was your order?</p>
+                <p className="text-muted-foreground" style={{ fontSize: 11 }}>{ratingOrder.ref} · {ratingOrder.name}</p>
+              </div>
+            </div>
+            <div className="flex justify-center mb-4">
+              {[1, 2, 3, 4, 5].map(i => (
+                <button key={i} onClick={() => setRatingVal(i)} style={{ background: "none", border: "none", cursor: "pointer", padding: 3 }}>
+                  <svg width="28" height="28" viewBox="0 0 24 24"
+                    fill={ratingVal >= i ? ACCENT : "none"}
+                    stroke={ratingVal >= i ? ACCENT : "rgba(0,0,0,0.2)"}
+                    strokeWidth="1.5">
+                    <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/>
+                  </svg>
+                </button>
+              ))}
+            </div>
+            {ratingVal > 0 && (
+              <textarea value={ratingFeedback} onChange={e => setRatingFeedback(e.target.value)}
+                placeholder="Tell us about the quality, delivery, coordinator service…"
+                className="w-full bg-muted border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm outline-none resize-none h-16 mb-3"
+                style={{ fontFamily: "DM Sans, sans-serif" }}/>
+            )}
+            <button
+              onClick={submitPopupRating}
+              disabled={ratingVal === 0 || ratingBusy}
+              style={ratingVal > 0 && !ratingBusy ? btnAccent : btnPrimaryDisabled}>
+              {ratingBusy ? "Submitting…" : ratingVal > 0 ? "Submit feedback" : "Tap a star to rate"}
+            </button>
+            <button onClick={() => setShowRatingPopup(false)}
+              className="w-full text-center text-muted-foreground text-xs mt-3"
+              style={{ background: "none", border: "none", cursor: "pointer" }}>
+              Maybe later
+            </button>
+            <div style={{ height: 16 }}/>
+          </div>
+        </div>
+      )}
     </>
   );
 }

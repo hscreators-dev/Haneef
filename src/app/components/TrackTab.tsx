@@ -1359,7 +1359,7 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
   order: OrderTrack; accountType?: "personal" | "organisation";
   onMessage?: () => void; onReorder?: () => void; onEditOrder?: (payload?: DraftPayload) => void;
   paidOverride?: boolean; onMarkPaid?: () => void; forceOpen?: boolean;
-  onDeliveredOpen?: () => void; headerId?: string;
+  onDeliveredOpen?: (order: OrderTrack) => void; headerId?: string;
   coordinator?: Coordinator | null;
   onPayLive?: (order: OrderTrack, mode: string, stage?: "advance" | "balance" | "full") => Promise<void>;
 }) {
@@ -1370,11 +1370,12 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
   const isPast    = PAST_STATUSES.includes(order.statusLabel);
   const canChange = CHANGEABLE_STATUSES.includes(order.statusLabel);
 
-  // Fire onDeliveredOpen once when a delivered order card is expanded
+  // Fire onDeliveredOpen once when a delivered order card is expanded — pass the
+  // order so the rating popup knows WHICH order to attach the rating to.
   useEffect(() => {
     if (open && isPast && onDeliveredOpen && !firedRef.current) {
       firedRef.current = true;
-      setTimeout(onDeliveredOpen, 600);
+      setTimeout(() => onDeliveredOpen(order), 600);
     }
   }, [open, isPast, onDeliveredOpen]);
 
@@ -1525,7 +1526,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   paidOrderIds?: string[];
   onMarkOrderPaid?: (id: string) => void;
   targetOrderId?: string | null;
-  onOrderDelivered?: () => void;
+  onOrderDelivered?: (order: OrderTrack) => void;
 }) {
   const [filter, setFilter] = useState<TrackFilter>("active");
   const newSubmittedOrder = buildNewSubmittedOrder(newOrderSummary, accountType);

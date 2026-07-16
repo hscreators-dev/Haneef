@@ -786,13 +786,32 @@ export interface SelectedGarment { categoryId: GarmentCategoryId; name: string; 
 function fabricPriceMultiplier(fabric?: string): number {
   const f = (fabric || "").toLowerCase();
   if (!f) return 1;
-  if (/\bfr\b|fire|retardant|hi-?vis|protective/.test(f)) return 1.6;
-  if (/wool|fleece|french terry|chef|coat/.test(f))        return 1.4;
-  if (/linen|oxford|premium|organic|bamboo/.test(f))       return 1.25;
-  if (/canvas|denim|workwear|heavy|ripstop|twill/.test(f)) return 1.15;
-  if (/pique|polo|interlock|jersey|knit/.test(f))          return 1.05;
-  if (/cotton/.test(f))                                    return 1.0;
-  if (/poly|polyester|mesh|dri-?fit|blend/.test(f))        return 0.92;
+  // Order matters — the MORE SPECIFIC / premium keyword must be tested first.
+  // Previously every Polo fabric ("100% Cotton Pique", "Dri-fit Pique",
+  // "Micro Pique", "Cotton-Poly Pique") matched the generic "pique" rule and
+  // collapsed to ONE price. Now the distinguishing word (dri-fit, micro,
+  // poly-blend, cotton) is checked before the generic knit rule, so each fabric
+  // in a garment gets its own price.
+  if (/\bfr\b|fire|retardant|hi-?vis|protective/.test(f))   return 1.6;   // technical safety
+  if (/wool/.test(f))                                       return 1.5;
+  if (/sherpa|heavyweight|heavy gsm|heavy.*fleece/.test(f)) return 1.45;
+  if (/fleece|french terry|chef|coat/.test(f))              return 1.4;
+  if (/gown|silk|satin/.test(f))                            return 1.35;
+  if (/micro ?pique/.test(f))                               return 1.3;   // premium polo knit
+  if (/linen|rayon|viscose|georgette/.test(f))              return 1.28;
+  if (/organic|bamboo/.test(f))                             return 1.24;
+  if (/oxford/.test(f))                                     return 1.22;
+  if (/premium|slub|poplin/.test(f))                        return 1.18;
+  if (/compression|spandex|microfibre|performance/.test(f)) return 1.16;
+  if (/canvas|denim|ripstop|workwear/.test(f))             return 1.15;
+  if (/heavy|twill/.test(f))                                return 1.12;
+  if (/dri-?fit/.test(f))                                   return 1.1;   // performance knit (before generic pique/poly)
+  if (/pique/.test(f) && /poly|blend/.test(f))              return 1.02;  // cotton-poly pique
+  if (/pique|interlock/.test(f))                            return 1.06;  // cotton / plain pique
+  if (/mesh|jersey|knit/.test(f))                           return 1.0;
+  if (/cotton/.test(f) && /poly|blend/.test(f))             return 0.96;  // cotton-poly blend
+  if (/cotton/.test(f))                                     return 1.0;
+  if (/poly|polyester|blend/.test(f))                       return 0.9;
   return 1;
 }
 // Per-piece garment price = catalog base × fabric multiplier + weave add-on.
@@ -7146,7 +7165,7 @@ type OrderStep =
   | { type: "individual_step2"; custom: CustomOrderDetails; resume?: ResumeState | null }
   | { type: "success" };
 
-export function NewOrderTab({ onNavigate, onTrackOrder, accountType, orgType, orgName, name, phone, email, address, city, pin, onSaveDraft, resumeDraft }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; address?: string; city?: string; pin?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null }) {
+export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountType, orgType, orgName, name, phone, email, address, city, pin, onSaveDraft, resumeDraft }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; onOrderPlaced?: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; address?: string; city?: string; pin?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null }) {
   const isPersonal = accountType === "personal";
   // Carry the real onboarding profile (org name/type, contact name, phone, email, saved
   // default delivery address) into the shared `currentUser` default that the rest of this
@@ -7205,6 +7224,9 @@ export function NewOrderTab({ onNavigate, onTrackOrder, accountType, orgType, or
     // Keep the editable snapshot on the summary so Track can reopen this order at Review.
     setSubmittedSummary(summary ? { ...summary, editPayload } : null);
     setStep({ type: "success" });
+    // Create the order on the backend NOW (at submit) — so it reaches the admin
+    // portal whether the customer then taps "Track your order" or "Back to Home".
+    onOrderPlaced?.(summary);
   }
 
   return (
