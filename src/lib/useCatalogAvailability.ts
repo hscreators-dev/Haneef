@@ -32,13 +32,31 @@ export interface ExtraAccessoryCategory { id: string; emoji: string; label: stri
 // exact same fails-open contract: null/empty ⇒ caller uses its built-in list.
 let adminProductsCache: Product[] | null = null;
 
+function optionPriceCount(p: Product): number {
+  const op = p.optionPrices;
+  if (!op) return 0;
+  return Object.keys(op.style || {}).length + Object.keys(op.fabric || {}).length
+    + Object.keys(op.gsm || {}).length + Object.keys(op.weave || {}).length;
+}
+
 function cachedGarment(name: string, audience?: "B2C" | "B2B"): Product | null {
   if (!adminProductsCache) return null;
   const n = name.trim().toLowerCase();
-  return adminProductsCache.find((p) => p.name.trim().toLowerCase() === n
+  const matches = adminProductsCache.filter((p) => p.name.trim().toLowerCase() === n
     && p.status === "ACTIVE"
     && (p.productType ?? "GARMENT") === "GARMENT"
-    && (!audience || p.appliesTo?.includes(audience))) ?? null;
+    && (!audience || p.appliesTo?.includes(audience)));
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
+  // A stray DUPLICATE product with the same name must not shadow the one the
+  // admin actually configured — prefer the record that has option prices set
+  // (then the most option data). This keeps prices working even before the
+  // backend de-dupes the catalog.
+  return [...matches].sort((a, b) =>
+    (optionPriceCount(b) - optionPriceCount(a))
+    || (((b.fabricOptions?.length || 0) + (b.gsmOptions?.length || 0) + (b.weaveOptions?.length || 0) + (b.styles?.length || 0))
+      - ((a.fabricOptions?.length || 0) + (a.gsmOptions?.length || 0) + (a.weaveOptions?.length || 0) + (a.styles?.length || 0)))
+  )[0];
 }
 
 /** Admin Style list for a garment — null ⇒ use the app's built-in list. */
