@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import {
   ChevronDown, ChevronUp, Check, Scissors, Microscope, Truck, Package, MessageSquare,
-  RotateCcw, Star, Wallet, ReceiptText, ClipboardCheck, Phone, Mail, Palette, FileText,
+  RotateCcw, Star, Wallet, ReceiptText, ClipboardCheck, Phone, Mail, Palette, FileText, User,
 } from "lucide-react";
 import type { SubmittedOrderSummary, OrderPrice, DraftPayload, OrderGarmentLine } from "./NewOrderTab";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
@@ -298,6 +298,24 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
     icon: iconForStepLabel(s.label, s.status as StepStatus),
   }));
   const amount = o.total || o.quoteAmount;
+  // Price shown in Track. For a LIVE order (exists on the backend) we build it
+  // from the STORED order total — the exact same number the admin portal shows —
+  // so the two never disagree. The label only says "paid" once payment is really
+  // done; before that it's "Total payable". Local-only (not-yet-synced) orders
+  // keep their submitted summary price but still never claim to be paid.
+  const isPaid = o.paymentStatus === "paid";
+  const livePrice: OrderPrice | undefined = o._id
+    ? {
+        kind: "fixed",
+        rateLine: o.qty && amount ? `${fmtINR(Math.round(amount / o.qty))}/pc × ${o.qty} pcs` : (summary?.price?.rateLine ?? "—"),
+        serviceFeeLine: o.serviceFee ? fmtINR(o.serviceFee) : summary?.price?.serviceFeeLine,
+        totalLabel: isPaid ? "Total paid" : "Total payable",
+        totalValue: fmtINR(amount) ?? summary?.price?.totalValue ?? "—",
+        note: summary?.price?.note,
+      }
+    : undefined;
+  const trackPrice: OrderPrice | undefined = livePrice
+    ?? (summary?.price ? { ...summary.price, totalLabel: isPaid ? "Total paid" : (summary.price.totalLabel === "Total paid" ? "Total payable" : summary.price.totalLabel) } : undefined);
   return {
     id: o.orderRef || `#${(o._id || "").slice(-6).toUpperCase()}`,
     name: summary?.name || o.garmentType || o.serviceLabel || (o.isAccessoryOrder ? "Accessories order" : "Custom order"),
@@ -335,7 +353,7 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
       address: o.deliveryAddress, city: o.deliveryCity || "", pin: o.deliveryPin || "",
     } : undefined),
     accessorySpecs: summary?.accessorySpecs,
-    price: summary?.price,
+    price: trackPrice,
     editPayload: summary?.editPayload,
     // Live gate fields
     apiId: o._id,
@@ -1369,6 +1387,13 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
 
   const isPast    = PAST_STATUSES.includes(order.statusLabel);
   const canChange = CHANGEABLE_STATUSES.includes(order.statusLabel);
+  // Coordinator/manager details are REAL admin data — only shown once Garm has
+  // confirmed the order and (ideally) assigned a person. Before that we never
+  // invent a name; we show a "being assigned" placeholder instead.
+  const awaitingConfirm = order.apiId
+    ? (order.adminStatus === "NEW" || !order.adminStatus)
+    : (order.statusLabel === "Order placed" || order.statusLabel === "Quote pending");
+  const showCoordinator = !!order.assignedEmployee || (!awaitingConfirm && !!coordinator);
 
   // Fire onDeliveredOpen once when a delivered order card is expanded — pass the
   // order so the rating popup knows WHICH order to attach the rating to.
@@ -1500,7 +1525,19 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
 
               {/* Sub-cards */}
               <div className="mt-3 flex flex-col gap-3">
-                <CoordinatorCard coordinator={coordinator} employeeName={order.assignedEmployee} onMessage={onMessage}/>
+                {showCoordinator
+                  ? <CoordinatorCard coordinator={coordinator} employeeName={order.assignedEmployee} onMessage={onMessage}/>
+                  : <Panel title="Your procurement manager">
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "var(--muted)", color: "#9ca3af" }}>
+                          <User size={18} strokeWidth={1.6}/>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-foreground" style={{ fontSize: 13.5, fontWeight: 600 }}>Being assigned</p>
+                          <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.4 }}>Garm will assign your coordinator once this order is confirmed. Their contact appears here then.</p>
+                        </div>
+                      </div>
+                    </Panel>}
                 <PaymentMethodCard order={order} accountType={accountType} paidOverride={paidOverride} onMarkPaid={onMarkPaid}
                   onPayLive={order.apiId && onPayLive ? (mode, stage) => onPayLive(order, mode, stage) : undefined}/>
                 <OrderDetailsCard order={order} canChange={canChange} accountType={accountType} onEdit={() => onEditOrder?.(order.editPayload)}/>
