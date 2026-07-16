@@ -17,17 +17,45 @@ import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
 import { auth as authApi, account as accountApi, orders as ordersApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
 import { readPendingOrders, writePendingOrders, rememberOrderSummary, flushPendingOrders, createOrderWithRetry } from "../lib/orderSync";
 
-// Persist a profile update with retry/backoff. The onboarding "done" flag is
-// saved here; if the save silently fails (backend cold/slow on Render's free
-// tier, or a transient error), onboardingComplete never lands and the customer
-// is asked to onboard again on the NEXT login. Retrying makes it stick.
+// ── Onboarding-flag persistence (bulletproof) ────────────────────────────────
+// The onboarding "done" flag is saved via a profile PUT. If that save silently
+// fails — backend cold/slow on Render's free tier, or a transient error — the
+// flag never lands and the customer is asked to onboard again on the NEXT login.
+// So we: (1) retry with backoff, and (2) if it STILL fails, QUEUE it in
+// localStorage and keep retrying app-wide (on login, on an interval, on focus)
+// until it lands — the same pattern that fixed order submits. Merged with the
+// local identity cache, onboarding can no longer come back once completed.
+const PENDING_PROFILE_KEY = "fl_pending_profile";
+
+function queuePendingProfile(update: Parameters<typeof accountApi.updateProfile>[0]) {
+  try {
+    const prev = JSON.parse(localStorage.getItem(PENDING_PROFILE_KEY) || "{}");
+    localStorage.setItem(PENDING_PROFILE_KEY, JSON.stringify({ ...prev, ...update }));
+  } catch { /* ignore storage errors */ }
+}
+
+export async function flushPendingProfile(): Promise<void> {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(PENDING_PROFILE_KEY); } catch { return; }
+  if (!raw || !authToken.get()) return;
+  try {
+    await accountApi.updateProfile(JSON.parse(raw));
+    try { localStorage.removeItem(PENDING_PROFILE_KEY); } catch { /* ignore */ }
+  } catch { /* keep queued — the app-level poller retries */ }
+}
+
 async function saveProfileWithRetry(
   update: Parameters<typeof accountApi.updateProfile>[0], attempts = 5,
 ): Promise<boolean> {
   for (let i = 0; i < attempts; i++) {
-    try { await accountApi.updateProfile(update); return true; }
-    catch { if (i < attempts - 1) await new Promise((r) => setTimeout(r, 1500 * (i + 1))); }
+    try {
+      await accountApi.updateProfile(update);
+      try { localStorage.removeItem(PENDING_PROFILE_KEY); } catch { /* ignore */ }
+      return true;
+    } catch { if (i < attempts - 1) await new Promise((r) => setTimeout(r, 1500 * (i + 1))); }
   }
+  // All retries exhausted — persist it so it syncs later without re-onboarding.
+  queuePendingProfile(update);
   return false;
 }
 
@@ -2086,7 +2114,11 @@ export default function App() {
   // the admin portal without the customer needing to open the Track tab.
   useEffect(() => {
     if (authStep !== "app") return;
-    const flush = () => { if (authToken.get()) flushPendingOrders().catch(() => {}); };
+    const flush = () => {
+      if (!authToken.get()) return;
+      flushPendingOrders().catch(() => {});
+      flushPendingProfile().catch(() => {});   // keep retrying a failed onboarding-flag save
+    };
     flush();
     const t = setInterval(flush, 20_000);
     const onFocus = () => flush();
@@ -2279,7 +2311,12 @@ export default function App() {
         twoFAEnabled: remoteProfile.twoFAEnabled,
       };
       setUserProfile(mapped);
-      rememberIdentity(identity, mapped); // offline fallback cache only
+      // Cache ONLY a real (named) profile. Previously we always overwrote the
+      // local registry with the backend profile — and for an account whose name
+      // never saved (poisoned data / a failed onboarding PUT) that name is "",
+      // so this CLOBBERED a previously-cached good name BEFORE the heal below
+      // could read it, and the customer was asked to onboard again forever.
+      if (mapped.name && mapped.name.trim()) rememberIdentity(identity, mapped);
       // Returning user? Go straight in. If the backend record is missing the
       // onboarding flag (e.g. it was offline when they first onboarded), fall
       // back to the local registry and HEAL the backend — never ask a returning
