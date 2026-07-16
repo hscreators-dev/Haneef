@@ -7,7 +7,7 @@ import type { SubmittedOrderSummary, OrderPrice, DraftPayload, OrderGarmentLine 
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 import { StageAnimation, stageFromLabel, type OrderStage } from "./StageAnimation";
 import { orders as ordersApi, coordinator as coordinatorApi, support as supportApi, token as authToken, type Order as ApiOrder, type Coordinator, type OrderDocument as ApiOrderDocument } from "../../lib/api";
-import { readPendingOrders, writePendingOrders, rememberOrderSummary, readOrderSummaries } from "../../lib/orderSync";
+import { readPendingOrders, readOrderSummaries, flushPendingOrders as flushPendingOrdersShared } from "../../lib/orderSync";
 import { initNotifications, notifyDevice } from "../../lib/notify";
 import { orgAdvancePct } from "../../lib/useOrderFormConfig";
 
@@ -1558,20 +1558,11 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   // Retry any orders that couldn't reach the backend when they were submitted
   // (offline, expired session…). Runs before every live refresh, so a queued
   // order lands in the admin portal as soon as connectivity is back.
+  // Uses the SHARED, lock-guarded flush so it can't double-submit a queued
+  // order alongside the app-level poller (both call the same locked routine).
   async function flushPendingOrders() {
-    const queue = readPendingOrders();
-    if (queue.length === 0) { setPendingSync(0); return; }
-    const remaining: typeof queue = [];
-    for (const item of queue) {
-      try {
-        const { order } = await ordersApi.create(item.payload);
-        if (order.orderRef) rememberOrderSummary(order.orderRef, item.summary);
-      } catch {
-        remaining.push(item);
-      }
-    }
-    writePendingOrders(remaining);
-    setPendingSync(remaining.length);
+    const remaining = await flushPendingOrdersShared();
+    setPendingSync(remaining);
   }
 
   async function refreshLive() {

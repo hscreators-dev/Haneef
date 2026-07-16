@@ -14,8 +14,8 @@ import { NotificationsScreen } from "./components/NotificationsScreen";
 import { fetchUnreadCount } from "../lib/notifCenter";
 import { playChime } from "../lib/notify";
 import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
-import { auth as authApi, account as accountApi, orders as ordersApi, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
-import { readPendingOrders, writePendingOrders, rememberOrderSummary } from "../lib/orderSync";
+import { auth as authApi, account as accountApi, orders as ordersApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
+import { readPendingOrders, writePendingOrders, rememberOrderSummary, flushPendingOrders, createOrderWithRetry } from "../lib/orderSync";
 
 export type Tab = "home" | "order" | "track" | "account";
 
@@ -2066,6 +2066,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStep]);
 
+  // App-level pending-order sync. Any order that couldn't reach the backend at
+  // submit (cold/slow backend) is retried here from ANYWHERE in the app —
+  // on sign-in, every 20s, and whenever the app regains focus — so it lands in
+  // the admin portal without the customer needing to open the Track tab.
+  useEffect(() => {
+    if (authStep !== "app") return;
+    const flush = () => { if (authToken.get()) flushPendingOrders().catch(() => {}); };
+    flush();
+    const t = setInterval(flush, 20_000);
+    const onFocus = () => flush();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(t); window.removeEventListener("focus", onFocus); };
+  }, [authStep]);
+
   function handleTutorialClose() {
     setShowTutorial(false);
     if (firstTimeFlowRef.current) {
@@ -2140,20 +2154,26 @@ export default function App() {
     // alongside the live status from the server.
     if (summary) {
       const payload = summaryToOrderPayload(summary, userProfile);
-      ordersApi.create(payload).then(({ order }) => {
-        if (order.orderRef) {
+      // Create with retry/backoff so the order reaches the admin portal at SUBMIT
+      // time even if the backend is briefly cold (Render free tier sleeps and the
+      // first request can fail while it wakes). Previously this was a single
+      // attempt, so a cold backend meant the order only synced when the customer
+      // later opened Track — the admin saw nothing until then.
+      (async () => {
+        const order = await createOrderWithRetry(payload);
+        if (order?.orderRef) {
           rememberOrderSummary(order.orderRef, summary);
           // Swap the local placeholder ref for the real one so the "just
           // submitted" card and the live order line up as one — the SAME
           // reference the admin portal shows.
           setNewOrderSummary({ ...summary, id: order.orderRef });
+        } else {
+          // Still unreachable after retries: queue it. The app-level poller AND
+          // Track both retry automatically, and Track shows a "waiting to sync"
+          // notice — the order is never silently dropped.
+          writePendingOrders([...readPendingOrders(), { payload, summary, queuedAt: Date.now() }]);
         }
-      }).catch(() => {
-        // Backend unreachable / session expired: queue it. TrackTab retries
-        // automatically and shows a visible "waiting to sync" notice — the
-        // order is never silently dropped.
-        writePendingOrders([...readPendingOrders(), { payload, summary, queuedAt: Date.now() }]);
-      });
+      })();
     }
   }
   // Org payment "Paid" must survive card collapse/remount, so it lives here (by order id).
