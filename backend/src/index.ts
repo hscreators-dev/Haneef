@@ -49,10 +49,23 @@ app.use(express.urlencoded({ extended: true }));
 // Strict limit on OTP endpoints to prevent abuse. Relaxed outside production so local
 // dev/testing (repeated resends, wrong-code retries) doesn't get locked out for 15
 // minutes at a time — the real limit still applies wherever this actually matters.
-const otpLimiter = rateLimit({
+// Sending codes is the expensive/abusable action — keep it capped, but not so
+// tight that a couple of legit resends lock a real user out. 10 sends / 15 min.
+const sendOtpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === "production" ? 5 : 100,
-  message: { error: "Too many OTP requests — please wait 15 minutes before trying again." },
+  max: process.env.NODE_ENV === "production" ? 10 : 100,
+  message: { error: "Too many code requests — please wait a few minutes before trying again." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Verifying is cheap and a user may fat-finger the code several times; sharing
+// the send limit meant wrong-code retries burned the send budget and locked
+// people out. Give verify its own, roomier budget.
+const verifyOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === "production" ? 30 : 200,
+  message: { error: "Too many attempts — please wait a few minutes before trying again." },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -64,8 +77,8 @@ const apiLimiter = rateLimit({
   message: { error: "Too many requests." },
 });
 
-app.use("/api/auth/send-otp",    otpLimiter);
-app.use("/api/auth/verify-otp",  otpLimiter);
+app.use("/api/auth/send-otp",    sendOtpLimiter);
+app.use("/api/auth/verify-otp",  verifyOtpLimiter);
 app.use("/api",                  apiLimiter);
 
 // ─── Routes ───────────────────────────────────────────────────────────────────

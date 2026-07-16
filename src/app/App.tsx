@@ -17,6 +17,20 @@ import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
 import { auth as authApi, account as accountApi, orders as ordersApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
 import { readPendingOrders, writePendingOrders, rememberOrderSummary, flushPendingOrders, createOrderWithRetry } from "../lib/orderSync";
 
+// Persist a profile update with retry/backoff. The onboarding "done" flag is
+// saved here; if the save silently fails (backend cold/slow on Render's free
+// tier, or a transient error), onboardingComplete never lands and the customer
+// is asked to onboard again on the NEXT login. Retrying makes it stick.
+async function saveProfileWithRetry(
+  update: Parameters<typeof accountApi.updateProfile>[0], attempts = 5,
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    try { await accountApi.updateProfile(update); return true; }
+    catch { if (i < attempts - 1) await new Promise((r) => setTimeout(r, 1500 * (i + 1))); }
+  }
+  return false;
+}
+
 export type Tab = "home" | "order" | "track" | "account";
 
 // ─── Submit → backend order mapping ───────────────────────────────────────────
@@ -2278,10 +2292,10 @@ export default function App() {
         if (cached?.name) {
           setUserProfile({ ...cached, ...identity });
           setAuthStep("app");
-          accountApi.updateProfile({
+          saveProfileWithRetry({
             name: cached.name, accountType: cached.accountType, orgName: cached.orgName,
             orgType: cached.orgType, onboardingComplete: true,
-          }).catch(() => {});
+          });
         } else {
           setAuthStep("onboarding");
         }
@@ -2308,11 +2322,11 @@ export default function App() {
     // Persist to the real backend so this account is recognised as onboarded on
     // future logins (from this device or any other). Best-effort — local state
     // already reflects the update either way.
-    accountApi.updateProfile({
+    saveProfileWithRetry({
       name: merged.name, phone: merged.phone, email: merged.email,
       accountType: merged.accountType, orgName: merged.orgName, orgType: merged.orgType,
       onboardingComplete: true,
-    }).catch(() => {});
+    });
     // Save the address the user just gave us as their default delivery address, so
     // New Order can pre-fill it instead of asking again. Update local state
     // immediately (so it's ready the moment they land on New Order); persist to the
