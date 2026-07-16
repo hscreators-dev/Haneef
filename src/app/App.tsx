@@ -2068,6 +2068,9 @@ export default function App() {
   // The delivered order the popup is rating (id + label), so the rating persists
   // to the RIGHT order on the backend and shows in Track + the admin portal.
   const [ratingOrder, setRatingOrder]         = useState<{ apiId?: string; ref: string; name: string } | null>(null);
+  // Ratings just submitted via the popup — passed to Track so its Rating &
+  // feedback section reflects them immediately (before the 30s poll confirms).
+  const [ratingOverrides, setRatingOverrides] = useState<Record<string, { rating: number; feedback?: string }>>({});
   const [targetOrderId, setTargetOrderId]     = useState<string | null>(null);
   const [userProfile, setUserProfile]         = useState<UserProfile>({ name: "", avatar: null, accountType: "personal" });
   // The user's default saved delivery address, so New Order can pre-fill it instead of
@@ -2241,7 +2244,11 @@ export default function App() {
     if (ratingVal < 1 || ratingBusy) return;
     setRatingBusy(true);
     try {
-      if (ratingOrder?.apiId) await ordersApi.rate(ratingOrder.apiId, ratingVal, ratingFeedback.trim() || undefined);
+      if (ratingOrder?.apiId) {
+        await ordersApi.rate(ratingOrder.apiId, ratingVal, ratingFeedback.trim() || undefined);
+        const apiId = ratingOrder.apiId;
+        setRatingOverrides(prev => ({ ...prev, [apiId]: { rating: ratingVal, feedback: ratingFeedback.trim() || undefined } }));
+      }
       setRatingDone(true);
       setShowRatingPopup(false);
     } catch { /* keep popup open so they can retry */ }
@@ -2447,6 +2454,8 @@ export default function App() {
                 paidOrderIds={paidOrderIds}
                 onMarkOrderPaid={handleMarkOrderPaid}
                 onOrderDelivered={handleOrderDelivered}
+                ratingOverrides={ratingOverrides}
+                onRated={(apiId, rating, feedback) => setRatingOverrides(prev => ({ ...prev, [apiId]: { rating, feedback } }))}
               />
             )}
             {activeTab === "account" && (

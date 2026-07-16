@@ -1210,7 +1210,7 @@ function ReturnModal({ order, onClose, onDone }: { order: OrderTrack; onClose: (
 }
 
 // ─── Past Order Detail ────────────────────────────────────────────────────────
-function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: () => void }) {
+function PastOrderDetail({ order, onReorder, onRated }: { order: OrderTrack; onReorder?: () => void; onRated?: (apiId: string, rating: number, feedback?: string) => void }) {
   // Initialise from the saved rating so a rated order shows "submitted" instead
   // of asking again (previously this was local-only, so it re-appeared and the
   // admin never saw it).
@@ -1220,12 +1220,25 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
   const [ratingBusy, setRatingBusy] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnRef, setReturnRef]   = useState("");
+  // Keep this section in step with the order's saved rating — so a rating given
+  // in the delivered popup (or on another device) shows here too, instead of the
+  // box still looking un-rated ("fresh").
+  useEffect(() => {
+    if (order.rating) {
+      setRating(order.rating);
+      setFeedback(order.ratingFeedback ?? "");
+      setRatingDone(true);
+    }
+  }, [order.rating, order.ratingFeedback]);
 
   async function submitRating() {
     if (rating < 1) return;
     setRatingBusy(true);
     try {
-      if (order.apiId) await ordersApi.rate(order.apiId, rating, feedback.trim() || undefined);
+      if (order.apiId) {
+        await ordersApi.rate(order.apiId, rating, feedback.trim() || undefined);
+        onRated?.(order.apiId, rating, feedback.trim() || undefined);
+      }
       setRatingDone(true);
     } catch { /* keep the form open so they can retry */ }
     finally { setRatingBusy(false); }
@@ -1300,7 +1313,7 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
 
       {onReorder && (
         <button onClick={onReorder} style={btnAccent}>
-          <RotateCcw size={15} strokeWidth={1.5}/> Reorder last year's uniform
+          <RotateCcw size={15} strokeWidth={1.5}/> {order.isUniform ? "Reorder this uniform" : "Order this again"}
         </button>
       )}
     </div>
@@ -1381,13 +1394,14 @@ function TrackCoachmark({ storageKey, targetId, title, body }: {
 }
 
 // ─── Order Card ───────────────────────────────────────────────────────────────
-function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen, headerId, coordinator, onPayLive }: {
+function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen, headerId, coordinator, onPayLive, onRated }: {
   order: OrderTrack; accountType?: "personal" | "organisation";
   onMessage?: () => void; onReorder?: () => void; onEditOrder?: (payload?: DraftPayload) => void;
   paidOverride?: boolean; onMarkPaid?: () => void; forceOpen?: boolean;
   onDeliveredOpen?: (order: OrderTrack) => void; headerId?: string;
   coordinator?: Coordinator | null;
   onPayLive?: (order: OrderTrack, mode: string, stage?: "advance" | "balance" | "full") => Promise<void>;
+  onRated?: (apiId: string, rating: number, feedback?: string) => void;
 }) {
   const [open, setOpen] = useState(order.defaultOpen || forceOpen);
   const firedRef = React.useRef(false);
@@ -1491,7 +1505,7 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
         <div className="px-4 pb-4 border-t border-border">
           {isPast ? (
             <div className="pt-3">
-              <PastOrderDetail order={order} onReorder={onReorder}/>
+              <PastOrderDetail order={order} onReorder={onReorder} onRated={onRated}/>
             </div>
           ) : (
             <div className="pt-3">
@@ -1580,7 +1594,7 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
 }
 
 // ─── TrackTab export ──────────────────────────────────────────────────────────
-export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoordinator, onReorder, onEditOrder, paidOrderIds, onMarkOrderPaid, targetOrderId, onOrderDelivered }: {
+export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoordinator, onReorder, onEditOrder, paidOrderIds, onMarkOrderPaid, targetOrderId, onOrderDelivered, ratingOverrides, onRated }: {
   showNew?: boolean;
   newOrderSummary?: SubmittedOrderSummary | null;
   accountType?: "personal" | "organisation";
@@ -1591,6 +1605,12 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   onMarkOrderPaid?: (id: string) => void;
   targetOrderId?: string | null;
   onOrderDelivered?: (order: OrderTrack) => void;
+  // Ratings just submitted via the delivered popup — applied immediately so the
+  // Track "Rating & feedback" section reflects them before the next poll.
+  ratingOverrides?: Record<string, { rating: number; feedback?: string }>;
+  // Called when a rating is submitted from the inline section, so the parent can
+  // record it (keeps the popup from re-nagging on reopen).
+  onRated?: (apiId: string, rating: number, feedback?: string) => void;
 }) {
   const [filter, setFilter] = useState<TrackFilter>("active");
   const newSubmittedOrder = buildNewSubmittedOrder(newOrderSummary, accountType);
@@ -1715,6 +1735,14 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   } else {
     base = showNew ? [newSubmittedOrder] : [];
   }
+  // Apply just-submitted popup ratings so the Rating & feedback section updates
+  // instantly (the 30s poll then confirms the same value from the backend).
+  if (ratingOverrides) {
+    base = base.map(o => {
+      const ov = o.apiId ? ratingOverrides[o.apiId] : undefined;
+      return ov && !o.rating ? { ...o, rating: ov.rating, ratingFeedback: ov.feedback ?? o.ratingFeedback } : o;
+    });
+  }
   const filtered = base.filter(o => {
     if (filter === "active") return [...ACTIVE_STATUSES, ...(showNew ? ["Order placed" as OrderStatus] : [])].includes(o.statusLabel);
     if (filter === "past")   return PAST_STATUSES.includes(o.statusLabel);
@@ -1833,6 +1861,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
               headerId={i === 0 ? "coachmark-track-first-order" : undefined}
               coordinator={coordinator}
               onPayLive={handlePayLive}
+              onRated={onRated}
             />
           ))
         )}
