@@ -316,12 +316,19 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
   // Full open breakdown from the stored order lines (product · colour × qty = ₹)
   // so the customer sees exactly what makes up the total — no cryptic per-piece
   // magic. GST is included in the prices; we break out how much of it is tax.
-  const lineItems = (o.lines ?? [])
-    .filter((l) => l.qty > 0 && l.unit > 0)
-    .map((l) => ({
-      label: `${l.p}${l.size && l.size !== "—" ? ` · ${l.size}` : ""}${l.color && l.color !== "—" ? ` · ${l.color}` : ""} · ${l.qty} × ${fmtINR(l.unit)}`,
-      value: fmtINR(l.qty * l.unit) ?? "—",
-    }));
+  const rawLines = (o.lines ?? []).filter((l) => l.qty > 0 && l.unit > 0);
+  // Sanity guard: only show the itemised list when it actually reconciles with
+  // the stored total (items + fee ≈ total). Orders created before the pricing
+  // fix stored fee-INCLUSIVE units — for those the list wouldn't add up, so we
+  // fall back to the corrected single rate line instead of showing wrong rows.
+  const itemsSum = rawLines.reduce((s, l) => s + l.qty * l.unit, 0);
+  const itemsReconcile = goodsAmount != null && rawLines.length > 0 && Math.abs(itemsSum - goodsAmount) <= Math.max(2, (o.qty || 1));
+  const lineItems = itemsReconcile
+    ? rawLines.map((l) => ({
+        label: `${l.p}${l.size && l.size !== "—" ? ` · ${l.size}` : ""}${l.color && l.color !== "—" ? ` · ${l.color}` : ""} · ${l.qty} × ${fmtINR(l.unit)}`,
+        value: fmtINR(l.qty * l.unit) ?? "—",
+      }))
+    : [];
   const taxIncluded = goodsAmount ? Math.max(0, Math.round(goodsAmount - goodsAmount / 1.18)) : 0;
   const livePrice: OrderPrice | undefined = o._id
     ? {
