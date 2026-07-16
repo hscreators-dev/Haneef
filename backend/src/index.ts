@@ -117,4 +117,17 @@ async function start() {
   });
 }
 
+// ─── Keep-warm (Render free tier) ─────────────────────────────────────────────
+// A free Render web service sleeps after ~15 min without inbound traffic, so the
+// first request after idle is slow (and used to make orders/logins look broken
+// until the server woke). Ping our own /health every 10 min so the service never
+// idles. RENDER_EXTERNAL_URL is injected automatically by Render; skipped locally.
+const selfUrl = process.env.RENDER_EXTERNAL_URL;
+if (selfUrl && process.env.NODE_ENV === "production") {
+  setInterval(() => {
+    fetch(`${selfUrl.replace(/\/$/, "")}/health`).catch(() => {});
+  }, 10 * 60 * 1000).unref?.();
+  console.log(`   Keep-warm self-ping enabled → ${selfUrl}/health every 10 min`);
+}
+
 start();

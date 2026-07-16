@@ -1,0 +1,29 @@
+# Keep-alive backstop for the free-tier Render backends.
+#
+# The backends also self-ping (see backend/src/index.ts and the admin server),
+# which keeps them warm while they're running. This workflow is the backstop:
+# it can WAKE a service that has fully slept (e.g. after a restart with no
+# traffic), which a self-ping can't do. It pings both /health endpoints.
+#
+# Note: GitHub's scheduled runs are best-effort and can be delayed under load,
+# so this complements — not replaces — the in-process self-ping. For a hard
+# guarantee, use an external uptime monitor (UptimeRobot / cron-job.org) or move
+# the services off Render's free tier.
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (UTC)
+  workflow_dispatch: {}       # allow manual runs from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backends (wake if asleep)
+        run: |
+          # --max-time 90 gives a sleeping service room to cold-start.
+          # '|| true' so a slow wake never fails the workflow.
+          curl -fsS --max-time 90 https://garm-app-backend.onrender.com/health || true
+          curl -fsS --max-time 90 https://garm-admin-backend.onrender.com/api/health || true
+          echo "pinged $(date -u)"
