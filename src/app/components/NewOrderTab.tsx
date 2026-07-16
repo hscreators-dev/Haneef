@@ -5191,9 +5191,10 @@ function PersonaOrderForm({
     setGarmentMaterials(prev => {
       let changed = false; const next = { ...prev };
       for (const l of garmentCart) {
-        if (!next[l.name]) {
+        const key = garmentKey(l); // category+name+gender — matches matFor()
+        if (!next[key]) {
           const o = materialOptionsForGarment(l.name);
-          next[l.name] = { fabric: o.fabricOptions[0], gsm: o.gsmOptions[0], weave: o.weaveOptions[0] };
+          next[key] = { fabric: o.fabricOptions[0], gsm: o.gsmOptions[0], weave: o.weaveOptions[0] };
           changed = true;
         }
       }
@@ -6532,6 +6533,42 @@ function PersonaOrderForm({
                       </div>
                     );
                   })}
+                  {/* ONE overall total for the whole order — so the customer doesn't
+                      scroll every card to find it. Only when 2+ garments (a single
+                      garment already shows its own total above). */}
+                  {(() => {
+                    const uniques = garmentCart.filter((g, i) => garmentCart.findIndex(x => garmentKey(x) === garmentKey(g)) === i);
+                    if (uniques.length <= 1) return null;
+                    return (
+                      <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${DARK}`, background: DARK }}>
+                        <div className="px-3 py-2" style={{ borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Order total — all garments</span>
+                        </div>
+                        <div className="px-3 py-2 flex flex-col gap-1">
+                          {uniques.map(rep => {
+                            const key = garmentKey(rep);
+                            const m = matFor(key);
+                            const gLine: SelectedGarment = { categoryId: rep.categoryId, name: rep.name, basePrice: rep.basePrice, style: rep.style };
+                            const pcs = garmentCart.filter(g => garmentKey(g) === key).reduce((s, l) => s + l.qty, 0);
+                            const perPc = garmentPriceForFabric(gLine, m.fabric, m.weave, fabricSource, m.gsm, priceAudience);
+                            const tag = indivCartMixed ? `${indivAudienceShort(rep.categoryId)} · ` : "";
+                            return (
+                              <div key={key} className="flex items-baseline justify-between gap-2" style={{ fontSize: 11.5 }}>
+                                <span style={{ color: "rgba(255,255,255,0.78)" }}>{tag}{rep.name}<span style={{ color: "rgba(255,255,255,0.5)" }}> · {pcs} pcs × {inr(perPc)}</span></span>
+                                <span style={{ color: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{inr(pcs * perPc)}</span>
+                              </div>
+                            );
+                          })}
+                          <div style={{ borderTop: "1px dashed rgba(255,255,255,0.2)", margin: "3px 0 1px" }} />
+                          <div className="flex items-baseline justify-between">
+                            <span style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>Garments total · {garmentCartQty} pcs</span>
+                            <span style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>{inr(garmentCartSubtotal)}</span>
+                          </div>
+                          <p style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", marginTop: 2, lineHeight: 1.4 }}>Finishing &amp; any service fee are added at checkout.</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : (
                 <>
