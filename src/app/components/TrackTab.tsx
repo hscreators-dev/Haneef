@@ -396,7 +396,7 @@ type TrackFilter = "active" | "past" | "all";
 
 const procurementStages = [
   "Under Review", "Quote Shared", "Waiting Approval",
-  "Production Started", "QA Inspection", "Shipped", "Delivered",
+  "Production Started", "QC Inspection", "Shipped", "Delivered",
 ];
 
 // ─── Panel — shared bordered card ─────────────────────────────────────────────

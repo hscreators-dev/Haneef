@@ -671,7 +671,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
   }, []);
 
   // Active order drives the horizontal progress tracker
-  const trackStages = ["Review", "Quote", "Approve", "Production", "QA", "Shipped", "Delivered"];
+  const trackStages = ["Review", "Quote", "Approve", "Production", "QC", "Shipped", "Delivered"];
   const statusToStage: Record<string, number> = {
     "Order placed": 0, "Order submitted": 0, "Order confirmed": 1, "Quote pending": 1, "Quote ready": 2, "In production": 3,
     "Quality check": 4, "Shipped": 5, "Delivered": 6, "Completed": 6,

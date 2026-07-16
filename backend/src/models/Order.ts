@@ -312,8 +312,8 @@ OrderSchema.pre("save", async function (next) {
   if (this.trackSteps.length === 0) {
     const today = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
     if (this.persona === "individual") {
-      // Individuals: submit -> admin confirms -> customer pays -> production.
-      // No in-house QC step for B2C, ever.
+      // Individuals: submit -> admin confirms -> customer pays -> production ->
+      // in-house QC -> shipping. QC is a visible tracker stage for everyone.
       // "Order submitted" is the CURRENT stage until the Garm team explicitly
       // confirms — "Order confirmed" must never look reached before that.
       this.trackSteps = [
@@ -321,6 +321,7 @@ OrderSchema.pre("save", async function (next) {
         { label: "Order confirmed",  sub: "Garm will confirm your order",           status: "pending" as const },
         { label: "Payment",          sub: "Unlocks once your order is confirmed",   status: "pending" as const },
         { label: "In production",    sub: "Starts after payment",                   status: "pending" as const },
+        { label: "Quality check",    sub: "Garm inspects every piece",              status: "pending" as const },
         { label: "Shipped",          sub: "Pending",                                status: "pending" as const },
         { label: "Delivered",        sub: "Pending",                                status: "pending" as const },
       ];
@@ -335,12 +336,8 @@ OrderSchema.pre("save", async function (next) {
       ];
     }
   }
-  // Individuals never carry a real QC result — only Organisation orders do.
-  // (Runs after schema defaults are applied, so explicitly override rather
-  // than checking for undefined — the schema default is always "PENDING".)
-  if (this.isNew && this.persona === "individual") {
-    this.qcResult = "N/A";
-  }
+  // Every production run now goes through in-house QC — Individual orders
+  // included — so the QC result starts PENDING for everyone (schema default).
   if (this.isNew && this.seq == null) {
     try {
       this.seq = await nextSeq();
