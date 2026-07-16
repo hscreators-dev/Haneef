@@ -5175,9 +5175,13 @@ function PersonaOrderForm({
   // Per-garment material (individuals): each garment name can pick its own fabric/GSM/weave.
   // Falls back to the order-level `material` until the user changes it.
   const [garmentMaterials, setGarmentMaterials] = useState<Record<string, { fabric: string; gsm: string; weave: string }>>(resume?.garmentMaterials ?? {});
-  const matFor = (name: string) => garmentMaterials[name] ?? material;
-  const setMatFor = (name: string, patch: Partial<{ fabric: string; gsm: string; weave: string }>) =>
-    setGarmentMaterials(prev => ({ ...prev, [name]: { ...(prev[name] ?? material), ...patch } }));
+  // A garment is uniquely identified by category + name + (kids) gender — NOT by
+  // name alone. Otherwise Men's "T-Shirts" and Women's "T-Shirts" (same name,
+  // different category) would collapse into one card and share fabric/colour.
+  const garmentKey = (g: { categoryId: GarmentCategoryId; name: string; gender?: "boy" | "girl" }) => `${g.categoryId}|${g.name}|${g.gender ?? ""}`;
+  const matFor = (key: string) => garmentMaterials[key] ?? material;
+  const setMatFor = (key: string, patch: Partial<{ fabric: string; gsm: string; weave: string }>) =>
+    setGarmentMaterials(prev => ({ ...prev, [key]: { ...(prev[key] ?? material), ...patch } }));
   const [orgColors, setOrgColors] = useState<ColorEntry[]>(resume?.orgColors ?? []);
   const [indivColors, setIndivColors] = useState<{ selected: string[]; desc: string; qtys?: Record<string, number> }>(resume?.indivColors ?? { selected: [], desc: "", qtys: {} });
   // What garment (catalog item) the order is for — drives the base price for both flows.
@@ -5402,7 +5406,7 @@ function PersonaOrderForm({
     + perPcCost(packagingOpts.find(p => p.id === packaging.packing)?.cost);
   const accessoryTotalAmt = accessoryOrderTotal(accessoryQtyData, accSpecState);
   // Individual cart subtotal — every garment line priced for the chosen fabric/weave.
-  const garmentCartSubtotal = garmentCart.reduce((s, g) => s + g.qty * garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource, matFor(g.name).gsm, priceAudience), 0);
+  const garmentCartSubtotal = garmentCart.reduce((s, g) => { const m = matFor(garmentKey(g)); return s + g.qty * garmentPriceForFabric(g, m.fabric, m.weave, fabricSource, m.gsm, priceAudience); }, 0);
   // The amount an individual pays (fixed) — garments + finishing, or accessory
   // total — PLUS the admin-configured service fee, shown as its own line.
   const orderFormCfg = useOrderFormConfig();
@@ -5663,7 +5667,7 @@ function PersonaOrderForm({
         ? undefined
         : (persona === "individual" && garmentCart.length > 0)
           ? garmentCart.map(g => {
-              const m = matFor(g.name);
+              const m = matFor(garmentKey(g));
               return {
                 name: g.name,
                 style: g.style,
@@ -5917,10 +5921,10 @@ function PersonaOrderForm({
               {persona === "individual" ? (
                 garmentCart.length > 0 ? (
                   <>
-                    {garmentCart.map(g => line(
+                    {garmentCart.map(g => { const m = matFor(garmentKey(g)); return line(
                       `${indivCartMixed ? `${indivAudienceShort(g.categoryId)} · ` : ""}${g.name}${g.style ? ` · ${g.style}` : ""} · ${lineColourSummary(g)} × ${g.qty}`,
-                      `${inr(garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource, matFor(g.name).gsm, priceAudience))}/pc`
-                    ))}
+                      `${inr(garmentPriceForFabric(g, m.fabric, m.weave, fabricSource, m.gsm, priceAudience))}/pc`
+                    ); })}
                     {line("Total pieces", `${garmentCartQty} pcs`)}
                   </>
                 ) : (
@@ -5949,11 +5953,11 @@ function PersonaOrderForm({
               {line("Fabric source", fabricSource === "surplus" ? "Surplus (mill stock)" : "New fabric")}
               {persona === "individual" && garmentCart.length > 0 ? (
                 <div className="mt-1 flex flex-col gap-2">
-                  {Array.from(new Set(garmentCart.map(g => g.name))).map(name => {
-                    const m = matFor(name);
+                  {garmentCart.filter((g, i) => garmentCart.findIndex(x => garmentKey(x) === garmentKey(g)) === i).map(g => {
+                    const m = matFor(garmentKey(g));
                     return (
-                      <div key={name}>
-                        <p style={{ fontSize: 11.5, fontWeight: 600, color: DARK, marginBottom: 2 }}>{name}</p>
+                      <div key={garmentKey(g)}>
+                        <p style={{ fontSize: 11.5, fontWeight: 600, color: DARK, marginBottom: 2 }}>{indivCartMixed ? `${indivAudienceShort(g.categoryId)} · ` : ""}{g.name}</p>
                         <p className="text-muted-foreground" style={{ fontSize: 11.5, lineHeight: 1.5 }}>{[m.fabric, m.gsm, m.weave].filter(Boolean).join(" · ") || "—"}</p>
                       </div>
                     );
@@ -6460,14 +6464,14 @@ function PersonaOrderForm({
                 // Representative garment for the price preview on the two cards —
                 // the first garment in the order with its current fabric/weave picks.
                 const rep = persona === "individual" && garmentCart.length > 0
-                  ? { g: { categoryId: garmentCart[0].categoryId, name: garmentCart[0].name, basePrice: garmentCart[0].basePrice, style: garmentCart[0].style }, m: matFor(garmentCart[0].name) }
+                  ? { g: { categoryId: garmentCart[0].categoryId, name: garmentCart[0].name, basePrice: garmentCart[0].basePrice, style: garmentCart[0].style }, m: matFor(garmentKey(garmentCart[0])) }
                   : orgCart.length > 0
                     ? { g: { categoryId: orgCart[0].categoryId, name: orgCart[0].name, basePrice: orgCart[0].basePrice, style: orgCart[0].style }, m: orgCart[0].material }
                     : selectedGarment ? { g: selectedGarment, m: material } : null;
                 const priceOf = (src: "fresh" | "surplus") => rep ? garmentPriceForFabric(rep.g, rep.m.fabric, rep.m.weave, src, rep.m.gsm, priceAudience) : null;
                 const freshPc = priceOf("fresh");
                 const surplusPc = priceOf("surplus");
-                const moreThanOne = persona === "individual" ? new Set(garmentCart.map(g => g.name)).size > 1 : orgCart.length > 1;
+                const moreThanOne = persona === "individual" ? new Set(garmentCart.map(g => garmentKey(g))).size > 1 : orgCart.length > 1;
                 return (
                   <div className="grid grid-cols-2 gap-2 mb-4">
                     {([["fresh", "New fabric", "New production run", freshPc, null],
@@ -6515,36 +6519,39 @@ function PersonaOrderForm({
                     <Info size={12} style={{ color:"#1a4a8a", flexShrink:0, marginTop:1 }}/>
                     <p style={{ fontSize: 11, color:"#1a4a8a", lineHeight: 1.5 }}>Pick fabric, GSM and weave <strong>separately for each garment</strong>. Prices update per garment.</p>
                   </div>
-                  {Array.from(new Set(garmentCart.map(g => g.name))).map(name => {
+                  {garmentCart.filter((g, i) => garmentCart.findIndex(x => garmentKey(x) === garmentKey(g)) === i).map(rep => {
+                    const name = rep.name;
+                    const key = garmentKey(rep);            // category + name + gender — unique per garment
+                    const sameG = (g: GarmentLine) => garmentKey(g) === key;
                     const o = materialOptionsForGarment(name);
-                    const cur = matFor(name);
+                    const cur = matFor(key);
                     const fabricVal = o.fabricOptions.includes(cur.fabric) ? cur.fabric : o.fabricOptions[0];
                     const gsmVal    = o.gsmOptions.includes(cur.gsm) ? cur.gsm : o.gsmOptions[0];
                     const weaveVal  = o.weaveOptions.includes(cur.weave) ? cur.weave : o.weaveOptions[0];
                     const styleOpts = garmentStyleOptions(name);
-                    const gStyle    = garmentCart.find(g => g.name === name)?.style ?? styleOpts[0];
-                    const setStyleFor = (v: string) => setGarmentCart(prev => prev.map(g => g.name === name ? { ...g, style: v } : g));
-                    const gLine: SelectedGarment = { categoryId: "mens", name, basePrice: garmentCart.find(g => g.name === name)!.basePrice, style: gStyle };
-                    // Colours chosen for this garment (each is its own cart line) + the
-                    // palette to toggle from — shown right here so Style, Colour, Fabric,
-                    // GSM and Weave all live in one card.
-                    const colourLines = garmentCart.filter(g => g.name === name);
+                    const gStyle    = rep.style ?? styleOpts[0];
+                    const setStyleFor = (v: string) => setGarmentCart(prev => prev.map(g => sameG(g) ? { ...g, style: v } : g));
+                    const gLine: SelectedGarment = { categoryId: rep.categoryId, name, basePrice: rep.basePrice, style: gStyle };
+                    // Colours chosen for THIS garment (matched by category+name+gender, so
+                    // Men's and Women's "T-Shirts" stay separate) + the palette to toggle.
+                    const colourLines = garmentCart.filter(sameG);
                     const palette = individualPaletteFor(name);
                     const tmpl = colourLines[0];
                     const toggleColour = (hex: string, label: string) => setGarmentCart(prev => {
-                      const has = prev.some(g => g.name === name && g.colorHex === hex);
+                      const has = prev.some(g => sameG(g) && g.colorHex === hex);
                       if (has) {
-                        if (prev.filter(g => g.name === name).length <= 1) return prev; // keep at least one colour
-                        return prev.filter(g => !(g.name === name && g.colorHex === hex));
+                        if (prev.filter(sameG).length <= 1) return prev; // keep at least one colour
+                        return prev.filter(g => !(sameG(g) && g.colorHex === hex));
                       }
                       return [...prev, { ...tmpl, colorHex: hex, colorLabel: label, qty: tmpl?.qty || 1, sizes: undefined, pieceColors: undefined }];
                     });
+                    const audienceTag = indivCartMixed ? indivAudienceShort(rep.categoryId) : "";
                     return (
-                      <div key={name} className="rounded-xl border border-border overflow-hidden">
+                      <div key={key} className="rounded-xl border border-border overflow-hidden">
                         <div className="flex items-center justify-between gap-2 px-3 py-2" style={{ background:"var(--muted)" }}>
-                          <span style={{ fontSize: 12.5, fontWeight: 700, color: DARK }}>{name}</span>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: DARK }}>{audienceTag ? `${audienceTag} · ` : ""}{name}</span>
                           <RemoveChip title={`Remove ${name} from this order`}
-                            onRemove={() => setGarmentCart(prev => prev.filter(g => g.name !== name))}/>
+                            onRemove={() => setGarmentCart(prev => prev.filter(g => !sameG(g)))}/>
                         </div>
                         <div className="px-3 py-2.5">
                           {styleOpts.length > 0 && (
@@ -6570,16 +6577,16 @@ function PersonaOrderForm({
                           </div>
                           <SuggestLine text="Tap to add or remove colours. Each colour is made as its own set — sizes are split per colour on the next step." />
                           <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Fabric</p>
-                          <div className="mb-1"><SelectField options={o.fabricOptions} value={fabricVal} priceFor={ox => optionDeltaLabel(name, "fabric", ox, priceAudience)} onChange={v => setMatFor(name, { fabric: v })} /></div>
+                          <div className="mb-1"><SelectField options={o.fabricOptions} value={fabricVal} priceFor={ox => optionDeltaLabel(name, "fabric", ox, priceAudience)} onChange={v => setMatFor(key, { fabric: v })} /></div>
                           <SuggestLine text={fabricSuggestion(fabricVal)} />
                           <div className="grid grid-cols-2 gap-2">
                             <div>
                               <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>GSM weight</p>
-                              <SelectField options={o.gsmOptions} value={gsmVal} priceFor={ox => optionDeltaLabel(name, "gsm", ox, priceAudience)} onChange={v => setMatFor(name, { gsm: v })} />
+                              <SelectField options={o.gsmOptions} value={gsmVal} priceFor={ox => optionDeltaLabel(name, "gsm", ox, priceAudience)} onChange={v => setMatFor(key, { gsm: v })} />
                             </div>
                             <div>
                               <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Weave</p>
-                              <SelectField options={o.weaveOptions} value={weaveVal} priceFor={ox => optionDeltaLabel(name, "weave", ox, priceAudience, oy => { const a = weaveAddOnPerPc(oy); return a > 0 ? ` · +${inr(a)}` : ""; })} onChange={v => setMatFor(name, { weave: v })} />
+                              <SelectField options={o.weaveOptions} value={weaveVal} priceFor={ox => optionDeltaLabel(name, "weave", ox, priceAudience, oy => { const a = weaveAddOnPerPc(oy); return a > 0 ? ` · +${inr(a)}` : ""; })} onChange={v => setMatFor(key, { weave: v })} />
                             </div>
                           </div>
                           <SuggestLine text={`${gsmSuggestion(gsmVal)} · ${weaveSuggestion(weaveVal)}`} />
@@ -6851,7 +6858,8 @@ function PersonaOrderForm({
             : persona === "individual"
             ? [
                 ...garmentCart.map(g => {
-                  const r = garmentPriceForFabric(g, matFor(g.name).fabric, matFor(g.name).weave, fabricSource, matFor(g.name).gsm, priceAudience);
+                  const m = matFor(garmentKey(g));
+                  const r = garmentPriceForFabric(g, m.fabric, m.weave, fabricSource, m.gsm, priceAudience);
                   return { label: `${g.name} · ${g.colorLabel} · ${g.qty} × ${inr(r)}`, value: inr(g.qty * r) };
                 }),
                 { label: `Stitching · ${stitchOpt?.label ?? "Standard"}`, value: stitchCost > 0 ? `+${inr(stitchCost)}/pc` : "included" },
