@@ -1941,6 +1941,10 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
           const topOnly = garmentTopOnly(it.name);
           // Out-of-stock (admin toggle): visible but greyed out and not orderable.
           const inStock = isItemInStock(it.name);
+          // "From ₹X/pc" reflects the chosen style's admin price delta (e.g. V-neck
+          // costs more than Round neck), so the card price moves as the customer
+          // switches style. Falls back to the flat base when no admin option prices.
+          const fromRate = adminGarmentPrice(it.name, { style: lines[0]?.style }, "B2C") ?? it.basePrice;
           return (
             <div key={it.name} className="px-3.5 py-2.5 rounded-xl transition-colors"
               style={{
@@ -1960,7 +1964,7 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                     {added && openItem !== it.name
                       ? <p style={{ fontSize: 11, color:"#7c5419", fontWeight: 600 }}>{lines[0]?.style ? `${lines[0].style} · ` : ""}{lines.length} colour{lines.length !== 1 ? "s" : ""} · {lines.reduce((s, l) => s + l.qty, 0)} pcs</p>
                       : <p style={{ fontSize: 11, color: added ? "#7c5419" : "#9ca3af", fontWeight: added ? 600 : 400 }}>
-                          From {inr(it.basePrice)}/pc{setPieces ? ` · ${setPieces.length}-piece set` : topOnly ? " · top only" : ""}
+                          From {inr(fromRate)}/pc{setPieces ? ` · ${setPieces.length}-piece set` : topOnly ? " · top only" : ""}
                         </p>}
                   </div>
                   {added && (
@@ -2749,6 +2753,8 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
           {allItems.map(it => {
             const added = isAdded(it.name);
             const inStock = isItemInStock(it.name);
+            const addedStyle = cart.find(l => sameLine(l, it.name))?.style;
+            const fromRate = adminGarmentPrice(it.name, { style: addedStyle }, "B2B") ?? it.basePrice;
             return (
               <div key={it.name} className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl transition-colors"
                 style={{
@@ -2761,7 +2767,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                 <div className="flex-1 min-w-0">
                   <p style={{ fontSize: 13, fontWeight: added ? 700 : 500, color: added ? DARK : "#111827", lineHeight: 1.3 }}>{it.name}</p>
                   {inStock || added
-                    ? <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>From {inr(it.basePrice)}/pc</p>
+                    ? <p style={{ fontSize: 11, color: added ? "#1a4a8a" : "#9ca3af", fontWeight: added ? 600 : 400 }}>From {inr(fromRate)}/pc</p>
                     : <p style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>Out of stock — back soon</p>}
                 </div>
                 {added ? (
@@ -5118,7 +5124,7 @@ function PersonaOrderForm({
   useEffect(() => {
     if (persona !== "individual") return;
     setSelectedGarment(garmentCart[0]
-      ? { categoryId: garmentCart[0].categoryId, name: garmentCart[0].name, basePrice: garmentCart[0].basePrice }
+      ? { categoryId: garmentCart[0].categoryId, name: garmentCart[0].name, basePrice: garmentCart[0].basePrice, style: garmentCart[0].style }
       : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [garmentCart, persona]);
