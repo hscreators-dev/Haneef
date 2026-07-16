@@ -78,7 +78,11 @@ function summaryToOrderPayload(summary: SubmittedOrderSummary, profile: UserProf
   const fabricSource = src.includes("surplus") || src.includes("deadstock") ? "surplus" : src ? "fresh" : undefined;
   const total = summary.price?.kind === "fixed" ? parseINRAmount(summary.price.totalValue) : undefined;
   const totalQty = summary.qty ?? summary.totalPcs ?? 0;
-  const perPc = total && totalQty ? Math.round(total / totalQty) : 0;
+  // Per-piece unit for line items = the GOODS rate (total minus the service
+  // fee). The fee is sent separately (serviceFee below) — if the unit included
+  // it, every rate row would double-count the fee: rate × qty + fee ≠ total.
+  const goods = total != null ? Math.max(0, total - (summary.serviceFee || 0)) : undefined;
+  const perPc = goods && totalQty ? Math.round(goods / totalQty) : 0;
   // Per-garment line items — carries STYLE, colour and the size split for
   // every garment, so the admin portal shows exactly what the customer
   // configured (not just top-level defaults).

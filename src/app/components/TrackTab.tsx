@@ -309,10 +309,14 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
   // done; before that it's "Total payable". Local-only (not-yet-synced) orders
   // keep their submitted summary price but still never claim to be paid.
   const isPaid = o.paymentStatus === "paid";
+  // Rate row = the GOODS price per piece (total MINUS the service fee). The fee
+  // is its own row below, so rate × qty + fee = total exactly — showing the
+  // fee-inclusive total divided by pieces here would double-count the fee.
+  const goodsAmount = amount != null ? Math.max(0, amount - (o.serviceFee || 0)) : undefined;
   const livePrice: OrderPrice | undefined = o._id
     ? {
         kind: "fixed",
-        rateLine: o.qty && amount ? `${fmtINR(Math.round(amount / o.qty))}/pc × ${o.qty} pcs` : (summary?.price?.rateLine ?? "—"),
+        rateLine: o.qty && goodsAmount ? `${fmtINR(Math.round(goodsAmount / o.qty))}/pc × ${o.qty} pcs` : (summary?.price?.rateLine ?? "—"),
         serviceFeeLine: o.serviceFee ? fmtINR(o.serviceFee) : summary?.price?.serviceFeeLine,
         totalLabel: isPaid ? "Total paid" : "Total payable",
         totalValue: fmtINR(amount) ?? summary?.price?.totalValue ?? "—",
