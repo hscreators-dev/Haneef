@@ -2469,63 +2469,10 @@ export default function App() {
         />
       )}
 
-      {/* Rating popup */}
-      {showRatingPopup && !ratingDone && (
-        <div className="absolute inset-0 z-50 flex flex-col justify-end"
-          style={{ background: "rgba(0,0,0,0.5)" }}
-          onClick={() => setShowRatingPopup(false)}>
-          <div className="bg-background rounded-t-3xl px-5 py-6" onClick={e => e.stopPropagation()}>
-            <div className="w-10 h-1 bg-border rounded-full mx-auto mb-4"/>
-
-            {/* Order identity */}
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 rounded-xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
-                <Package size={20} className="text-emerald-500" strokeWidth={1.5}/>
-              </div>
-              <div>
-                <p className="text-foreground text-sm font-semibold">How was your order?</p>
-                <p className="text-muted-foreground" style={{ fontSize: 11 }}>#FL-2035 · Cotton Jersey — White</p>
-              </div>
-            </div>
-
-            {/* Stars */}
-            <div className="flex justify-center mb-4">
-              {[1, 2, 3, 4, 5].map(i => (
-                <button key={i} onClick={() => setRatingVal(i)} style={{ background: "none", border: "none", cursor: "pointer", padding: 3 }}>
-                  <svg width="28" height="28" viewBox="0 0 24 24"
-                    fill={ratingVal >= i ? ACCENT : "none"}
-                    stroke={ratingVal >= i ? ACCENT : "rgba(0,0,0,0.2)"}
-                    strokeWidth="1.5">
-                    <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/>
-                  </svg>
-                </button>
-              ))}
-            </div>
-
-            {/* Feedback textarea */}
-            {ratingVal > 0 && (
-              <textarea value={ratingFeedback} onChange={e => setRatingFeedback(e.target.value)}
-                placeholder="Tell us about the quality, delivery, coordinator service…"
-                className="w-full bg-muted border border-border rounded-xl px-3.5 py-2.5 text-foreground text-sm outline-none resize-none h-16 mb-3"
-                style={{ fontFamily: "DM Sans, sans-serif" }}/>
-            )}
-
-            <button
-              onClick={() => { if (ratingVal > 0) { setRatingDone(true); setShowRatingPopup(false); } }}
-              disabled={ratingVal === 0}
-              style={ratingVal > 0 ? btnAccent : btnPrimaryDisabled}>
-              {ratingVal > 0 ? "Submit feedback" : "Tap a star to rate"}
-            </button>
-
-            <button onClick={() => setShowRatingPopup(false)}
-              className="w-full text-center text-muted-foreground text-xs mt-3"
-              style={{ background: "none", border: "none", cursor: "pointer" }}>
-              Maybe later
-            </button>
-            <div style={{ height: 16 }}/>
-          </div>
-        </div>
-      )}
+      {/* Rating is handled inline in the Track past-order detail now (persisted to
+          the backend, visible to the admin). The old global popup was a second,
+          unpersisted rating UI that showed a hardcoded demo order and re-appeared
+          after rating — removed to avoid the double prompt. */}
     </>
   );
 }

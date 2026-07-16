@@ -4,6 +4,7 @@ import { generateOTP, verifyOTP } from "../services/otpService";
 import { sendSMS }   from "../services/smsService";
 import { sendEmail } from "../services/emailService";
 import { User }      from "../models/User";
+import { LoginEvent } from "../models/LoginEvent";
 import { signToken, requireAuth, AuthRequest } from "../middleware/auth";
 import { httpError } from "../middleware/error";
 
@@ -94,6 +95,7 @@ router.post("/verify-otp", async (req: Request, res: Response, next: NextFunctio
     // If duplicates exist from the old exact-match era, prefer the record that
     // completed onboarding (has the name) — never resurrect a nameless "Guest".
     let user = await User.findOne(filter).sort({ onboardingComplete: -1, createdAt: 1 });
+    const isNewUser = !user;   // brand-new account created on this sign-in
     if (!user) {
       user = await User.create(mode === "phone" ? { phone: canon } : { email: canon });
     }
@@ -109,6 +111,15 @@ router.post("/verify-otp", async (req: Request, res: Response, next: NextFunctio
       user.onboardingComplete = true;
       await user.save();
     }
+
+    // Record the sign-in for the admin portal's Customer Log (new vs returning).
+    // Best-effort — a logging failure must never block the login.
+    try {
+      await LoginEvent.create({
+        userId: user._id, name: user.name, phone: user.phone, email: user.email,
+        mode, isNewUser, at: new Date(),
+      });
+    } catch { /* non-fatal */ }
 
     const token = signToken(user._id.toString());
 

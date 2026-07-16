@@ -51,6 +51,8 @@ interface OrderTrack {
   adminStatus?: string;      // NEW | CONFIRMED | PAID | … (drives the payment gate)
   livePaymentStatus?: string; // unpaid | partial | paid
   assignedEmployee?: string; // name shown on the coordinator card for this order
+  rating?: number;           // customer rating 1–5 (persisted on the order)
+  ratingFeedback?: string;
   totalAmount?: number;      // confirmed price (₹) to pay
   documents?: ApiOrderDocument[]; // admin invoices/quotes + own design uploads
   isAccessoryOrder?: boolean;
@@ -338,6 +340,8 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
     // Live gate fields
     apiId: o._id,
     adminStatus: o.adminStatus,
+    rating: o.rating,
+    ratingFeedback: o.ratingFeedback,
     livePaymentStatus: o.paymentStatus,
     assignedEmployee: o.assignedEmployee,
     totalAmount: amount,
@@ -1181,11 +1185,25 @@ function ReturnModal({ order, onClose, onDone }: { order: OrderTrack; onClose: (
 
 // ─── Past Order Detail ────────────────────────────────────────────────────────
 function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: () => void }) {
-  const [rating, setRating]         = useState(0);
-  const [feedback, setFeedback]     = useState("");
-  const [ratingDone, setRatingDone] = useState(false);
+  // Initialise from the saved rating so a rated order shows "submitted" instead
+  // of asking again (previously this was local-only, so it re-appeared and the
+  // admin never saw it).
+  const [rating, setRating]         = useState(order.rating ?? 0);
+  const [feedback, setFeedback]     = useState(order.ratingFeedback ?? "");
+  const [ratingDone, setRatingDone] = useState(!!order.rating);
+  const [ratingBusy, setRatingBusy] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnRef, setReturnRef]   = useState("");
+
+  async function submitRating() {
+    if (rating < 1) return;
+    setRatingBusy(true);
+    try {
+      if (order.apiId) await ordersApi.rate(order.apiId, rating, feedback.trim() || undefined);
+      setRatingDone(true);
+    } catch { /* keep the form open so they can retry */ }
+    finally { setRatingBusy(false); }
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -1227,8 +1245,8 @@ function PastOrderDetail({ order, onReorder }: { order: OrderTrack; onReorder?: 
                   placeholder="Tell us about the quality, delivery speed, coordinator service…"
                   className="w-full bg-card border border-border rounded-xl px-3.5 py-2.5 text-foreground text-xs outline-none resize-none h-20 mb-3"
                   style={fnt}/>
-                <button onClick={() => setRatingDone(true)} style={btnPrimary}>
-                  Submit feedback
+                <button onClick={submitRating} disabled={ratingBusy} style={ratingBusy ? { ...btnPrimary, opacity: 0.6 } : btnPrimary}>
+                  {ratingBusy ? "Submitting…" : "Submit feedback"}
                 </button>
               </>
             )}

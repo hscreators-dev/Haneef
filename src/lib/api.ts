@@ -133,6 +133,10 @@ export const orders = {
   // (after the QC report — unlocks shipping). Gates enforced server-side.
   pay: (id: string, mode: string, reference?: string, stage?: "advance" | "balance" | "full") =>
     post<{ order: Order }>(`/orders/${id}/pay`, { mode, reference, stage }),
+  // Rate a delivered order (1–5) with optional feedback — stored on the order so
+  // the admin portal can see it.
+  rate: (id: string, rating: number, feedback?: string) =>
+    post<{ order: Order }>(`/orders/${id}/rating`, { rating, feedback }),
 };
 
 // ─── Account ──────────────────────────────────────────────────────────────────
@@ -349,6 +353,9 @@ export interface Order {
   paymentDate?: string;
   paymentReference?: string;
   assignedEmployee?: string;  // employee name shown on the coordinator card
+  rating?: number;            // customer rating 1–5 (set once delivered)
+  ratingFeedback?: string;
+  ratedAt?: string;
   total?: number;
   // Attachments: customer design/logo refs (uploaded at submit) and admin
   // documents (invoice/quotation/billing, downloadable in the app).

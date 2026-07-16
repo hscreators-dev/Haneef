@@ -295,6 +295,27 @@ router.post("/:id/pay", async (req: AuthRequest, res: Response, next: NextFuncti
   } catch (err) { next(err); }
 });
 
+// ─── POST /api/orders/:id/rating ──────────────────────────────────────────────
+// Customer rates a delivered order (1–5) with optional feedback. Stored on the
+// order so the admin portal can see it. Idempotent — re-submitting updates it.
+const RatingSchema = z.object({
+  rating:   z.number().int().min(1).max(5),
+  feedback: z.string().max(2000).optional(),
+});
+
+router.post("/:id/rating", async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { rating, feedback } = RatingSchema.parse(req.body);
+    const order = await Order.findOne({ _id: req.params.id, userId: req.userId });
+    if (!order) return next(httpError("Order not found", 404));
+    order.rating = rating;
+    order.ratingFeedback = feedback ?? "";
+    order.ratedAt = new Date();
+    await order.save();
+    res.json({ order: await Order.findById(order._id).select("-__v") });
+  } catch (err) { next(err); }
+});
+
 // ─── GET /api/orders/:id/quote ────────────────────────────────────────────────
 
 router.get("/:id/quote", async (req: AuthRequest, res: Response, next: NextFunction) => {

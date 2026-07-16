@@ -158,6 +158,10 @@ export interface IOrder extends Document {
   manufacturer?: string;
   qcResult: QcResult;
   adminPayStatus: AdminPayStatus;
+  // Customer rating (1–5) + feedback, submitted once the order is delivered.
+  rating?: number;
+  ratingFeedback?: string;
+  ratedAt?: Date;
   total: number;
   lines: IOrderLine[];
   documents: mongoose.Types.DocumentArray<IOrderDocument>;
@@ -273,6 +277,9 @@ const OrderSchema = new Schema<IOrder>(
     manufacturer: { type: String, default: "—" },
     qcResult: { type: String, enum: ["PENDING","PASSED","FAILED","REWORK","N/A"], default: "PENDING" },
     adminPayStatus: { type: String, enum: ["PENDING","PARTIAL","COMPLETED"], default: "PENDING" },
+    rating:         { type: Number, min: 1, max: 5 },
+    ratingFeedback: { type: String },
+    ratedAt:        { type: Date },
     total: { type: Number, default: 0 },
     lines: { type: [OrderLineSchema], default: [] },
     documents: { type: [OrderDocumentSchema], default: [] },
