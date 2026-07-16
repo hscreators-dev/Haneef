@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
 import { tryon as tryonApi } from "../../lib/api";
-import { useCatalogAvailability, adminStylesFor, adminMaterialsFor, adminPaletteFor, adminGarmentPrice, adminOptionDelta, adminBasePrice } from "../../lib/useCatalogAvailability";
+import { useCatalogAvailability, adminStylesFor, adminMaterialsFor, adminPaletteFor, adminGarmentPrice, adminOptionDelta } from "../../lib/useCatalogAvailability";
 import { useOrderFormConfig, calcServiceFee, surplusDiscountPct } from "../../lib/useOrderFormConfig";
 
 const ACCENT      = "#C8A97E";
@@ -796,43 +796,6 @@ function SuggestLine({ text }: { text: string }) {
     <div className="flex items-start gap-1.5 mt-1 mb-2" style={{ paddingLeft: 2 }}>
       <Lightbulb size={12} strokeWidth={1.8} style={{ color: "#B45309", flexShrink: 0, marginTop: 1.5 }} />
       <p style={{ fontSize: 11, lineHeight: 1.45, color: "#6b7280" }}>{text}</p>
-    </div>
-  );
-}
-// Itemised "how this price is built" line — base + each chosen option's ₹ delta.
-// Only renders when the admin has priced this product's options, so the customer
-// sees exactly why the total is what it is (no silent price jumps). Returns null
-// otherwise so built-in-priced garments are unaffected.
-function PriceBreakdown({ name, sel, audience }: {
-  name?: string;
-  sel: { fabric?: string; gsm?: string; weave?: string; style?: string };
-  audience: "B2C" | "B2B";
-}) {
-  const base = name ? adminBasePrice(name, audience) : null;
-  if (base == null) return null;
-  const parts: { label: string; amt: number }[] = [];
-  const add = (dim: "fabric" | "gsm" | "weave" | "style", label: string, opt?: string) => {
-    if (!opt) return;
-    const d = adminOptionDelta(name!, dim, opt, audience);
-    if (d != null) parts.push({ label, amt: d });
-  };
-  add("style", "Style", sel.style);
-  add("fabric", "Fabric", sel.fabric);
-  add("gsm", "GSM", sel.gsm);
-  add("weave", "Weave", sel.weave);
-  const total = base + parts.reduce((s, p) => s + p.amt, 0);
-  return (
-    <div className="px-3 py-2 mb-3 rounded-xl" style={{ background: "var(--muted)", border: "1px solid var(--border)" }}>
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5" style={{ fontSize: 11, color: "#6b7280" }}>
-        <span>Base {inr(base)}</span>
-        {parts.map((p) => (
-          <span key={p.label}>· {p.label} {p.amt > 0 ? `+${inr(p.amt)}` : "included"}</span>
-        ))}
-      </div>
-      <div className="flex items-baseline justify-between mt-1">
-        <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Price per piece</span>
-        <span style={{ fontSize: 16, fontWeight: 800, color: DARK }}>{inr(total)}<span style={{ fontSize: 11, fontWeight: 600 }}>/pc</span></span>
-      </div>
     </div>
   );
 }
@@ -2117,18 +2080,8 @@ function GarmentCart({ cart, onChange, lockedCategory, onViewPhotos }: { cart: G
                     </div>
                   )}
 
-                  {/* Style — round neck / collared, formal / printed, leggings / jeans … */}
-                  {garmentStyleOptions(it.name).length > 0 && (
-                    <div>
-                      <p className="text-muted-foreground mb-1" style={{ fontSize: 11, fontWeight: 500 }}>Style</p>
-                      <SelectField
-                        options={garmentStyleOptions(it.name)}
-                        value={lines[0]?.style ?? garmentStyleOptions(it.name)[0]}
-                        priceFor={o => optionDeltaLabel(it.name, "style", o, "B2C")}
-                        onChange={v => setGarmentStyle(it.name, v)}/>
-                      <SuggestLine text={styleSuggestion(lines[0]?.style ?? garmentStyleOptions(it.name)[0])} />
-                    </div>
-                  )}
+                  {/* Style is now chosen on the next step (Material), above Fabric,
+                      so the customer sees how it affects the price in one place. */}
                   {lines.map(line => (
                     <div key={line.colorHex} className="flex flex-col gap-1.5 px-2.5 py-2 rounded-xl" style={{ background: "var(--card)", boxShadow: "0 1px 3px rgba(13,13,13,0.05)" }}>
                       <div className="flex items-center gap-2">
@@ -2980,8 +2933,7 @@ function OrgGarmentCart({ cart, onChange, orgType, allowedCategories, onViewPhot
                       </div>
                     </div>
                     <SuggestLine text={`${gsmSuggestion(l.material.gsm)} · ${weaveSuggestion(l.material.weave)}`} />
-                    <PriceBreakdown name={l.name} sel={{ fabric: l.material.fabric, gsm: l.material.gsm, weave: l.material.weave, style: l.style }} audience="B2B" />
-                    <p className="text-right mt-1" style={{ fontSize: 11, color:"#1a4a8a", fontWeight: 600 }}>{inr(rate)}/pc · subtotal {inr(rate * l.qty)}</p>
+                    <p className="text-right mt-1" style={{ fontSize: 12, color:"#1a4a8a", fontWeight: 700 }}>Price per piece {inr(rate)}/pc · subtotal {inr(rate * l.qty)}</p>
                   </div>
 
                   {/* Brand / Pantone colours */}
@@ -6446,9 +6398,9 @@ function PersonaOrderForm({
                 // Representative garment for the price preview on the two cards —
                 // the first garment in the order with its current fabric/weave picks.
                 const rep = persona === "individual" && garmentCart.length > 0
-                  ? { g: { categoryId: garmentCart[0].categoryId, name: garmentCart[0].name, basePrice: garmentCart[0].basePrice }, m: matFor(garmentCart[0].name) }
+                  ? { g: { categoryId: garmentCart[0].categoryId, name: garmentCart[0].name, basePrice: garmentCart[0].basePrice, style: garmentCart[0].style }, m: matFor(garmentCart[0].name) }
                   : orgCart.length > 0
-                    ? { g: { categoryId: orgCart[0].categoryId, name: orgCart[0].name, basePrice: orgCart[0].basePrice }, m: orgCart[0].material }
+                    ? { g: { categoryId: orgCart[0].categoryId, name: orgCart[0].name, basePrice: orgCart[0].basePrice, style: orgCart[0].style }, m: orgCart[0].material }
                     : selectedGarment ? { g: selectedGarment, m: material } : null;
                 const priceOf = (src: "fresh" | "surplus") => rep ? garmentPriceForFabric(rep.g, rep.m.fabric, rep.m.weave, src, rep.m.gsm, priceAudience) : null;
                 const freshPc = priceOf("fresh");
@@ -6507,29 +6459,27 @@ function PersonaOrderForm({
                     const fabricVal = o.fabricOptions.includes(cur.fabric) ? cur.fabric : o.fabricOptions[0];
                     const gsmVal    = o.gsmOptions.includes(cur.gsm) ? cur.gsm : o.gsmOptions[0];
                     const weaveVal  = o.weaveOptions.includes(cur.weave) ? cur.weave : o.weaveOptions[0];
+                    const styleOpts = garmentStyleOptions(name);
+                    const gStyle    = garmentCart.find(g => g.name === name)?.style ?? styleOpts[0];
+                    const setStyleFor = (v: string) => setGarmentCart(prev => prev.map(g => g.name === name ? { ...g, style: v } : g));
+                    const gLine = { categoryId: "mens" as const, name, basePrice: garmentCart.find(g => g.name === name)!.basePrice, style: gStyle };
+                    const fresh = garmentPriceForFabric(gLine, fabricVal, weaveVal, "fresh", gsmVal, priceAudience);
+                    const now   = garmentPriceForFabric(gLine, fabricVal, weaveVal, fabricSource, gsmVal, priceAudience);
                     return (
                       <div key={name} className="rounded-xl border border-border overflow-hidden">
                         <div className="flex items-center justify-between gap-2 px-3 py-2" style={{ background:"var(--muted)" }}>
                           <span style={{ fontSize: 12.5, fontWeight: 700, color: DARK }}>{name}</span>
-                          <span className="flex items-center gap-1.5 flex-shrink-0">
-                            {(() => {
-                              const gLine = { categoryId: "mens" as const, name, basePrice: garmentCart.find(g => g.name === name)!.basePrice };
-                              const fresh = garmentPriceForFabric(gLine, fabricVal, weaveVal, "fresh", gsmVal, priceAudience);
-                              const now = garmentPriceForFabric(gLine, fabricVal, weaveVal, fabricSource, gsmVal, priceAudience);
-                              return (
-                                <span className="flex items-baseline gap-1.5">
-                                  {fabricSource === "surplus" && fresh !== now && (
-                                    <span style={{ fontSize: 13, color:"#9ca3af", textDecoration:"line-through" }}>{inr(fresh)}</span>
-                                  )}
-                                  <span style={{ fontSize: 17, color: fabricSource === "surplus" ? "#047857" : "#1a4a8a", fontWeight: 800 }}>{inr(now)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
-                                </span>
-                              );
-                            })()}
-                            <RemoveChip title={`Remove ${name} from this order`}
-                              onRemove={() => setGarmentCart(prev => prev.filter(g => g.name !== name))}/>
-                          </span>
+                          <RemoveChip title={`Remove ${name} from this order`}
+                            onRemove={() => setGarmentCart(prev => prev.filter(g => g.name !== name))}/>
                         </div>
                         <div className="px-3 py-2.5">
+                          {styleOpts.length > 0 && (
+                            <>
+                              <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Style</p>
+                              <div className="mb-1"><SelectField options={styleOpts} value={gStyle} priceFor={ox => optionDeltaLabel(name, "style", ox, priceAudience)} onChange={setStyleFor} /></div>
+                              <SuggestLine text={styleSuggestion(gStyle)} />
+                            </>
+                          )}
                           <p className="text-muted-foreground mb-1" style={{ fontSize: 11.5 }}>Fabric</p>
                           <div className="mb-1"><SelectField options={o.fabricOptions} value={fabricVal} priceFor={ox => optionDeltaLabel(name, "fabric", ox, priceAudience)} onChange={v => setMatFor(name, { fabric: v })} /></div>
                           <SuggestLine text={fabricSuggestion(fabricVal)} />
@@ -6544,7 +6494,16 @@ function PersonaOrderForm({
                             </div>
                           </div>
                           <SuggestLine text={`${gsmSuggestion(gsmVal)} · ${weaveSuggestion(weaveVal)}`} />
-                          <PriceBreakdown name={name} sel={{ fabric: fabricVal, gsm: gsmVal, weave: weaveVal, style: garmentCart.find(g => g.name === name)?.style }} audience={priceAudience} />
+                          {/* ONE clear price for this garment — matches the cards above */}
+                          <div className="flex items-baseline justify-between px-3 py-2 mt-1 rounded-xl" style={{ background: fabricSource === "surplus" ? "#ecfdf5" : "var(--muted)", border: `1px solid ${fabricSource === "surplus" ? "#a7f3d0" : "var(--border)"}` }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Price per piece</span>
+                            <span className="flex items-baseline gap-1.5">
+                              {fabricSource === "surplus" && fresh !== now && (
+                                <span style={{ fontSize: 12.5, color:"#9ca3af", textDecoration:"line-through" }}>{inr(fresh)}</span>
+                              )}
+                              <span style={{ fontSize: 17, color: fabricSource === "surplus" ? "#047857" : DARK, fontWeight: 800 }}>{inr(now)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -6567,19 +6526,16 @@ function PersonaOrderForm({
                     priceFor={o => optionDeltaLabel(selectedGarment?.name, "weave", o, priceAudience, ox => { const a = weaveAddOnPerPc(ox); return a > 0 ? ` · +${inr(a)}/pc` : ` · included`; })} /></div>
                   <SuggestLine text={weaveSuggestion(material.weave)} />
 
-                  {/* Itemised breakdown (admin-priced) OR a single clear total */}
-                  <PriceBreakdown name={selectedGarment?.name} sel={{ fabric: material.fabric, gsm: material.gsm, weave: material.weave, style: selectedGarment?.style }} audience={priceAudience} />
-                  {adminBasePrice(selectedGarment?.name ?? "", priceAudience) == null && (
-                    <div className="flex items-baseline justify-between px-3 py-2 mb-1 rounded-xl" style={{ background: fabricSource === "surplus" ? "#ecfdf5" : "var(--muted)", border: `1px solid ${fabricSource === "surplus" ? "#a7f3d0" : "var(--border)"}` }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Your price per piece</span>
-                      <span className="flex items-baseline gap-1.5">
-                        {fabricSource === "surplus" && (
-                          <span style={{ fontSize: 12.5, color: "#9ca3af", textDecoration: "line-through" }}>{inr(garmentPriceForFabric(selectedGarment, material.fabric, material.weave, "fresh", material.gsm, priceAudience))}</span>
-                        )}
-                        <span style={{ fontSize: 17, fontWeight: 800, color: fabricSource === "surplus" ? "#047857" : DARK }}>{inr(garmentRate)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
-                      </span>
-                    </div>
-                  )}
+                  {/* ONE clear price — no duplicate breakdown card */}
+                  <div className="flex items-baseline justify-between px-3 py-2 mb-1 rounded-xl" style={{ background: fabricSource === "surplus" ? "#ecfdf5" : "var(--muted)", border: `1px solid ${fabricSource === "surplus" ? "#a7f3d0" : "var(--border)"}` }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>Price per piece</span>
+                    <span className="flex items-baseline gap-1.5">
+                      {fabricSource === "surplus" && (
+                        <span style={{ fontSize: 12.5, color: "#9ca3af", textDecoration: "line-through" }}>{inr(garmentPriceForFabric(selectedGarment, material.fabric, material.weave, "fresh", material.gsm, priceAudience))}</span>
+                      )}
+                      <span style={{ fontSize: 17, fontWeight: 800, color: fabricSource === "surplus" ? "#047857" : DARK }}>{inr(garmentRate)}<span style={{ fontSize: 12, fontWeight: 600 }}>/pc</span></span>
+                    </span>
+                  </div>
                 </>
               )}
             </Section>
