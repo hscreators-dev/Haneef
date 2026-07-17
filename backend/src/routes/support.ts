@@ -24,7 +24,15 @@ const ReplySchema = z.object({ body: z.string().min(1).max(4000) });
 // ─── GET /api/support/tickets — the customer's own tickets ───────────────────
 router.get("/tickets", async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const tickets = await SupportTicket.find({ userId: req.userId }).sort({ updatedAt: -1 }).select("-__v");
+    // Match by userId OR the account's phone/email. A customer can end up with
+    // more than one User document over time (duplicate accounts from earlier
+    // onboarding issues), and tickets raised under a previous account would then
+    // vanish. Matching on phone/email too keeps ALL their old tickets visible.
+    const me = await User.findById(req.userId).select("phone email");
+    const or: Record<string, unknown>[] = [{ userId: req.userId }];
+    if (me?.phone) or.push({ customerPhone: me.phone });
+    if (me?.email) or.push({ customerEmail: me.email });
+    const tickets = await SupportTicket.find({ $or: or }).sort({ updatedAt: -1 }).select("-__v");
     res.json({ tickets });
   } catch (err) { next(err); }
 });

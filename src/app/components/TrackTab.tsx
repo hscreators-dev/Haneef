@@ -1424,7 +1424,7 @@ function TrackCoachmark({ storageKey, targetId, title, body }: {
 }
 
 // ─── Order Card ───────────────────────────────────────────────────────────────
-function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen, headerId, coordinator, onPayLive, onRated }: {
+function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paidOverride, onMarkPaid, forceOpen, onDeliveredOpen, headerId, coordinator, onPayLive, onRated, onCancelled }: {
   order: OrderTrack; accountType?: "personal" | "organisation";
   onMessage?: () => void; onReorder?: () => void; onEditOrder?: (payload?: DraftPayload) => void;
   paidOverride?: boolean; onMarkPaid?: () => void; forceOpen?: boolean;
@@ -1432,6 +1432,7 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
   coordinator?: Coordinator | null;
   onPayLive?: (order: OrderTrack, mode: string, stage?: "advance" | "balance" | "full") => Promise<void>;
   onRated?: (apiId: string, rating: number, feedback?: string) => void;
+  onCancelled?: () => void;
 }) {
   const [open, setOpen] = useState(order.defaultOpen || forceOpen);
   const firedRef = React.useRef(false);
@@ -1446,6 +1447,22 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
     ? (order.adminStatus === "NEW" || !order.adminStatus)
     : (order.statusLabel === "Order placed" || order.statusLabel === "Quote pending");
   const showCoordinator = !!order.assignedEmployee || (!awaitingConfirm && !!coordinator);
+
+  // Customer cancel — allowed only before production starts (status still at
+  // placed/confirmed/quote) AND while nothing is paid. Mirrors the backend rule.
+  const [cancelArmed, setCancelArmed] = useState(false);
+  const [cancelling, setCancelling]   = useState(false);
+  const [cancelErr, setCancelErr]     = useState("");
+  const canCustomerCancel = !!order.apiId
+    && ["Order placed", "Order confirmed", "Quote pending"].includes(order.statusLabel)
+    && order.livePaymentStatus !== "paid" && order.livePaymentStatus !== "partial";
+  async function doCancel() {
+    if (!order.apiId) return;
+    setCancelling(true); setCancelErr("");
+    try { await ordersApi.cancel(order.apiId); onCancelled?.(); }
+    catch (e) { setCancelErr((e as Error).message || "Couldn't cancel — please try again."); setCancelArmed(false); }
+    finally { setCancelling(false); }
+  }
 
   // Fire onDeliveredOpen once when a delivered order card is expanded — pass the
   // order so the rating popup knows WHICH order to attach the rating to.
@@ -1614,6 +1631,34 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
                 <OrderDetailsCard order={order} canChange={canChange} accountType={accountType} onEdit={() => onEditOrder?.(order.editPayload)}/>
                 {accountType !== "personal" && CHANGEABLE_STATUSES.includes(order.statusLabel) && !order.isAccessoryOrder && <SampleApprovalCard order={order}/>}
                 <DocumentVault order={order}/>
+
+                {/* Cancel — only BEFORE production starts and while unpaid. Once
+                    production has started (or the order is paid) it can't be
+                    cancelled here; the customer contacts their coordinator. */}
+                {canCustomerCancel && (
+                  <div>
+                    {cancelArmed ? (
+                      <div className="flex gap-2">
+                        <button onClick={() => setCancelArmed(false)} disabled={cancelling}
+                          className="flex-1 rounded-2xl py-3 text-sm" style={{ border: "1.5px solid var(--border)", background: "var(--card)", color: DARK, fontWeight: 600, cursor: "pointer" }}>
+                          Keep order
+                        </button>
+                        <button onClick={doCancel} disabled={cancelling}
+                          className="flex-1 rounded-2xl py-3 text-sm" style={{ border: "none", background: "#b91c1c", color: "#fff", fontWeight: 700, cursor: "pointer", opacity: cancelling ? 0.6 : 1 }}>
+                          {cancelling ? "Cancelling…" : "Yes, cancel"}
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setCancelArmed(true)}
+                        className="w-full rounded-2xl py-3 text-sm flex items-center justify-center gap-2"
+                        style={{ border: "1.5px solid var(--border)", background: "var(--card)", color: "#b91c1c", fontWeight: 600, cursor: "pointer" }}>
+                        <X size={15} strokeWidth={1.8}/> Cancel this order
+                      </button>
+                    )}
+                    {cancelErr && <p style={{ fontSize: 11, color: "#b91c1c", marginTop: 6, lineHeight: 1.4 }}>{cancelErr}</p>}
+                    <p className="text-muted-foreground" style={{ fontSize: 10.5, marginTop: 6, lineHeight: 1.4 }}>You can cancel until production starts. After that, message your coordinator.</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1903,6 +1948,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
               coordinator={coordinator}
               onPayLive={handlePayLive}
               onRated={onRated}
+              onCancelled={refreshLive}
             />
           ))
         )}
