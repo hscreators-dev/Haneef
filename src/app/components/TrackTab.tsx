@@ -445,6 +445,19 @@ function DetailRow({ label, value, accent }: { label: string; value: React.React
   );
 }
 
+// A price-breakdown row: the LABEL is the long part (product · style · size ·
+// colour · qty), so it must be allowed to wrap; the value (₹…) stays pinned on
+// the right and never wraps. (DetailRow does the opposite — for short labels.)
+function PriceLine({ label, value, accent }: { label: string; value: React.ReactNode; accent?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-muted-foreground" style={{ fontSize: 12, minWidth: 0, wordBreak: "break-word", lineHeight: 1.4 }}>{label}</span>
+      <span className={accent ? "text-emerald-700" : "text-foreground"}
+        style={{ fontSize: 12, fontWeight: accent ? 700 : 500, flexShrink: 0, whiteSpace: "nowrap" }}>{value}</span>
+    </div>
+  );
+}
+
 // ─── Payment Method Card ──────────────────────────────────────────────────────
 function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPayLive }: {
   order: OrderTrack; accountType?: "personal" | "organisation"; paidOverride?: boolean; onMarkPaid?: () => void;
@@ -697,11 +710,11 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
             <>
               {divider}{sec("Price details")}
               {order.price.items?.length
-                ? order.price.items.map((it, i) => <DetailRow key={`${it.label}-${i}`} label={it.label} value={it.value}/>)
+                ? order.price.items.map((it, i) => <PriceLine key={`${it.label}-${i}`} label={it.label} value={it.value}/>)
                 : <DetailRow label="Items" value={order.price.rateLine}/>}
-              {order.price.taxLine && <DetailRow label="GST (18%)" value={order.price.taxLine}/>}
-              {order.price.serviceFeeLine && <DetailRow label="Service fee" value={order.price.serviceFeeLine}/>}
-              <DetailRow label={order.price.totalLabel} value={order.price.totalValue} accent/>
+              {order.price.taxLine && <PriceLine label="GST (18%)" value={order.price.taxLine}/>}
+              {order.price.serviceFeeLine && <PriceLine label="Service fee" value={order.price.serviceFeeLine}/>}
+              <PriceLine label={order.price.totalLabel} value={order.price.totalValue} accent/>
               {order.price.note && (
                 <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.5, marginTop: 1 }}>{order.price.note}</p>
               )}
@@ -835,12 +848,12 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
           <>
             {divider}{sec("Price details")}
             {order.price.items?.length
-              ? order.price.items.map((it, i) => <DetailRow key={`${it.label}-${i}`} label={it.label} value={it.value}/>)
+              ? order.price.items.map((it, i) => <PriceLine key={`${it.label}-${i}`} label={it.label} value={it.value}/>)
               : <DetailRow label="Rate" value={order.price.rateLine}/>}
-            {order.price.addOnLine && <DetailRow label="Stitching & packaging" value={order.price.addOnLine}/>}
-            {order.price.taxLine && <DetailRow label="GST (18%)" value={order.price.taxLine}/>}
-            {order.price.serviceFeeLine && <DetailRow label="Service fee" value={order.price.serviceFeeLine}/>}
-            <DetailRow label={order.price.totalLabel} value={order.price.totalValue} accent/>
+            {order.price.addOnLine && <PriceLine label="Stitching & packaging" value={order.price.addOnLine}/>}
+            {order.price.taxLine && <PriceLine label="GST (18%)" value={order.price.taxLine}/>}
+            {order.price.serviceFeeLine && <PriceLine label="Service fee" value={order.price.serviceFeeLine}/>}
+            <PriceLine label={order.price.totalLabel} value={order.price.totalValue} accent/>
             {order.price.note && (
               <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.5, marginTop: 1 }}>{order.price.note}</p>
             )}

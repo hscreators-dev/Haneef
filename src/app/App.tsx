@@ -606,7 +606,7 @@ function SwatchBoxModal({ onClose }: { onClose: () => void }) {
 // ─── Active-order card shape (Home) ─────────────────────────────────────────────
 // Derived from the customer's REAL orders — no mock data. The card only shows
 // once a real order exists, so tapping "Track" always opens something.
-interface HomeOrderCard { id: string; name: string; shade: string; qty: string; gsm: string; eta: string; status: string; pct: number; quoteReady: boolean; quoteText: string; }
+interface HomeOrderCard { id: string; name: string; shade: string; qty: string; gsm: string; eta: string; status: string; pct: number; quoteReady: boolean; quoteText: string; orderId?: string; needsPayment?: boolean; payAmount?: number; }
 
 const HOME_STATUS_PCT: Record<string, number> = {
   "Order placed": 8, "Order submitted": 8, "Quote pending": 15, "Quote ready": 20, "Order confirmed": 30,
@@ -619,8 +619,16 @@ function apiOrderToHomeCard(o: ApiOrder): HomeOrderCard {
     : (o.garmentType || "Custom order");
   const shade = o.colors?.[0]?.label || "";
   const quoteReady = o.status === "Quote ready" || (o.persona === "organisation" && (o.quoteAmount ?? 0) > 0 && o.paymentStatus !== "paid" && o.status === "Quote pending");
+  // Individual order that Garm has confirmed but the customer hasn't paid yet →
+  // surface a "Pay now" prompt on Home so they know an action is waiting.
+  const payAmount = o.total || o.quoteAmount || 0;
+  const needsPayment = o.persona !== "organisation"
+    && o.paymentStatus !== "paid"
+    && (o.adminStatus === "CONFIRMED" || o.status === "Order confirmed")
+    && payAmount > 0;
   return {
     id: o.orderRef ? `#${o.orderRef}` : (o._id ? `#${o._id.slice(-6)}` : "#—"),
+    orderId: o.orderRef || o._id,
     name,
     shade,
     qty: `${o.qty || 0} pcs`,
@@ -630,6 +638,8 @@ function apiOrderToHomeCard(o: ApiOrder): HomeOrderCard {
     pct: HOME_STATUS_PCT[o.status] ?? 10,
     quoteReady,
     quoteText: (o.quoteAmount ?? 0) > 0 ? `Quote ready — ₹${Math.round(o.quoteAmount!).toLocaleString("en-IN")}` : "Quote ready",
+    needsPayment,
+    payAmount,
   };
 }
 
@@ -670,18 +680,21 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
     return () => { alive = false; clearInterval(t); };
   }, []);
 
-  // Active order drives the horizontal progress tracker
-  const trackStages = ["Review", "Quote", "Approve", "Production", "QC", "Shipped", "Delivered"];
-  const statusToStage: Record<string, number> = {
-    "Order placed": 0, "Order submitted": 0, "Order confirmed": 1, "Quote pending": 1, "Quote ready": 2, "In production": 3,
-    "Quality check": 4, "Shipped": 5, "Delivered": 6, "Completed": 6,
-  };
-  const activeOrder = homeOrders[0] ?? null;
-  const curStage = activeOrder ? (statusToStage[activeOrder.status] ?? 0) : 0;
-
   // Persona-aware hero copy — individuals get warm, personal lines;
   // organisations get the procurement pitch.
   const personalHome = !profile?.accountType || profile.accountType === "personal";
+
+  // Active order drives the horizontal progress tracker. Individuals never get a
+  // Quote/Approve stage (that's the organisation quote flow) — their journey is
+  // Submitted → Confirmed → Production → QC → Shipped → Delivered.
+  const trackStages = personalHome
+    ? ["Submitted", "Confirmed", "Production", "QC", "Shipped", "Delivered"]
+    : ["Review", "Quote", "Approve", "Production", "QC", "Shipped", "Delivered"];
+  const statusToStage: Record<string, number> = personalHome
+    ? { "Order placed": 0, "Order submitted": 0, "Order confirmed": 1, "In production": 2, "Quality check": 3, "Shipped": 4, "Delivered": 5, "Completed": 5 }
+    : { "Order placed": 0, "Order submitted": 0, "Order confirmed": 1, "Quote pending": 1, "Quote ready": 2, "In production": 3, "Quality check": 4, "Shipped": 5, "Delivered": 6, "Completed": 6 };
+  const activeOrder = homeOrders[0] ?? null;
+  const curStage = activeOrder ? (statusToStage[activeOrder.status] ?? 0) : 0;
   const hero = personalHome
     ? {
         eyebrow: "Garm · Made to order",
@@ -865,6 +878,22 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
               </div>
               <p className="text-muted-foreground" style={{ fontSize: 12 }}>{[activeOrder.qty, activeOrder.gsm, activeOrder.eta].filter(Boolean).join(" · ")}</p>
             </div>
+
+            {/* Payment prompt — order confirmed, awaiting the customer's payment. */}
+            {activeOrder.needsPayment && (
+              <button onClick={() => onNavigate("track", activeOrder.id)}
+                className="mt-3 w-full flex items-center justify-between rounded-xl px-3.5 py-3"
+                style={{ background: "#0D0D0D", border: "none", cursor: "pointer" }}>
+                <span className="flex items-center gap-2 min-w-0">
+                  <Wallet size={15} strokeWidth={1.8} style={{ color: "#C8A97E", flexShrink: 0 }}/>
+                  <span className="text-left min-w-0">
+                    <span className="block" style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>Payment due · ₹{Math.round(activeOrder.payAmount || 0).toLocaleString("en-IN")}</span>
+                    <span className="block" style={{ fontSize: 10.5, color: "rgba(255,255,255,0.6)" }}>Confirmed by Garm — pay to start production</span>
+                  </span>
+                </span>
+                <span className="rounded-lg px-3 py-1.5 flex-shrink-0" style={{ background: "#C8A97E", color: "#0D0D0D", fontSize: 12, fontWeight: 700 }}>Pay now</span>
+              </button>
+            )}
           </div>
         </div>
       )}
