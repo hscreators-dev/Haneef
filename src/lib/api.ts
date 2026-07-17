@@ -271,6 +271,7 @@ export interface UserProfile {
   designation?: string;
   twoFAEnabled?: boolean;
   onboardingComplete?: boolean;
+  avatarUrl?: string;   // profile picture (data URL), persisted on the account
 }
 
 export interface Address {

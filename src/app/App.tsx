@@ -2097,6 +2097,42 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("fl_drafts") || "[]"); } catch { return []; }
   });
 
+  // ── Restore the session on app open ──────────────────────────────────────────
+  // Closing the app must NOT sign the customer out. If a saved token exists, pull
+  // the profile (name, avatar, org…) from the backend and go straight to the app —
+  // only a manual "Sign out" clears the token. Runs once on mount.
+  useEffect(() => {
+    if (!authToken.get()) return; // never signed in on this device
+    let alive = true;
+    accountApi.getProfile().then(({ user }) => {
+      if (!alive) return;
+      const mapped: UserProfile = {
+        name: user.name || "",
+        avatar: user.avatarUrl ?? null,
+        accountType: user.accountType === "organisation" ? "organisation" : "personal",
+        orgName: user.orgName,
+        orgType: user.orgType,
+        phone: user.phone,
+        email: user.email,
+        twoFAEnabled: user.twoFAEnabled,
+      };
+      setUserProfile(mapped);
+      setLoginIdentity({ phone: user.phone, email: user.email });
+      // Recognised + onboarded → straight into the app. If somehow not onboarded,
+      // let them finish onboarding rather than re-logging in.
+      setAuthStep(user.onboardingComplete && user.name ? "app" : "onboarding");
+      accountApi.getAddresses().then(res => {
+        const def = res.addresses.find(a => a.isDefault) ?? res.addresses[0];
+        if (def && alive) setDefaultAddress({ address: def.line1, city: def.city, pin: def.pin });
+      }).catch(() => {});
+    }).catch(() => {
+      // Invalid/expired token — drop it and stay on the welcome screen.
+      authToken.clear();
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Fire the first-time tutorial (and, after it's closed, the coach-mark tour) the moment
   // someone lands on the main app — whether they just finished onboarding OR skipped
   // straight there because their phone/email was already recognised (identity lock).
@@ -2282,9 +2318,15 @@ export default function App() {
       name: p.name, phone: p.phone, email: p.email,
       accountType: p.accountType, orgName: p.orgName, orgType: p.orgType,
       twoFAEnabled: p.twoFAEnabled,
+      // Persist the profile picture so it survives sign-out / app close.
+      avatarUrl: p.avatar ?? undefined,
     }).catch(() => {});
   }
   function handleSignOut() {
+    // MANUAL sign-out only: actually drop the session token so the restore-on-load
+    // effect won't sign the user back in. (Closing the app no longer signs out —
+    // the token stays and the session is restored on next open.)
+    authToken.clear();
     setAuthStep("login");
     setActiveTab("home");
     setShowNotifications(false);
@@ -2330,7 +2372,7 @@ export default function App() {
       // during OTP verification) — this replaces the old localStorage-only lookup.
       const mapped: UserProfile = {
         name: remoteProfile.name || "",
-        avatar: null,
+        avatar: remoteProfile.avatarUrl ?? null,
         accountType: remoteProfile.accountType === "organisation" ? "organisation" : "personal",
         orgName: remoteProfile.orgName,
         orgType: remoteProfile.orgType,

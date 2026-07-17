@@ -81,6 +81,34 @@ function SubScreen({ title, sub, onBack, action, children }: {
   );
 }
 
+// Read an image file, downscale it to a small square, and return a compact JPEG
+// data URL. A data URL (base64) PERSISTS across reloads and can be saved to the
+// backend — unlike URL.createObjectURL(), which returns a blob: URL that dies the
+// moment the page closes (that's why the picture used to vanish on sign-out).
+function fileToAvatarDataUrl(file: File, size = 256): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read failed"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("decode failed"));
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return resolve(String(reader.result));
+        // Center-crop to a square, then draw at `size`.
+        const min = Math.min(img.width, img.height);
+        const sx = (img.width - min) / 2, sy = (img.height - min) / 2;
+        ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // ─── Profile Edit ─────────────────────────────────────────────────────────────
 function ProfileEdit({ profile, onBack, onSave }: {
   profile: UserProfile; onBack: () => void; onSave: (p: UserProfile) => void;
@@ -112,7 +140,7 @@ function ProfileEdit({ profile, onBack, onSave }: {
             <Camera size={12} color="#fff" strokeWidth={1.5}/>
           </button>
           <input ref={fileRef} type="file" accept="image/*" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) setAvatar(URL.createObjectURL(f)); }}/>
+            onChange={e => { const f = e.target.files?.[0]; if (f) fileToAvatarDataUrl(f).then(setAvatar).catch(() => {}); e.target.value = ""; }}/>
         </div>
         <p className="text-muted-foreground text-xs">Tap camera icon to update photo</p>
       </div>

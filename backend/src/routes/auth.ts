@@ -131,6 +131,10 @@ router.post("/verify-otp", async (req: Request, res: Response, next: NextFunctio
         phone:              user.phone,
         email:              user.email,
         accountType:        user.accountType,
+        orgName:            user.orgName,
+        orgType:            user.orgType,
+        avatarUrl:          user.avatarUrl,
+        twoFAEnabled:       user.twoFAEnabled,
         onboardingComplete: user.onboardingComplete,
       },
     });
