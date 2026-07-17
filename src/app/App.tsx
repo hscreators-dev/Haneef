@@ -2104,6 +2104,14 @@ export default function App() {
   // Ratings just submitted via the popup — passed to Track so its Rating &
   // feedback section reflects them immediately (before the 30s poll confirms).
   const [ratingOverrides, setRatingOverrides] = useState<Record<string, { rating: number; feedback?: string }>>({});
+  // Mirror of showRatingPopup for the global auto-prompt effect (so it can bail
+  // when a popup is already open without re-subscribing on every open/close).
+  const popupOpenRef = useRef(false);
+  useEffect(() => { popupOpenRef.current = showRatingPopup; }, [showRatingPopup]);
+  // Orders we've already auto-prompted a rating for, so the popup never nags.
+  const ratingPromptedRef = useRef<Set<string>>(new Set((() => {
+    try { return JSON.parse(localStorage.getItem("fl_rating_prompted") || "[]"); } catch { return []; }
+  })()));
   const [targetOrderId, setTargetOrderId]     = useState<string | null>(null);
   const [userProfile, setUserProfile]         = useState<UserProfile>({ name: "", avatar: null, accountType: "personal" });
   // The user's default saved delivery address, so New Order can pre-fill it instead of
@@ -2161,6 +2169,32 @@ export default function App() {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-prompt the delivery rating from ANYWHERE in the app (Home included) —
+  // the moment an order is delivered and not yet rated, show the feedback popup
+  // once. Previously it only fired when the customer opened the order in Track.
+  useEffect(() => {
+    if (authStep !== "app") return;
+    let alive = true;
+    const check = () => ordersApi.list().then(({ orders }) => {
+      if (!alive || popupOpenRef.current) return;
+      const target = orders.find(o => {
+        const id = o._id || o.orderRef || "";
+        const delivered = o.status === "Delivered" || o.status === "Completed" || o.adminStatus === "DELIVERED";
+        return delivered && !o.rating && id && !ratingPromptedRef.current.has(id);
+      });
+      if (!target) return;
+      const id = target._id || target.orderRef || "";
+      ratingPromptedRef.current.add(id);
+      try { localStorage.setItem("fl_rating_prompted", JSON.stringify([...ratingPromptedRef.current])); } catch { /* ignore */ }
+      setRatingOrder({ apiId: target._id, ref: target.orderRef || `#${(target._id || "").slice(-6)}`, name: target.garmentType || target.serviceLabel || "Your order" });
+      setRatingVal(0); setRatingFeedback(""); setShowRatingPopup(true);
+    }).catch(() => {});
+    check();
+    const t = setInterval(check, 30_000);
+    return () => { alive = false; clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStep]);
 
   // Fire the first-time tutorial (and, after it's closed, the coach-mark tour) the moment
   // someone lands on the main app — whether they just finished onboarding OR skipped

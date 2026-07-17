@@ -1723,14 +1723,25 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   function detectConfirmations(orders: OrderTrack[]) {
     let seen: Record<string, string> = {};
     try { seen = JSON.parse(localStorage.getItem("fl_seen_admin_status") || "{}"); } catch { /* ignore */ }
+    // Orders we've already shown the "pay now" popup for, so it prompts ONCE per
+    // order — even if the confirmation happened while the app was closed.
+    let payPrompted: string[] = [];
+    try { payPrompted = JSON.parse(localStorage.getItem("fl_pay_prompted") || "[]"); } catch { /* ignore */ }
+    const payPromptedSet = new Set(payPrompted);
     for (const o of orders) {
       const prev = seen[o.id];
       const cur = o.adminStatus;
+      // Payment prompt: fire the first time we SEE a confirmed-and-unpaid order —
+      // not only on a live transition. Otherwise an order confirmed while the app
+      // was closed is silently recorded as "seen" and never prompts to pay.
+      const needsPay = (cur === "CONFIRMED" || o.statusLabel === "Order confirmed")
+        && o.livePaymentStatus !== "paid" && o.livePaymentStatus !== "partial";
+      if (needsPay && !payPromptedSet.has(o.id) && !confirmedPopup) {
+        payPromptedSet.add(o.id);
+        setConfirmedPopup({ ref: o.id, amount: o.totalAmount });
+        notifyDevice("Order confirmed 🎉", `${o.id} is confirmed by Garm${o.totalAmount ? ` — pay ₹${o.totalAmount.toLocaleString("en-IN")} to start production` : ""}.`);
+      }
       if (cur && prev && prev !== cur) {
-        if (cur === "CONFIRMED" && o.livePaymentStatus !== "paid") {
-          setConfirmedPopup({ ref: o.id, amount: o.totalAmount });
-          notifyDevice("Order confirmed 🎉", `${o.id} is confirmed by Garm${o.totalAmount ? ` — pay ₹${o.totalAmount.toLocaleString("en-IN")} to start production` : ""}.`);
-        }
         if (["ASSIGNED", "IN_PROGRESS"].includes(cur) && !["ASSIGNED", "IN_PROGRESS"].includes(prev)) {
           notifyDevice("In production 🧵", `${o.id} — your garments are being made.`);
         }
@@ -1744,6 +1755,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
       if (cur) seen[o.id] = cur;
     }
     try { localStorage.setItem("fl_seen_admin_status", JSON.stringify(seen)); } catch { /* ignore */ }
+    try { localStorage.setItem("fl_pay_prompted", JSON.stringify([...payPromptedSet])); } catch { /* ignore */ }
   }
 
   // Retry any orders that couldn't reach the backend when they were submitted
