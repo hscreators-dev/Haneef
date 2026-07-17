@@ -884,11 +884,33 @@ function DeliveryAddresses({ onBack }: { onBack: () => void }) {
   }, []);
 
   function detectGPS() {
+    // REAL device location + reverse geocode (same OpenStreetMap flow the order
+    // step uses) — previously this was a stub that inserted a hardcoded Chennai
+    // address, which looked like a fake/foreign address on the account.
+    if (!navigator.geolocation) { setLoadErr("Location not supported on this device — enter the address manually."); return; }
     setGpsLoading(true);
-    setTimeout(() => {
-      setNewLine1("#45 Anna Salai, Guindy"); setNewCity("Chennai"); setNewPin("600032"); setNewLabel("Current location");
-      setGpsLoading(false); setAdding(true);
-    }, 1500);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&addressdetails=1`,
+            { headers: { Accept: "application/json" } },
+          );
+          const j = await r.json();
+          const a = j.address || {};
+          const line = [a.house_number, a.road, a.suburb || a.neighbourhood || a.village].filter(Boolean).join(", ");
+          setNewLine1(line || j.display_name?.split(",").slice(0, 2).join(",") || "");
+          setNewCity(a.city || a.town || a.village || a.county || "");
+          setNewPin(a.postcode || "");
+          setNewLabel("Current location");
+          setAdding(true);
+        } catch {
+          setLoadErr("Couldn't detect the address — enter it manually.");
+        } finally { setGpsLoading(false); }
+      },
+      () => { setGpsLoading(false); setLoadErr("Location permission denied — enter the address manually."); },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
   }
   async function saveNew() {
     if (!newLine1.trim() || !newCity.trim()) return;

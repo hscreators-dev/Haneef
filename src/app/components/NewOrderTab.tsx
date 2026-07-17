@@ -10,7 +10,7 @@ import {
   Wallet, ReceiptText, ShieldCheck, Mars, Venus, Lightbulb,
 } from "lucide-react";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
-import { tryon as tryonApi } from "../../lib/api";
+import { tryon as tryonApi, account as accountApi, token as authToken } from "../../lib/api";
 import { useCatalogAvailability, adminStylesFor, adminMaterialsFor, adminPaletteFor, adminGarmentPrice, adminOptionDelta, adminBasePrice } from "../../lib/useCatalogAvailability";
 import { useOrderFormConfig, calcServiceFee, surplusDiscountPct } from "../../lib/useOrderFormConfig";
 
@@ -5063,9 +5063,11 @@ function PersonaOrderForm({
   const [orgDraft, setOrgDraft] = useState(resume?.orgDraft ?? {
     name: orgDetails?.name || currentUser.org,
     board: orgDetails?.board || "",
-    address: orgDetails?.address || currentUser.org + ", Erode, Tamil Nadu",
-    city: orgDetails?.city || "Erode",
-    pin: orgDetails?.pin || "638001",
+    // Fall back to the account's SAVED address — never a fabricated one. If
+    // nothing is saved, leave blank so the form asks instead of inventing.
+    address: orgDetails?.address || currentUser.address,
+    city: orgDetails?.city || currentUser.city,
+    pin: orgDetails?.pin || currentUser.pin,
     contactName: orgDetails?.contactName || currentUser.name,
     contactPhone: orgDetails?.contactPhone || currentUser.phone,
     contactEmail: orgDetails?.contactEmail || currentUser.email,
@@ -5232,6 +5234,22 @@ function PersonaOrderForm({
     city: customDetails?.city || currentUser.city,
     pin: customDetails?.pin || currentUser.pin,
   });
+  // The saved default address loads ASYNC (fetched after login/session-restore),
+  // usually after this screen mounted — so the one-time init above misses it and
+  // the Review step asked for an address the customer already saved. Back-fill
+  // any EMPTY field when it arrives; never overwrite what the customer typed.
+  useEffect(() => {
+    setDelivery(d => ({
+      ...d,
+      name:    d.name    || customDetails?.name  || currentUser.name,
+      phone:   d.phone   || customDetails?.phone || currentUser.phone,
+      email:   d.email   || customDetails?.email || currentUser.email,
+      address: d.address || currentUser.address,
+      city:    d.city    || currentUser.city,
+      pin:     d.pin     || currentUser.pin,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser.address, currentUser.city, currentUser.pin, currentUser.name, currentUser.phone]);
   const [editingDelivery, setEditingDelivery] = useState(false);
   const [payment, setPayment] = useState<"upi" | "card">(resume?.payment ?? "upi");
 
@@ -5247,6 +5265,23 @@ function PersonaOrderForm({
   const [cardCvv, setCardCvv]         = useState("");
   const [cardErrors, setCardErrors]   = useState<{ number?: string; expiry?: string; cvv?: string; name?: string }>({});
 
+  // UPI IDs are ACCOUNT data, not per-order scratch state. Load the ones saved
+  // on the account (added here previously or in Account → Payment details) so
+  // the customer never re-types them; keep the resume-draft list too.
+  useEffect(() => {
+    if (!authToken.get()) return;
+    accountApi.getPayment().then(res => {
+      const acctUpis = (res.paymentMethods || [])
+        .filter(m => m.type === "upi" && m.upiId)
+        .map(m => m.upiId as string);
+      if (acctUpis.length === 0) return;
+      setSavedUpis(prev => Array.from(new Set([...prev, ...acctUpis])));
+      setSelectedUpi(prev => prev || acctUpis[0]);
+      setShowUpiAdd(false);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function addUpi() {
     const v = upiInput.trim();
     if (!validateUpi(v)) { setUpiError("Enter a valid UPI ID (e.g. name@bank)"); return; }
@@ -5254,6 +5289,11 @@ function PersonaOrderForm({
     setSavedUpis(prev => [...prev, v]);
     setSelectedUpi(v);
     setUpiInput(""); setUpiError(""); setShowUpiAdd(false);
+    // Persist to the account (best-effort) so it shows in Account → Payment
+    // details and pre-fills the next order — previously it silently vanished.
+    if (authToken.get()) {
+      accountApi.addPayment({ type: "upi", upiId: v, upiProvider: upiApp, isDefault: savedUpis.length === 0 }).catch(() => {});
+    }
   }
 
   // Once the user has seen Review, editing a section can jump straight back to it.

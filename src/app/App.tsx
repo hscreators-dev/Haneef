@@ -2275,16 +2275,19 @@ export default function App() {
   }
   function handleSaveDraft(payload: DraftPayload) {
     const draft: OrderDraft = { ...payload, id: `draft-${Date.now()}`, createdAt: Date.now() };
-    persistDrafts([draft, ...drafts]);
+    // Re-saving a resumed draft REPLACES it (never duplicates).
+    const rest = resumeDraft ? drafts.filter(d => d.id !== resumeDraft.id) : drafts;
+    persistDrafts([draft, ...rest]);
     setResumeDraft(null);
     setActiveTab("home");
   }
   function handleCancelDraft(id: string) {
     persistDrafts(drafts.filter(d => d.id !== id));
   }
-  // Reopen a draft in the editor at the Review step.
+  // Reopen a draft in the editor at the Review step. The draft STAYS in the
+  // list until the order is actually submitted (or re-saved) — previously it
+  // was deleted the moment it was opened, so closing the app mid-edit lost it.
   function handleResumeDraft(d: OrderDraft) {
-    persistDrafts(drafts.filter(x => x.id !== d.id));
     setResumeDraft(d);
     setShowDrafts(false);
     setActiveTab("order");
@@ -2301,6 +2304,8 @@ export default function App() {
   // order entirely and the admin only received it once the customer opened Track.
   function handleOrderPlaced(summary?: SubmittedOrderSummary) {
     if (!summary) return;
+    // Order submitted — a draft it was resumed from is now consumed.
+    if (resumeDraft) persistDrafts(drafts.filter(d => d.id !== resumeDraft.id));
     setNewOrderSummary(summary);
     const payload = summaryToOrderPayload(summary, userProfile);
     // Create with retry/backoff so the order reaches the admin portal even if the
