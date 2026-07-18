@@ -406,6 +406,52 @@ const procurementStages = [
   "Production Started", "QC Inspection", "Shipped", "Delivered",
 ];
 
+// ─── Per-order error boundary ─────────────────────────────────────────────────
+// One order with unexpected/legacy data must NEVER blank the whole Track tab
+// (that was the tap-an-order → dead white screen bug). The broken card shows a
+// friendly fallback; every other order keeps working.
+class OrderCardBoundary extends React.Component<
+  { orderId: string; children: React.ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { orderId: string; children: React.ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    try {
+      localStorage.setItem("fl_last_crash", JSON.stringify({
+        message: error.message,
+        stack: (error.stack || "").slice(0, 4000),
+        componentStack: (info.componentStack || "").slice(0, 4000),
+        orderId: this.props.orderId,
+        at: new Date().toISOString(),
+      }));
+    } catch { /* ignore */ }
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{ ...card, marginBottom: 12 }} className="p-4">
+        <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>Order {this.props.orderId}</p>
+        <p className="text-muted-foreground mt-1" style={{ fontSize: 12, lineHeight: 1.5 }}>
+          We couldn't display this order's details right now. Your order is safe — pull to refresh
+          or contact your coordinator if this keeps happening.
+        </p>
+        <button
+          onClick={() => this.setState({ error: null })}
+          className="mt-3 px-4 py-2 rounded-xl text-xs"
+          style={{ background: DARK, color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+}
+
 // ─── Panel — shared bordered card ─────────────────────────────────────────────
 function Panel({ title, icon, action, children }: {
   title: string; icon?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode;
@@ -696,9 +742,9 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
                     <span className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{it.name}</span>
                     <span className="text-foreground" style={{ fontSize: 12, fontWeight: 700 }}>{it.qty} pcs</span>
                   </div>
-                  {(it.fields.length > 0 || it.notes) && (
+                  {((it.fields?.length ?? 0) > 0 || it.notes) && (
                     <div className="px-3 py-2 flex flex-col gap-1.5">
-                      {it.fields.map(f => <DetailRow key={f.label} label={f.label} value={f.value}/>)}
+                      {(it.fields ?? []).map(f => <DetailRow key={f.label} label={f.label} value={f.value}/>)}
                       {it.notes && <DetailRow label="Notes" value={`“${it.notes}”`}/>}
                     </div>
                   )}
@@ -755,10 +801,10 @@ function OrderDetailsCard({ order, canChange, accountType, onEdit }: {
                     {g.style && <DetailRow label="Style" value={g.style}/>}
                     <DetailRow label="Colour" value={g.colorLabel}/>
                     {(g.fabric || g.gsm || g.weave) && <DetailRow label="Fabric" value={[g.fabric, g.gsm, g.weave].filter(Boolean).join(" · ")}/>}
-                    {g.sizes.length > 0
+                    {(g.sizes?.length ?? 0) > 0
                       ? (
                         <div className="flex flex-wrap gap-1.5 justify-end">
-                          {g.sizes.map(s => (
+                          {(g.sizes ?? []).map(s => (
                             <span key={s.size} className="px-2 py-0.5 rounded-lg" style={{ background: "var(--muted)", border: "1px solid var(--border)", fontSize: 11, fontWeight: 500 }}>{s.size}: {s.qty}</span>
                           ))}
                         </div>
@@ -1958,8 +2004,8 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
           </div>
         ) : (
           filtered.map((order, i) => (
+            <OrderCardBoundary key={order.id} orderId={order.id}>
             <OrderCard
-              key={order.id}
               order={order}
               accountType={accountType}
               onMessage={onMessageCoordinator}
@@ -1975,6 +2021,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
               onRated={onRated}
               onCancelled={refreshLive}
             />
+            </OrderCardBoundary>
           ))
         )}
       </div>

@@ -346,20 +346,69 @@ type RefOption  = "upload_logo" | "inspiration" | "match_uniform" | "swatch_box"
 type DigiStatus = "pending" | "processing" | "done";
 
 interface ColorEntry { id: number; hex: string; pantone: string; label: string; position: string }
-interface RefImg { id: number; url: string; name: string; size: number; caption: string; tag: string; digiStatus?: DigiStatus; needsDigi?: boolean; dataUrl?: string }
+interface RefImg { id: number; url: string; name: string; size: number; caption: string; tag: string; digiStatus?: DigiStatus; needsDigi?: boolean; dataUrl?: string; attachFailed?: boolean }
 
 // Read an uploaded reference file as a base64 data URL so it can travel with
-// the order to the backend — the admin team downloads it from the portal's
-// order Documents card. Files over 4MB are kept name-only (too big to embed).
+// the order to the backend — the admin team views/downloads it from the
+// portal's order Documents card.
+//
+// Photos are RE-ENCODED through a canvas (max 1600px, JPEG) before embedding:
+// • iPhone photos are routinely 5–12MB — previously anything over 4MB was
+//   silently dropped, so the admin never received the customer's design.
+// • HEIC and other exotic formats aren't accepted by the backend allow-list —
+//   canvas re-encoding turns anything the webview can decode into plain JPEG.
+// PDFs (and images that somehow fail to decode) fall back to the raw read,
+// still subject to the 4MB cap.
 const REF_FILE_MAX = 4 * 1024 * 1024;
-function refFileToDataUrl(file: File): Promise<string | undefined> {
-  if (file.size > REF_FILE_MAX) return Promise.resolve(undefined);
+const REF_IMG_MAX_EDGE = 1600;
+
+function readAsDataUrl(file: Blob): Promise<string | undefined> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => resolve(undefined);
     reader.readAsDataURL(file);
   });
+}
+
+async function compressImageToJpeg(file: File): Promise<string | undefined> {
+  try {
+    const objectUrl = URL.createObjectURL(file);
+    const img = await new Promise<HTMLImageElement | undefined>((resolve) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => resolve(undefined);
+      el.src = objectUrl;
+    });
+    URL.revokeObjectURL(objectUrl);
+    if (!img || !img.naturalWidth) return undefined;
+    const scale = Math.min(1, REF_IMG_MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width  = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return undefined;
+    // White backdrop so transparent PNG logos don't turn black in JPEG.
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+    return dataUrl.length <= REF_FILE_MAX * 1.4 ? dataUrl : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function refFileToDataUrl(file: File): Promise<string | undefined> {
+  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+  if (!isPdf) {
+    // Try the canvas path first for anything image-like — it shrinks huge
+    // photos under the cap AND normalises the format to JPEG.
+    const compressed = await compressImageToJpeg(file);
+    if (compressed) return compressed;
+  }
+  if (file.size > REF_FILE_MAX) return undefined;
+  return readAsDataUrl(file);
 }
 
 // Fallback demo profile — overwritten with the real onboarding profile (name, org
@@ -3489,7 +3538,9 @@ function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, in
     setLogoFiles([{ id, url: URL.createObjectURL(file), name: file.name, size: file.size, caption:"", tag:"logo", needsDigi, digiStatus: needsDigi ? "pending" : undefined }]);
     // Embed the actual file so it reaches the admin portal with the order.
     refFileToDataUrl(file).then(dataUrl => {
-      if (dataUrl) setLogoFiles(p => p.map(f => (f.id === id ? { ...f, dataUrl } : f)));
+      // Mark failures VISIBLY — a silently-dropped file means the Garm team
+      // never sees the customer's design.
+      setLogoFiles(p => p.map(f => (f.id === id ? (dataUrl ? { ...f, dataUrl } : { ...f, attachFailed: true }) : f)));
     });
     if (needsDigi) setShowDigiBanner(true);
   }
@@ -3500,7 +3551,7 @@ function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, in
       const id = imgId;
       setInspirationFiles(p => [...p, { id, url: URL.createObjectURL(f), name: f.name, size: f.size, caption:"", tag:"garment" }]);
       refFileToDataUrl(f).then(dataUrl => {
-        if (dataUrl) setInspirationFiles(p => p.map(x => (x.id === id ? { ...x, dataUrl } : x)));
+        setInspirationFiles(p => p.map(x => (x.id === id ? (dataUrl ? { ...x, dataUrl } : { ...x, attachFailed: true }) : x)));
       });
     });
   }
@@ -3562,6 +3613,12 @@ function RefImagesSection({ persona, isAccessoryOrder = false, onStateChange, in
                             </div>
                           )}
                           <button onClick={() => { setLogoFiles([]); setShowDigiBanner(false); }} className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center" style={{ background:"rgba(0,0,0,0.55)", border:"none", cursor:"pointer" }}><X size={10} color="#fff"/></button>
+                          {logoFiles[0].attachFailed && (
+                            <div className="absolute bottom-0 left-0 right-0 flex items-center gap-1.5 px-2 py-1" style={{ background:"rgba(220,38,38,0.92)" }}>
+                              <AlertTriangle size={10} color="#fff" style={{ flexShrink: 0 }}/>
+                              <p style={{ fontSize: 10, color:"#fff", lineHeight: 1.3 }}>Couldn't attach this file — try a JPG/PNG photo or a PDF under 4MB.</p>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <>
@@ -5720,6 +5777,28 @@ function PersonaOrderForm({
     };
   }
 
+  // ── Work-in-progress autosave ──────────────────────────────────────────────
+  // Snapshot the whole order every few seconds (and on unmount) to fl_wip so a
+  // crash, app kill or forced remount NEVER loses the customer's work. The
+  // snapshot is consumed on submit or when explicitly saved as a draft (the
+  // finishedRef guard keeps the unmount-save from resurrecting it after that).
+  const wipBuildRef = useRef<() => DraftPayload>(buildDraftPayload);
+  wipBuildRef.current = buildDraftPayload;
+  const wipLastRef  = useRef("");
+  const finishedRef = useRef(false);
+  useEffect(() => {
+    const save = () => {
+      if (finishedRef.current) return;
+      try {
+        const s = JSON.stringify(wipBuildRef.current());
+        if (s !== wipLastRef.current) { wipLastRef.current = s; localStorage.setItem("fl_wip", s); }
+      } catch { /* best-effort */ }
+    };
+    const t = setInterval(save, 4000);
+    return () => { clearInterval(t); save(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Final Review step: previews everything selected before submission ──
   function renderReview() {
     const isAccessory = isAccessoryOrgOrder;
@@ -7008,7 +7087,7 @@ function PersonaOrderForm({
 
         {/* Save as draft — only on the final Review step, sits above the submit row */}
         {onSaveDraft && currentSubStepLabel === "Review" && (
-          <button onClick={() => onSaveDraft(buildDraftPayload())}
+          <button onClick={() => { finishedRef.current = true; onSaveDraft(buildDraftPayload()); }}
             className="w-full flex items-center justify-center gap-2 mb-2.5 py-2.5 rounded-2xl"
             style={{ background: "var(--card)", border: "1px solid var(--border)", color: DARK, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
             <FileText size={14} strokeWidth={2}/> Save as draft
@@ -7077,7 +7156,7 @@ function PersonaOrderForm({
               ? <>Your order is sent to Garm for confirmation — nothing is charged now. Once confirmed, you'll pay {inr(individualPayable)} in Track and production starts right after.</>
               : <>Your coordinator will confirm the order details and share the final price &amp; next steps shortly. You can still request changes after submitting.</>}</p>
             <div className="flex flex-col gap-2">
-              <button onClick={() => { setShowConfirmSubmit(false); onSubmit(buildFullSummary(), buildDraftPayload()); }} style={{ ...btnPrimary, padding:"12px 20px" }}>
+              <button onClick={() => { finishedRef.current = true; setShowConfirmSubmit(false); onSubmit(buildFullSummary(), buildDraftPayload()); }} style={{ ...btnPrimary, padding:"12px 20px" }}>
                 <Check size={15}/> Yes, submit order
               </button>
               <button onClick={() => setShowConfirmSubmit(false)} style={{ ...btnSecondary, padding:"10px 20px" }}>Go back and review</button>
@@ -7408,6 +7487,16 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
       if (resumeDraft.persona === "organisation" && resumeDraft.orgDetails) return { type: "org_step2", org: resumeDraft.orgDetails, resume: resumeDraft.resume };
       if (resumeDraft.persona === "individual" && resumeDraft.customDetails) return { type: "individual_step2", custom: resumeDraft.customDetails, resume: resumeDraft.resume };
     }
+    // Crash / app-kill safety net: the order form autosaves a work-in-progress
+    // snapshot (fl_wip) every few seconds. If the app died mid-order, restore
+    // it — the customer lands exactly where they left off.
+    try {
+      const wip = JSON.parse(localStorage.getItem("fl_wip") || "null") as DraftPayload | null;
+      if (wip) {
+        if (wip.persona === "organisation" && wip.orgDetails && !isPersonal) return { type: "org_step2", org: wip.orgDetails, resume: wip.resume };
+        if (wip.persona === "individual" && wip.customDetails) return { type: "individual_step2", custom: wip.customDetails, resume: wip.resume };
+      }
+    } catch { /* corrupted snapshot — start fresh */ }
     return isPersonal ? { type: "custom_audience" } : { type: "org_details" };
   });
   const [showSwitchConfirm, setShowSwitchConfirm] = useState(false);
@@ -7442,10 +7531,19 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
   function handleSuccess(summary?: SubmittedOrderSummary, editPayload?: DraftPayload) {
     // Keep the editable snapshot on the summary so Track can reopen this order at Review.
     setSubmittedSummary(summary ? { ...summary, editPayload } : null);
+    // The submitted order consumes the work-in-progress autosave.
+    try { localStorage.removeItem("fl_wip"); } catch { /* ignore */ }
     setStep({ type: "success" });
     // Create the order on the backend NOW (at submit) — so it reaches the admin
     // portal whether the customer then taps "Track your order" or "Back to Home".
     onOrderPlaced?.(summary);
+  }
+
+  // The Order tab stays mounted across tab switches now — so after a submit,
+  // leaving the success screen must RESET the wizard; otherwise coming back to
+  // Order would show the stale "Order submitted!" screen forever.
+  function resetWizard() {
+    setStep(isPersonal ? { type: "custom_audience" } : { type: "org_details" });
   }
 
   return (
@@ -7512,8 +7610,8 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
       )}
       {step.type === "success" && (
         <SuccessScreen
-          onNavigate={onNavigate}
-          onTrackOrder={() => onTrackOrder(submittedSummary ?? undefined)}
+          onNavigate={(tab) => { resetWizard(); onNavigate(tab); }}
+          onTrackOrder={() => { const s = submittedSummary; resetWizard(); onTrackOrder(s ?? undefined); }}
         />
       )}
     </div>

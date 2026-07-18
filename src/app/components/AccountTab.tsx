@@ -864,8 +864,11 @@ function BusinessDetails({ profile, onBack, onSave: onSaveProfile, onContactSupp
 interface Address { id:string; label:string; line1:string; city:string; pin:string; default:boolean }
 const mapApiAddress = (a: ApiAddress): Address => ({ id: a._id!, label: a.label, line1: a.line1, city: a.city, pin: a.pin, default: !!a.isDefault });
 
-function DeliveryAddresses({ onBack }: { onBack: () => void }) {
-  const [addresses, setAddresses] = useState<Address[]>([]);
+function DeliveryAddresses({ onBack, onAddressesChange }: { onBack: () => void; onAddressesChange?: (addresses: Address[]) => void }) {
+  const [addresses, setAddressesState] = useState<Address[]>([]);
+  // Every address-book change is reported upward so the ORDER FLOW's saved
+  // delivery address updates immediately — no app restart needed.
+  const setAddresses = (next: Address[]) => { setAddressesState(next); onAddressesChange?.(next); };
   const [loadErr, setLoadErr]   = useState("");
   const [adding, setAdding]     = useState(false);
   const [saving, setSaving]     = useState(false);
@@ -1747,11 +1750,14 @@ function PolicyScreen({ kind, onBack, isOrg, orgType }: { kind: "terms" | "payme
 }
 
 // ─── Main Account ─────────────────────────────────────────────────────────────
-export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: {
+export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut, onAddressesChange }: {
   onNavigate?: (tab: string, orderId?: string) => void;
   profile?: UserProfile;
   onProfileUpdate?: (p: UserProfile) => void;
   onSignOut?: () => void;
+  // Fired whenever the delivery address book changes, so the app can keep the
+  // order flow's pre-filled address in sync mid-session.
+  onAddressesChange?: (addresses: { label: string; line1: string; city: string; pin: string; default: boolean }[]) => void;
 }) {
   const [screen, setScreen]           = useState<Screen>("main");
   // Open support tickets — shown as a badge on the Help & support row so the
@@ -1775,7 +1781,7 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut }: 
 
   if (screen === "profile")               return <ProfileEdit profile={{ ...profile, name: displayName, avatar: displayAvatar }} onBack={() => setScreen("main")} onSave={p => { onProfileUpdate?.(p); setScreen("main"); }}/>;
   if (screen === "business")              return <BusinessDetails profile={profile} onSave={onProfileUpdate} onBack={() => setScreen("main")} onContactSupport={() => setScreen("help_support")}/>;
-  if (screen === "delivery")              return <DeliveryAddresses onBack={() => setScreen("main")}/>;
+  if (screen === "delivery")              return <DeliveryAddresses onBack={() => setScreen("main")} onAddressesChange={onAddressesChange}/>;
   if (screen === "security")              return <SecurityScreen onBack={() => setScreen("main")} on2FASetup={() => setScreen("two_fa_setup")} twoFAEnabled={twoFAEnabled} onDisable2FA={() => { onProfileUpdate?.({ ...profile, name: displayName, avatar: displayAvatar, twoFAEnabled: false }); }}/>;
   if (screen === "two_fa_setup")          return <TwoFASetup onBack={() => setScreen("security")} onComplete={() => { onProfileUpdate?.({ ...profile, name: displayName, avatar: displayAvatar, twoFAEnabled: true }); setScreen("security"); }}/>;
   if (screen === "notifications_settings") return <NotificationsSettings onBack={() => setScreen("main")}/>;

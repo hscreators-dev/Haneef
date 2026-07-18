@@ -43,7 +43,13 @@ async function request<T>(
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new Error(data.error ?? `HTTP ${res.status}`);
+    // Carry the HTTP status on the error so callers can tell an AUTH failure
+    // (401/403 — token really invalid) apart from a server hiccup (5xx/cold
+    // start) — the session-restore flow must only sign the user out for the
+    // former, never for a flaky network.
+    const err = new Error(data.error ?? `HTTP ${res.status}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   return data as T;
 }

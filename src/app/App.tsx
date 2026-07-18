@@ -2117,6 +2117,11 @@ export default function App() {
   // The user's default saved delivery address, so New Order can pre-fill it instead of
   // asking again for an address the user already gave us (at onboarding or in Account).
   const [defaultAddress, setDefaultAddress]   = useState<{ address: string; city: string; pin: string } | null>(null);
+  // The Order tab stays MOUNTED once opened (hidden, not destroyed, when the
+  // customer switches tabs) so a half-built order is never lost. Bumping the
+  // epoch forces a deliberate fresh remount (after "Save as draft").
+  const [orderTabMounted, setOrderTabMounted] = useState(false);
+  const [orderEpoch, setOrderEpoch]           = useState(0);
   // Captured at login (phone or email, whichever the user verified with) and merged
   // into the profile once onboarding finishes, so it's not lost between the two steps.
   const [loginIdentity, setLoginIdentity]     = useState<{ phone?: string; email?: string }>({});
@@ -2141,31 +2146,45 @@ export default function App() {
   useEffect(() => {
     if (!authToken.get()) return; // never signed in on this device
     let alive = true;
-    accountApi.getProfile().then(({ user }) => {
-      if (!alive) return;
-      const mapped: UserProfile = {
-        name: user.name || "",
-        avatar: user.avatarUrl ?? null,
-        accountType: user.accountType === "organisation" ? "organisation" : "personal",
-        orgName: user.orgName,
-        orgType: user.orgType,
-        phone: user.phone,
-        email: user.email,
-        twoFAEnabled: user.twoFAEnabled,
-      };
-      setUserProfile(mapped);
-      setLoginIdentity({ phone: user.phone, email: user.email });
-      // Recognised + onboarded → straight into the app. If somehow not onboarded,
-      // let them finish onboarding rather than re-logging in.
-      setAuthStep(user.onboardingComplete && user.name ? "app" : "onboarding");
-      accountApi.getAddresses().then(res => {
-        const def = res.addresses.find(a => a.isDefault) ?? res.addresses[0];
-        if (def && alive) setDefaultAddress({ address: def.line1, city: def.city, pin: def.pin });
-      }).catch(() => {});
-    }).catch(() => {
-      // Invalid/expired token — drop it and stay on the welcome screen.
-      authToken.clear();
-    });
+    // Retry with backoff — the Render free tier can be COLD on app open, and a
+    // failed first request must not bounce a signed-in customer back to the
+    // Welcome screen. Only a real auth rejection (401/403) clears the token.
+    const attempt = (n: number) => {
+      accountApi.getProfile().then(({ user }) => {
+        if (!alive) return;
+        const mapped: UserProfile = {
+          name: user.name || "",
+          avatar: user.avatarUrl ?? null,
+          accountType: user.accountType === "organisation" ? "organisation" : "personal",
+          orgName: user.orgName,
+          orgType: user.orgType,
+          phone: user.phone,
+          email: user.email,
+          twoFAEnabled: user.twoFAEnabled,
+        };
+        setUserProfile(mapped);
+        setLoginIdentity({ phone: user.phone, email: user.email });
+        // Recognised + onboarded → straight into the app. If somehow not onboarded,
+        // let them finish onboarding rather than re-logging in.
+        setAuthStep(user.onboardingComplete && user.name ? "app" : "onboarding");
+        accountApi.getAddresses().then(res => {
+          const def = res.addresses.find(a => a.isDefault) ?? res.addresses[0];
+          if (def && alive) setDefaultAddress({ address: def.line1, city: def.city, pin: def.pin });
+        }).catch(() => {});
+      }).catch((err: Error & { status?: number }) => {
+        if (!alive) return;
+        if (err.status === 401 || err.status === 403) {
+          // Token really is invalid/expired — sign out.
+          authToken.clear();
+        } else if (n < 3) {
+          // Server hiccup / cold start — keep the session, retry shortly.
+          setTimeout(() => { if (alive) attempt(n + 1); }, 2500 * (n + 1));
+        }
+        // After 3 failed non-auth attempts we simply stay on Welcome for this
+        // launch but KEEP the token — next app open tries again.
+      });
+    };
+    attempt(0);
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2178,10 +2197,24 @@ export default function App() {
     let alive = true;
     const check = () => ordersApi.list().then(({ orders }) => {
       if (!alive || popupOpenRef.current) return;
+      const deliveredOf = (o: (typeof orders)[number]) =>
+        o.status === "Delivered" || o.status === "Completed" || o.adminStatus === "DELIVERED";
+      // First run on this device: orders delivered BEFORE now are history — do
+      // not nag about them one after another on every screen. Mark them all as
+      // already-prompted silently; only orders that get delivered from here on
+      // trigger the rating popup (genuinely "your order just arrived — how was
+      // it?"), and each order asks at most once.
+      if (!localStorage.getItem("fl_rating_prompted")) {
+        orders.forEach(o => {
+          const id = o._id || o.orderRef || "";
+          if (id && deliveredOf(o)) ratingPromptedRef.current.add(id);
+        });
+        try { localStorage.setItem("fl_rating_prompted", JSON.stringify([...ratingPromptedRef.current])); } catch { /* ignore */ }
+        return;
+      }
       const target = orders.find(o => {
         const id = o._id || o.orderRef || "";
-        const delivered = o.status === "Delivered" || o.status === "Completed" || o.adminStatus === "DELIVERED";
-        return delivered && !o.rating && id && !ratingPromptedRef.current.has(id);
+        return deliveredOf(o) && !o.rating && id && !ratingPromptedRef.current.has(id);
       });
       if (!target) return;
       const id = target._id || target.orderRef || "";
@@ -2195,6 +2228,28 @@ export default function App() {
     return () => { alive = false; clearInterval(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authStep]);
+
+  // Re-pull the saved default address every time the customer opens the Order
+  // tab — an address added in Account → Delivery addresses MID-SESSION must
+  // pre-fill the Review step immediately, not only after an app restart.
+  // (This was the "I saved my address but Review still asks for it" bug.)
+  useEffect(() => {
+    if (authStep !== "app" || activeTab !== "order") return;
+    let alive = true;
+    accountApi.getAddresses().then(res => {
+      if (!alive) return;
+      const def = res.addresses.find(a => a.isDefault) ?? res.addresses[0];
+      if (def) setDefaultAddress({ address: def.line1, city: def.city, pin: def.pin });
+    }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStep, activeTab]);
+
+  // Track that the Order tab has been opened at least once (it then stays
+  // mounted-but-hidden across tab switches so in-progress orders survive).
+  useEffect(() => {
+    if (activeTab === "order") setOrderTabMounted(true);
+  }, [activeTab]);
 
   // Fire the first-time tutorial (and, after it's closed, the coach-mark tour) the moment
   // someone lands on the main app — whether they just finished onboarding OR skipped
@@ -2279,6 +2334,10 @@ export default function App() {
     const rest = resumeDraft ? drafts.filter(d => d.id !== resumeDraft.id) : drafts;
     persistDrafts([draft, ...rest]);
     setResumeDraft(null);
+    // The order now lives in Drafts — clear the work-in-progress autosave and
+    // reset the (kept-mounted) Order tab to a fresh start.
+    try { localStorage.removeItem("fl_wip"); } catch { /* ignore */ }
+    setOrderEpoch(e => e + 1);
     setActiveTab("home");
   }
   function handleCancelDraft(id: string) {
@@ -2294,7 +2353,10 @@ export default function App() {
   }
 
   function handleNavigate(tab: Tab, orderId?: string) {
-    setResumeDraft(null);
+    // NOTE: this no longer clears resumeDraft — switching tabs must never
+    // throw away an order in progress (the Order tab stays mounted and the
+    // work-in-progress autosave covers restarts). A draft is consumed only on
+    // submit or when it's re-saved from the Review step.
     setActiveTab(tab);
     setTargetOrderId(orderId ?? null);
   }
@@ -2304,6 +2366,8 @@ export default function App() {
   // order entirely and the admin only received it once the customer opened Track.
   function handleOrderPlaced(summary?: SubmittedOrderSummary) {
     if (!summary) return;
+    // Order submitted — the work-in-progress autosave is consumed too.
+    try { localStorage.removeItem("fl_wip"); } catch { /* ignore */ }
     // Order submitted — a draft it was resumed from is now consumed.
     if (resumeDraft) persistDrafts(drafts.filter(d => d.id !== resumeDraft.id));
     setNewOrderSummary(summary);
@@ -2395,6 +2459,11 @@ export default function App() {
     // effect won't sign the user back in. (Closing the app no longer signs out —
     // the token stays and the session is restored on next open.)
     authToken.clear();
+    // A different account may sign in next on this device — never leak the
+    // previous user's half-built order into their session.
+    try { localStorage.removeItem("fl_wip"); } catch { /* ignore */ }
+    setOrderTabMounted(false);
+    setOrderEpoch(e => e + 1);
     setAuthStep("login");
     setActiveTab("home");
     setShowNotifications(false);
@@ -2508,9 +2577,15 @@ export default function App() {
     // backend best-effort.
     if (delivery && delivery.address.trim() && delivery.city.trim()) {
       setDefaultAddress(delivery);
-      accountApi.addAddress({
-        label: "Home", line1: delivery.address, city: delivery.city, state: "", pin: delivery.pin, isDefault: true,
-      }).catch(() => {});
+      // Persist with retry — a cold backend on first onboarding must not
+      // silently swallow the customer's address (that left the Account address
+      // book empty and Review asking again).
+      const saveAddr = (n: number) => {
+        accountApi.addAddress({
+          label: "Home", line1: delivery.address, city: delivery.city, state: "", pin: delivery.pin, isDefault: true,
+        }).catch(() => { if (n < 3) setTimeout(() => saveAddr(n + 1), 3000 * (n + 1)); });
+      };
+      saveAddr(0);
     }
     // Tutorial/coach-mark trigger lives in the authStep === "app" effect above, so it
     // fires here AND for returning users who skip straight past onboarding.
@@ -2555,7 +2630,14 @@ export default function App() {
         ) : (
           <>
             {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
-            {activeTab === "order"   && <NewOrderTab key={resumeDraft?.id ?? "new"} onNavigate={handleNavigate} onOrderPlaced={handleOrderPlaced} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>}
+            {/* Order tab: mounted once, then kept alive (display:none) across tab
+                switches — tapping Home/Track/Account and coming back must land the
+                customer exactly where they left off, never on a wiped form. */}
+            {(activeTab === "order" || orderTabMounted) && (
+              <div style={{ display: activeTab === "order" ? "contents" : "none" }}>
+                <NewOrderTab key={`${resumeDraft?.id ?? "new"}-${orderEpoch}`} onNavigate={handleNavigate} onOrderPlaced={handleOrderPlaced} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>
+              </div>
+            )}
             {activeTab === "track"   && (
               <TrackTab
                 showNew={showNewOrder}
@@ -2578,6 +2660,12 @@ export default function App() {
                 profile={userProfile}
                 onProfileUpdate={handleProfileUpdate}
                 onSignOut={handleSignOut}
+                onAddressesChange={(addrs) => {
+                  // Keep the order flow's pre-filled delivery address in sync the
+                  // moment the customer edits their address book — no restart needed.
+                  const def = addrs.find(a => a.default) ?? addrs[0];
+                  setDefaultAddress(def ? { address: def.line1, city: def.city, pin: def.pin } : null);
+                }}
               />
             )}
           </>
@@ -2596,7 +2684,7 @@ export default function App() {
           return (
             <button key={tab.id}
               id={`coachmark-tab-${tab.id}`}
-              onClick={() => { setShowHelp(false); setResumeDraft(null); setActiveTab(tab.id); }}
+              onClick={() => { setShowHelp(false); setActiveTab(tab.id); }}
               className="flex-1 flex flex-col items-center gap-0.5 py-1">
               <span className={`flex items-center justify-center rounded-full ${active ? "magic-anim" : "text-muted-foreground"}`}
                 style={{
