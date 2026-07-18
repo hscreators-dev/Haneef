@@ -5,6 +5,7 @@ import {
   Mail, Smartphone, ShieldCheck, Building2, UserCircle, ChevronLeft, Phone,
   MapPinned, Headphones, Star, Check, Navigation, FileText, Trash2,
   HelpCircle, X, Shirt, Wallet, Truck, RotateCcw,
+  Users, Heart, ShoppingBag, Ruler, Palette, Droplets, Smile, Scissors, Lightbulb,
 } from "lucide-react";
 import certArt from "@/assets/undraw_certification_garm.svg";
 import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPayload } from "./components/NewOrderTab";
@@ -644,6 +645,21 @@ function apiOrderToHomeCard(o: ApiOrder): HomeOrderCard {
 }
 
 // ─── Home Tab ─────────────────────────────────────────────────────────────────
+// ─── Home content — edit these lists weekly, layout takes care of itself ──────
+// "Good to know" cards (horizontal rail). tone: "gold" | "green" | "muted".
+const HOME_TIPS: { tone: "gold" | "green" | "muted"; chip: string; icon: React.ReactNode; title: string; body: string }[] = [
+  { tone: "green", chip: "Quality",   icon: <ShieldCheck size={10} strokeWidth={1.8}/>, title: "180 vs 230 GSM — feel the difference", body: "Why heavier fabric survives 50+ washes and drapes better. 30-second read." },
+  { tone: "gold",  chip: "Colours",   icon: <Palette size={10} strokeWidth={1.8}/>,     title: "Colours that never betray you",        body: "Navy, bottle green & charcoal hide stains, hold dye and match everything." },
+  { tone: "muted", chip: "Care",      icon: <Droplets size={10} strokeWidth={1.8}/>,    title: "Why your black tee fades",             body: "Wash inside-out, cold water, skip the dryer. Your tee will thank you." },
+  { tone: "gold",  chip: "Real talk", icon: <Smile size={10} strokeWidth={1.8}/>,       title: "Surplus fabric = 15% smug savings",    body: "Ends of premium rolls, rescued. The planet approves. So does your wallet." },
+  { tone: "muted", chip: "Craft",     icon: <Scissors size={10} strokeWidth={1.8}/>,    title: "Single-needle stitching, explained",   body: "The tiny detail that separates \"uniform\" from \"tailored\"." },
+];
+// Bottom "did you know / real talk" cards.
+const HOME_FACTS: { icon: React.ReactNode; lead: string; body: string }[] = [
+  { icon: <Lightbulb size={14} strokeWidth={1.6}/>, lead: "Did you know?", body: "One cotton tee takes ~2,700 litres of water to make. Made-to-order (no overstock) is the greenest choice in fashion." },
+  { icon: <Smile size={14} strokeWidth={1.6}/>,     lead: "Real talk:",    body: "“One size fits all” is the biggest lie in fashion. That's why we don't sell it." },
+];
+
 function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCount = 0, profile }: {
   onNavigate: (t: Tab, orderId?: string) => void;
   onBell: () => void;
@@ -712,10 +728,11 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
       };
 
   return (
-    <div className="flex-1 overflow-y-auto pb-4 min-h-0" style={{ scrollbarWidth: "none" }}>
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
 
-      {/* ── Top bar ── */}
-      <div className="px-5 pt-2 pb-4 flex items-center justify-between">
+      {/* ── Top bar — PINNED (Zomato-tight): only the content below scrolls ── */}
+      <div className="px-5 pt-2 pb-3 flex items-center justify-between flex-shrink-0 border-b border-border"
+        style={{ background: "rgba(248,247,245,0.96)", backdropFilter: "blur(14px)" }}>
         <div>
           <p className="label-section">Good morning</p>
           <h2 className="text-foreground mt-0.5" style={{ fontSize: 22, fontWeight: 600, lineHeight: 1.2 }}>
@@ -760,6 +777,9 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
           </button>
         </div>
       </div>
+
+      {/* ── Scrollable content area ── */}
+      <div className="flex-1 overflow-y-auto pb-4 min-h-0 pt-4" style={{ scrollbarWidth: "none" }}>
 
       {/* ── Hero banner — woven texture + floating brand mark + stitched thread ── */}
       <div className="mx-5 mb-5 rounded-2xl p-5 relative overflow-hidden"
@@ -822,6 +842,63 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
           </div>
         ))}
       </div>
+
+      {/* ── "What are we making today?" — quick entry tiles into the order flow ── */}
+      {personalHome && (
+        <>
+          <p className="px-5 mb-2.5 label-section">What are we making today?</p>
+          <div className="mx-5 mb-5 grid grid-cols-4 gap-2">
+            {[
+              { label: "Kids",        sub: "Age sizes",   icon: <Users size={17} strokeWidth={1.5}/>,       hl: false },
+              { label: "Men",         sub: "Chest sizes", icon: <Shirt size={17} strokeWidth={1.5}/>,       hl: false },
+              { label: "Women",       sub: "UK sizes",    icon: <Heart size={17} strokeWidth={1.5}/>,       hl: false },
+              { label: "Accessories", sub: "Caps, bags…", icon: <ShoppingBag size={17} strokeWidth={1.5}/>, hl: true  },
+            ].map(c => (
+              <button key={c.label} onClick={() => onNavigate("order")}
+                className="text-center py-3 px-1 rounded-2xl"
+                style={{ ...card, cursor: "pointer" }}>
+                <span className="mx-auto mb-1.5 flex items-center justify-center rounded-xl"
+                  style={{ width: 38, height: 38, background: c.hl ? ACCENT_BG : "var(--muted)", color: c.hl ? ACCENT_TEXT : "var(--foreground)" }}>
+                  {c.icon}
+                </span>
+                <span className="block text-foreground" style={{ fontSize: 11.5, fontWeight: 600 }}>{c.label}</span>
+                <span className="block text-muted-foreground" style={{ fontSize: 9 }}>{c.sub}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* ── Size guide strip — always one tap away, BEFORE production ── */}
+          <button onClick={() => onNavigate("order")}
+            className="mx-5 mb-5 w-[calc(100%-2.5rem)] flex items-center gap-2.5 rounded-2xl px-3.5 py-3 text-left"
+            style={{ background: ACCENT_BG, border: `1px solid ${ACCENT}`, cursor: "pointer" }}>
+            <Ruler size={18} strokeWidth={1.5} style={{ color: ACCENT_TEXT, flexShrink: 0 }}/>
+            <span className="min-w-0 flex-1">
+              <span className="block text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>Size guide — before production</span>
+              <span className="block" style={{ fontSize: 10.5, color: ACCENT_TEXT, marginTop: 1 }}>Measure once, cut once. Literally.</span>
+            </span>
+            <span className="rounded-xl px-3 py-2 flex-shrink-0" style={{ background: DARK, color: "#fff", fontSize: 10.5, fontWeight: 600 }}>View chart</span>
+          </button>
+
+          {/* ── "Good to know" — scrollable tips rail (edit HOME_TIPS to refresh) ── */}
+          <p className="px-5 mb-2.5 label-section">Good to know · fresh weekly</p>
+          <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
+            {HOME_TIPS.map(t => (
+              <div key={t.title} className="rounded-2xl p-3.5 flex-shrink-0" style={{ ...card, width: 195 }}>
+                <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 mb-2"
+                  style={{
+                    fontSize: 8.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase",
+                    background: t.tone === "gold" ? ACCENT_BG : t.tone === "green" ? "#ECFDF5" : "var(--muted)",
+                    color:      t.tone === "gold" ? ACCENT_TEXT : t.tone === "green" ? "#047857" : "var(--muted-foreground)",
+                  }}>
+                  {t.icon}{t.chip}
+                </span>
+                <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</p>
+                <p className="text-muted-foreground mt-1" style={{ fontSize: 10.5, lineHeight: 1.55 }}>{t.body}</p>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* ── Active order progress (org & individual, shown once an order exists) ── */}
       {activeOrder && (
@@ -980,7 +1057,22 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
         ))}
       </div>
 
+      {/* ── Did-you-know / humour cards (edit HOME_FACTS to refresh) ── */}
+      {personalHome && (
+        <div className="px-5 mt-5 flex flex-col gap-2">
+          {HOME_FACTS.map(f => (
+            <div key={f.lead} className="rounded-2xl px-3.5 py-3 flex gap-2.5" style={card}>
+              <span style={{ color: ACCENT_TEXT, flexShrink: 0, marginTop: 1 }}>{f.icon}</span>
+              <p className="text-muted-foreground" style={{ fontSize: 11, lineHeight: 1.55 }}>
+                <span className="text-foreground" style={{ fontWeight: 600 }}>{f.lead}</span> {f.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
       {showSwatch && <SwatchBoxModal onClose={() => setShowSwatch(false)}/>}
+      </div>
     </div>
   );
 }
@@ -2122,6 +2214,14 @@ export default function App() {
   // epoch forces a deliberate fresh remount (after "Save as draft").
   const [orderTabMounted, setOrderTabMounted] = useState(false);
   const [orderEpoch, setOrderEpoch]           = useState(0);
+  // Branded splash on every app open (Zomato-style): logo scene first, then the
+  // app fades in underneath. Pure presentation — data loading runs behind it.
+  const [splashPhase, setSplashPhase] = useState<"show" | "fade" | "done">("show");
+  useEffect(() => {
+    const t1 = setTimeout(() => setSplashPhase("fade"), 1600);
+    const t2 = setTimeout(() => setSplashPhase("done"), 2150);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, []);
   // Captured at login (phone or email, whichever the user verified with) and merged
   // into the profile once onboarding finishes, so it's not lost between the two steps.
   const [loginIdentity, setLoginIdentity]     = useState<{ phone?: string; email?: string }>({});
@@ -2198,7 +2298,11 @@ export default function App() {
     const check = () => ordersApi.list().then(({ orders }) => {
       if (!alive || popupOpenRef.current) return;
       const deliveredOf = (o: (typeof orders)[number]) =>
-        o.status === "Delivered" || o.status === "Completed" || o.adminStatus === "DELIVERED";
+        // A cancelled order is NEVER "delivered" — even if it passed through a
+        // delivered admin state before being cancelled/refunded. Never ask the
+        // customer to rate an order they didn't receive.
+        (o.status === "Delivered" || o.status === "Completed" || o.adminStatus === "DELIVERED")
+        && o.status !== "Cancelled" && o.adminStatus !== "CANCELLED";
       // First run on this device: orders delivered BEFORE now are history — do
       // not nag about them one after another on every screen. Mark them all as
       // already-prompted silently; only orders that get delivered from here on
@@ -2496,6 +2600,40 @@ export default function App() {
           paddingRight: "env(safe-area-inset-right, 0px)",
         }}>
         {children}
+        {/* ── Branded splash overlay ── */}
+        {splashPhase !== "done" && (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 200,
+            background: "#0D0D0D",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            opacity: splashPhase === "fade" ? 0 : 1,
+            transition: "opacity .55s ease",
+            pointerEvents: splashPhase === "fade" ? "none" : "auto",
+          }}>
+            <style>{`
+              @keyframes garmSplashPop{0%{transform:scale(.7);opacity:0}55%{transform:scale(1.06);opacity:1}100%{transform:scale(1)}}
+              @keyframes garmSplashLine{0%{width:0}100%{width:88px}}
+              @keyframes garmSplashText{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:translateY(0)}}
+              @media (prefers-reduced-motion:reduce){.garm-splash-anim{animation:none!important}}
+            `}</style>
+            <div className="garm-splash-anim" style={{ animation: "garmSplashPop .7s cubic-bezier(.2,.9,.3,1.2) both" }}>
+              <GarmLogo size={64}/>
+            </div>
+            <p className="garm-splash-anim" style={{
+              marginTop: 18, fontSize: 26, fontWeight: 700, color: "#fff", letterSpacing: "0.02em",
+              animation: "garmSplashText .5s ease .35s both",
+            }}>Garm</p>
+            <p className="garm-splash-anim" style={{
+              marginTop: 4, fontSize: 10.5, letterSpacing: "0.22em", textTransform: "uppercase",
+              color: "rgba(255,255,255,0.45)", fontWeight: 600,
+              animation: "garmSplashText .5s ease .5s both",
+            }}>Made to order</p>
+            <div className="garm-splash-anim" style={{
+              marginTop: 22, height: 2, borderRadius: 1, background: ACCENT,
+              animation: "garmSplashLine 1.1s ease .55s both",
+            }}/>
+          </div>
+        )}
       </div>
     </div>
   );

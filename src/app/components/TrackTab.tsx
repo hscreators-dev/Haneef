@@ -441,6 +441,10 @@ class OrderCardBoundary extends React.Component<
           We couldn't display this order's details right now. Your order is safe — pull to refresh
           or contact your coordinator if this keeps happening.
         </p>
+        <p style={{ fontSize: 9.5, color: "#b0aca6", marginTop: 6, lineHeight: 1.4, wordBreak: "break-word", fontFamily: "monospace" }}>
+          {this.state.error.message}
+          {(this.state.error.stack || "").split("\n").slice(1, 3).join(" · ").slice(0, 160)}
+        </p>
         <button
           onClick={() => this.setState({ error: null })}
           className="mt-3 px-4 py-2 rounded-xl text-xs"
@@ -1333,27 +1337,40 @@ function PastOrderDetail({ order, onReorder, onRated }: { order: OrderTrack; onR
     finally { setRatingBusy(false); }
   }
 
+  const isCancelled = order.statusLabel === "Cancelled";
+  const wasPaid = order.livePaymentStatus === "paid" || order.livePaymentStatus === "partial" || (!order.apiId && !isCancelled);
+
   return (
     <div className="flex flex-col gap-3">
       {returnOpen && <ReturnModal order={order} onClose={() => setReturnOpen(false)} onDone={(ref) => { setReturnRef(ref); setReturnOpen(false); }}/>}
       <OrderDetailsCard order={order}/>
 
-      {/* Payment details */}
+      {/* Payment details — HONEST for cancelled/unpaid orders: never claim
+          "Payment received" on an order that was cancelled before payment. */}
       <Panel title="Payment details">
         <div className="flex flex-col gap-2">
-          {([
-            ["Payment mode",  order.paymentMode ?? "Recorded payment"],
-            ["Amount",        order.total ?? "–"],
-            ["Payment date",  order.paymentDate ?? order.etaDate],
-            ["Status",        "Payment received"],
-            ["Reference",     order.paymentReference ?? `TXN-${order.id.slice(1)}-2025`],
-          ] as [string, string][]).map(([k, v]) => (
-            <DetailRow key={k} label={k} value={v} accent={v === "Payment received"}/>
-          ))}
+          {wasPaid ? (
+            ([
+              ["Payment mode",  order.paymentMode ?? "Recorded payment"],
+              ["Amount",        order.total ?? "–"],
+              ["Payment date",  order.paymentDate ?? order.etaDate],
+              ["Status",        "Payment received"],
+              ["Reference",     order.paymentReference ?? `TXN-${order.id.slice(1)}-2025`],
+            ] as [string, string][]).map(([k, v]) => (
+              <DetailRow key={k} label={k} value={v} accent={v === "Payment received"}/>
+            ))
+          ) : (
+            <>
+              <DetailRow label="Status" value={isCancelled ? "No payment taken" : "Payment pending"}/>
+              {(order.refundAmount ?? 0) > 0 && <DetailRow label="Refund" value={`${fmtINR(order.refundAmount)}${order.refundedAt ? ` · ${order.refundedAt}` : ""}`} accent/>}
+            </>
+          )}
         </div>
       </Panel>
 
-      {/* Rating & Feedback */}
+      {/* Rating & Feedback — a cancelled order was never delivered; asking the
+          customer to rate it is wrong. Show nothing for cancelled orders. */}
+      {!isCancelled && (
       <Panel title="Rating & feedback">
         {ratingDone ? (
           <div className="flex flex-col items-center py-2">
@@ -1384,11 +1401,13 @@ function PastOrderDetail({ order, onReorder, onRated }: { order: OrderTrack; onR
           </>
         )}
       </Panel>
+      )}
 
       <DocumentVault order={order}/>
 
-      {/* Return / damage — raise a verified return request against this order */}
-      {returnRef ? (
+      {/* Return / damage — raise a verified return request against this order.
+          Not shown for cancelled orders (nothing was delivered to return). */}
+      {isCancelled ? null : returnRef ? (
         <div className="rounded-2xl p-3.5" style={{ background: "#e8f5e9", border: "1px solid #a5d6a7" }}>
           <p className="text-emerald-800 text-sm" style={{ fontWeight: 600 }}>Return request submitted · {returnRef}</p>
           <p className="text-emerald-700 text-xs mt-1">Our team is reviewing your photos. Track the outcome under Account › Help &amp; support › Track my tickets.</p>
@@ -1754,7 +1773,19 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   // built-in demo orders so the tab never looks broken. Once the fetch works,
   // ONLY real orders are shown. Polled so admin-side changes (confirmation,
   // status updates) appear without reopening the tab.
-  const [liveOrders, setLiveOrders] = useState<OrderTrack[] | null>(null);
+  // Instant render: initialise from the LAST KNOWN orders (cached at every
+  // successful fetch) so opening Track shows the customer's orders immediately
+  // — the poll then refreshes them in the background. No more "No active
+  // orders" flash followed by the list popping in seconds later.
+  const [liveOrders, setLiveOrders] = useState<OrderTrack[] | null>(() => {
+    if (!authToken.get()) return null;
+    try {
+      const raw = JSON.parse(localStorage.getItem("fl_orders_cache") || "null") as ApiOrder[] | null;
+      if (!raw || !Array.isArray(raw)) return null;
+      const summaries = readOrderSummaries();
+      return raw.filter(o => o.status !== "Draft").map(o => apiOrderToTrack(o, summaries));
+    } catch { return null; }
+  });
   const [coordinator, setCoordinator] = useState<Coordinator | null>(null);
   const [pendingSync, setPendingSync] = useState(() => readPendingOrders().length);
   // Popups: admin confirmed your order (pay now) / payment success.
@@ -1823,6 +1854,12 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
       const mapped = orders.filter(o => o.status !== "Draft").map(o => apiOrderToTrack(o, summaries));
       detectConfirmations(mapped);
       setLiveOrders(mapped);
+      // Cache for instant render on next open. Documents are stripped — their
+      // base64 payloads are huge and reload with the next poll anyway.
+      try {
+        localStorage.setItem("fl_orders_cache",
+          JSON.stringify(orders.map(o => ({ ...o, documents: undefined }))));
+      } catch { /* storage full — skip */ }
     } catch { /* keep whatever we had */ }
   }
 
@@ -1994,7 +2031,20 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
 
       {/* ── Order list ── */}
       <div className="flex-1 overflow-y-auto px-5 pb-4 min-h-0" style={{ scrollbarWidth: "none" }}>
-        {filtered.length === 0 ? (
+        {liveOrders === null && !!authToken.get() && filtered.length === 0 ? (
+          /* First-ever load (no cache yet): skeleton cards, never a false
+             "No active orders" that flips to a full list seconds later. */
+          <div>
+            <style>{`@keyframes trackShimmer{0%{opacity:.55}50%{opacity:1}100%{opacity:.55}}`}</style>
+            {[0, 1, 2].map(i => (
+              <div key={i} className="rounded-2xl mb-3 p-4" style={{ background: "var(--card)", border: "1px solid var(--border)", animation: `trackShimmer 1.2s ease-in-out ${i * 0.15}s infinite` }}>
+                <div style={{ width: 90, height: 10, borderRadius: 6, background: "var(--muted)" }}/>
+                <div style={{ width: 180, height: 13, borderRadius: 6, background: "var(--muted)", marginTop: 10 }}/>
+                <div style={{ width: 120, height: 10, borderRadius: 6, background: "var(--muted)", marginTop: 8 }}/>
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-center">
             <Package size={28} className="text-muted-foreground mb-3" strokeWidth={1}/>
             <p className="text-foreground text-sm" style={{ fontWeight: 500 }}>No {filter} orders</p>
@@ -2014,7 +2064,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
               paidOverride={paidOrderIds?.includes(order.id)}
               onMarkPaid={() => onMarkOrderPaid?.(order.id)}
               forceOpen={order.id === targetOrderId || order.id === localTarget}
-              onDeliveredOpen={PAST_STATUSES.includes(order.statusLabel) ? onOrderDelivered : undefined}
+              onDeliveredOpen={["Delivered", "Completed"].includes(order.statusLabel) ? onOrderDelivered : undefined}
               headerId={i === 0 ? "coachmark-track-first-order" : undefined}
               coordinator={coordinator}
               onPayLive={handlePayLive}
