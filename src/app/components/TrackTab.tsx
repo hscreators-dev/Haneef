@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   ChevronDown, ChevronUp, Check, Scissors, Microscope, Truck, Package, MessageSquare,
   RotateCcw, Star, Wallet, ReceiptText, ClipboardCheck, Phone, Mail, Palette, FileText, User,
+  X,
 } from "lucide-react";
 import type { SubmittedOrderSummary, OrderPrice, DraftPayload, OrderGarmentLine } from "./NewOrderTab";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
