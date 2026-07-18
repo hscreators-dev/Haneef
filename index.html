@@ -9,7 +9,21 @@
       <title>Garm</title>
       <meta name="description" content="Garm is a sleek, mobile-first web app for textile sourcing and procurement." />
       <meta name="robots" content="noindex, nofollow" />
-      <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
+      <style>
+        /* Lock the document itself — the app shell is a fixed, non-scrolling
+           frame (like Zomato/Swiggy): only the CONTENT AREA inside each tab
+           scrolls. Without position:fixed + overscroll-behavior, the iOS
+           webview rubber-bands the whole page, so the header and bottom nav
+           visibly ride up and down with every scroll. */
+        html, body {
+          height: 100%; margin: 0;
+          position: fixed; inset: 0; width: 100%;
+          overflow: hidden;
+          overscroll-behavior: none;
+          -webkit-text-size-adjust: 100%;
+        }
+        #root { height: 100%; overflow: hidden; }
+      </style>
 
       <!-- "Add to Home Screen" support — iOS only reads apple-touch-icon (it
            ignores the web manifest for this), Android/Chrome use the manifest. -->
@@ -26,8 +40,8 @@
         href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap"
         media="print" onload="this.media='all'" />
 
-      <script type="module" crossorigin src="/Haneef/assets/index-KdyVGr5m.js"></script>
-      <link rel="stylesheet" crossorigin href="/Haneef/assets/index-DfHqQKml.css">
+      <script type="module" crossorigin src="/Haneef/assets/index-DLlv35is.js"></script>
+      <link rel="stylesheet" crossorigin href="/Haneef/assets/index-blo3Zyv8.css">
     </head>
 
     <body>
