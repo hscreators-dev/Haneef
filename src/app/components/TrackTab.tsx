@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   ChevronDown, ChevronUp, Check, Scissors, Microscope, Truck, Package, MessageSquare,
   RotateCcw, Star, Wallet, ReceiptText, ClipboardCheck, Phone, Mail, Palette, FileText, User,
-  X,
+  X, Share2,
 } from "lucide-react";
 import type { SubmittedOrderSummary, OrderPrice, DraftPayload, OrderGarmentLine } from "./NewOrderTab";
 import { UpiLogo, upiProviderDefs, type UpiProvider } from "./AccountTab";
@@ -1684,10 +1684,25 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
                 );
               })}
 
-              {/* ETA row */}
+              {/* ETA row + share */}
               <div className="flex items-center justify-between mt-4 pt-3.5 border-t border-border">
                 <p className="text-muted-foreground" style={{ fontSize: 12 }}>Estimated delivery</p>
-                <p className="text-foreground" style={{ fontSize: 13, fontWeight: 600 }}>{order.etaDate}</p>
+                <div className="flex items-center gap-2.5">
+                  <p className="text-foreground" style={{ fontSize: 13, fontWeight: 600 }}>{order.etaDate}</p>
+                  <button
+                    onClick={() => {
+                      const eta = order.etaDate && order.etaDate !== "TBD" ? ` — arriving ${order.etaDate}` : "";
+                      const text = `My custom ${order.name} (${order.id}) is "${order.statusLabel}" at Garm 🧵${eta}. Made to order, tracked to my door!`;
+                      const nav = navigator as Navigator & { share?: (d: { text: string }) => Promise<void> };
+                      if (nav.share) nav.share({ text }).catch(() => { /* user dismissed */ });
+                      else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+                    }}
+                    title="Share progress"
+                    className="w-7 h-7 rounded-full flex items-center justify-center"
+                    style={{ background: "var(--muted)", border: "1px solid var(--border)", cursor: "pointer" }}>
+                    <Share2 size={12} strokeWidth={1.6} className="text-muted-foreground"/>
+                  </button>
+                </div>
               </div>
 
               {/* Sub-cards */}

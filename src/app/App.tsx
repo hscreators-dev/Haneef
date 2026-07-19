@@ -16,7 +16,7 @@ import { fetchUnreadCount } from "../lib/notifCenter";
 import { playChime } from "../lib/notify";
 import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
 import { auth as authApi, account as accountApi, orders as ordersApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
-import { readPendingOrders, writePendingOrders, rememberOrderSummary, flushPendingOrders, createOrderWithRetry } from "../lib/orderSync";
+import { readPendingOrders, writePendingOrders, rememberOrderSummary, flushPendingOrders, createOrderWithRetry, readOrderSummaries } from "../lib/orderSync";
 
 // ── Onboarding-flag persistence (bulletproof) ────────────────────────────────
 // The onboarding "done" flag is saved via a profile PUT. If that save silently
@@ -634,7 +634,8 @@ function apiOrderToHomeCard(o: ApiOrder): HomeOrderCard {
     shade,
     qty: `${o.qty || 0} pcs`,
     gsm: "",
-    eta: o.etaDate ? `ETA ${o.etaDate}` : "",
+    // "Arriving in 3 days" beats "ETA 2026-07-20" — countdowns are felt, dates are read.
+    eta: o.etaDate ? (etaCountdown(o.etaDate) ?? `ETA ${o.etaDate}`) : "",
     status: o.status,
     pct: HOME_STATUS_PCT[o.status] ?? 10,
     quoteReady,
@@ -645,6 +646,43 @@ function apiOrderToHomeCard(o: ApiOrder): HomeOrderCard {
 }
 
 // ─── Home Tab ─────────────────────────────────────────────────────────────────
+// ─── Curated collections — ready-made bundles that open the order flow
+// pre-filled at Review (customer just adjusts sizes & submits). Edit freely. ──
+export interface HomeCollection {
+  id: string; title: string; sub: string; emoji: string;
+  audience: "men" | "women";
+  lines: { categoryId: "mens" | "womens"; name: string; basePrice: number; style?: string; qty: number; colorHex: string; colorLabel: string }[];
+}
+const HOME_COLLECTIONS: HomeCollection[] = [
+  { id: "tees", title: "Everyday Tees Pack", sub: "2× Black + 1× Off-white tees", emoji: "◼︎", audience: "men", lines: [
+    { categoryId: "mens", name: "T-Shirts", basePrice: 190, qty: 2, colorHex: "#0D0D0D", colorLabel: "Black" },
+    { categoryId: "mens", name: "Oversized T-Shirts", basePrice: 240, qty: 1, colorHex: "#F4F1EA", colorLabel: "Off-White" },
+  ]},
+  { id: "office", title: "Office Ready", sub: "2× Formal shirts + chinos", emoji: "▲", audience: "men", lines: [
+    { categoryId: "mens", name: "Shirts (Formal)", basePrice: 360, qty: 2, colorHex: "#F5F5F2", colorLabel: "White" },
+    { categoryId: "mens", name: "Chinos", basePrice: 480, qty: 1, colorHex: "#1F2A44", colorLabel: "Navy" },
+  ]},
+  { id: "her", title: "Her Essentials", sub: "Kurti + leggings + top", emoji: "●", audience: "women", lines: [
+    { categoryId: "womens", name: "Kurtis", basePrice: 380, qty: 1, colorHex: "#7C3A5B", colorLabel: "Berry" },
+    { categoryId: "womens", name: "Leggings", basePrice: 220, qty: 1, colorHex: "#0D0D0D", colorLabel: "Black" },
+    { categoryId: "womens", name: "Tops", basePrice: 260, qty: 1, colorHex: "#F4F1EA", colorLabel: "Off-White" },
+  ]},
+];
+
+// "Arriving in N days" reads better than a raw date — countdowns are emotion.
+function etaCountdown(eta?: string): string | undefined {
+  if (!eta || eta === "TBD") return undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(eta);
+  if (!m) return eta;
+  const target = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const days = Math.round((target.getTime() - now.getTime()) / 86_400_000);
+  if (days < 0)  return "Arriving soon";
+  if (days === 0) return "Arriving today";
+  if (days === 1) return "Arriving tomorrow";
+  return `Arriving in ${days} days`;
+}
+
 // ─── Home content — edit these lists weekly, layout takes care of itself ──────
 // "Good to know" cards (horizontal rail). tone: "gold" | "green" | "muted".
 const HOME_TIPS: { tone: "gold" | "green" | "muted"; chip: string; icon: React.ReactNode; title: string; body: string }[] = [
@@ -660,12 +698,14 @@ const HOME_FACTS: { icon: React.ReactNode; lead: string; body: string }[] = [
   { icon: <Smile size={14} strokeWidth={1.6}/>,     lead: "Real talk:",    body: "“One size fits all” is the biggest lie in fashion. That's why we don't sell it." },
 ];
 
-function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, draftCount = 0, notifCount = 0, profile }: {
+function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCollection, onReorderPast, draftCount = 0, notifCount = 0, profile }: {
   onNavigate: (t: Tab, orderId?: string) => void;
   onBell: () => void;
   onDrafts: () => void;
   onHelp?: () => void;
   onQuickStart?: (intent: OrderIntent) => void;
+  onOpenCollection?: (c: HomeCollection) => void;
+  onReorderPast?: (orderRef: string) => void;
   draftCount?: number;
   notifCount?: number;
   profile?: UserProfile;
@@ -678,14 +718,32 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, draftCoun
   // Instant render: the tiles and the "Order in progress" card come up from the
   // LAST KNOWN orders (same cache Track uses) the moment Home opens — the fresh
   // fetch then updates them silently. No more "0 / 0 / —" flash while loading.
-  const readHomeFromOrders = (orders: { status: string; updatedAt?: string; createdAt?: string }[]) => {
+  const readHomeFromOrders = (orders: { status: string; updatedAt?: string; createdAt?: string; orderRef?: string; _id?: string; garmentType?: string; serviceLabel?: string; colors?: { label: string }[]; rating?: number; ratingFeedback?: string }[]) => {
     const active = orders
       .filter((o) => !["Draft", "Delivered", "Completed", "Cancelled"].includes(o.status))
       .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
-    const delivered = orders.filter((o) => ["Delivered", "Completed"].includes(o.status)).length;
+    const deliveredList = orders
+      .filter((o) => ["Delivered", "Completed"].includes(o.status))
+      .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
+    // "Order again" rail — the customer's own past garments, one tap to repeat.
+    const past = deliveredList.slice(0, 6).map((o) => ({
+      ref: o.orderRef || `#${(o._id || "").slice(-6).toUpperCase()}`,
+      name: o.garmentType || o.serviceLabel || "Custom order",
+      shade: o.colors?.[0]?.label,
+    }));
+    // Social proof — real ratings + the latest written feedback.
+    const rated = orders.filter((o) => (o.rating ?? 0) > 0);
+    const avg = rated.length ? (rated.reduce((s, o) => s + (o.rating ?? 0), 0) / rated.length) : 0;
+    const quotes = orders
+      .filter((o) => (o.rating ?? 0) >= 4 && (o.ratingFeedback || "").trim().length > 3)
+      .sort((a, b) => Date.parse(b.updatedAt || "") - Date.parse(a.updatedAt || ""))
+      .slice(0, 2)
+      .map((o) => ({ text: (o.ratingFeedback || "").trim(), stars: o.rating ?? 5 }));
     return {
       cards: active.map((o) => apiOrderToHomeCard(o as Parameters<typeof apiOrderToHomeCard>[0])),
-      stats: { active: active.length, delivered, onTime: delivered > 0 ? "100%" : "—" },
+      stats: { active: active.length, delivered: deliveredList.length, onTime: deliveredList.length > 0 ? "100%" : "—" },
+      past,
+      proof: { count: rated.length, avg: Math.round(avg * 10) / 10, quotes },
     };
   };
   const cachedHome = (() => {
@@ -698,14 +756,18 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, draftCoun
   // Real order stats for the tiles — NEVER hardcoded. A brand-new account shows
   // 0 / 0 / — instead of fake "3 / 4 / 97%" (which looked like someone else's data).
   const [homeStats, setHomeStats] = useState<{ active: number; delivered: number; onTime: string }>(cachedHome?.stats ?? { active: 0, delivered: 0, onTime: "—" });
+  const [pastOrders, setPastOrders] = useState<{ ref: string; name: string; shade?: string }[]>(cachedHome?.past ?? []);
+  const [proof, setProof] = useState<{ count: number; avg: number; quotes: { text: string; stars: number }[] }>(cachedHome?.proof ?? { count: 0, avg: 0, quotes: [] });
   useEffect(() => {
     let alive = true;
     const load = () => ordersApi.list()
       .then(({ orders }) => {
         if (!alive) return;
-        const { cards, stats } = readHomeFromOrders(orders);
+        const { cards, stats, past, proof: pf } = readHomeFromOrders(orders);
         setHomeOrders(cards);
         setHomeStats(stats);
+        setPastOrders(past);
+        setProof(pf);
         // Keep the shared cache fresh from Home too (documents stripped — huge).
         try { localStorage.setItem("fl_orders_cache", JSON.stringify(orders.map((o) => ({ ...o, documents: undefined })))); } catch { /* ignore */ }
       })
@@ -998,31 +1060,112 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, draftCoun
               </div>
             ))}
           </div>
+
+          {/* ── "Order again" — the customer's own past garments, one tap to repeat ── */}
+          {pastOrders.length > 0 && (
+            <>
+              <p className="px-5 mb-2.5 label-section">Order again</p>
+              <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
+                {pastOrders.map(p => (
+                  <button key={p.ref} onClick={() => onReorderPast?.(p.ref)}
+                    className="rounded-2xl p-3 flex-shrink-0 text-left" style={{ ...card, width: 150, cursor: "pointer" }}>
+                    <span className="flex items-center justify-center rounded-xl mb-2" style={{ width: 30, height: 30, background: "var(--muted)" }}>
+                      <RotateCcw size={14} strokeWidth={1.6} className="text-muted-foreground"/>
+                    </span>
+                    <p className="text-foreground" style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</p>
+                    <p className="text-muted-foreground" style={{ fontSize: 10 }}>{p.shade ? `${p.shade} · ` : ""}{p.ref}</p>
+                    <p style={{ fontSize: 10.5, fontWeight: 700, color: ACCENT_TEXT, marginTop: 5 }}>Repeat order →</p>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── Collections — curated bundles, opens the order pre-filled at Review ── */}
+          <p className="px-5 mb-2.5 label-section">Collections · ready-made bundles</p>
+          <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
+            {HOME_COLLECTIONS.map(c => (
+              <button key={c.id} onClick={() => onOpenCollection?.(c)}
+                className="rounded-2xl overflow-hidden flex-shrink-0 text-left" style={{ ...card, width: 176, cursor: "pointer" }}>
+                <div className="flex items-center gap-1.5 px-3.5 pt-3">
+                  {c.lines.map((l, i) => (
+                    <span key={i} className="rounded-full" style={{ width: 14, height: 14, background: l.colorHex, border: "1px solid rgba(0,0,0,0.15)" }}/>
+                  ))}
+                  <span className="ml-auto text-muted-foreground" style={{ fontSize: 9.5 }}>{c.lines.reduce((a, l) => a + l.qty, 0)} pcs</span>
+                </div>
+                <div className="px-3.5 py-2.5">
+                  <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{c.title}</p>
+                  <p className="text-muted-foreground" style={{ fontSize: 10.5, marginTop: 1 }}>{c.sub}</p>
+                  <p style={{ fontSize: 10.5, fontWeight: 700, color: ACCENT_TEXT, marginTop: 6 }}>Start this bundle →</p>
+                </div>
+              </button>
+            ))}
+          </div>
         </>
       )}
 
-      {/* ── Wedding & Events banner (personal only) ── */}
+      {/* ── Campaign banner carousel (personal only) — swipe through offers ── */}
       {(!profile?.accountType || profile.accountType === "personal") && (
-        <button className="mx-5 mb-5 text-left w-[calc(100%-2.5rem)] overflow-hidden rounded-2xl relative"
-          style={{ background: "linear-gradient(135deg,#2d1b4e 0%,#5b2d8e 50%,#c8a84b 100%)", border: "none", cursor: "pointer", boxShadow: "0 8px 22px rgba(91,45,142,0.28)" }}>
-          <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 12, right: 48, width: 5, height: 5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out infinite" }}/>
-          <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 30, right: 20, width: 3.5, height: 3.5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out .6s infinite" }}/>
-          <span className="absolute rounded-full pointer-events-none magic-anim" style={{ bottom: 16, right: 76, width: 4, height: 4, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out 1.2s infinite" }}/>
-          <div className="px-4 py-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Star size={20} strokeWidth={1.5} color="#fff"/>
-              <span className="text-white text-sm font-bold">Wedding & Events</span>
-              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">New</span>
+        <div className="flex gap-3 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none", scrollSnapType: "x mandatory" }}>
+          {/* Wedding & Events — unchanged */}
+          <button className="text-left overflow-hidden rounded-2xl relative flex-shrink-0"
+            style={{ width: "calc(100% - 2.5rem)", scrollSnapAlign: "center", background: "linear-gradient(135deg,#2d1b4e 0%,#5b2d8e 50%,#c8a84b 100%)", border: "none", cursor: "pointer", boxShadow: "0 8px 22px rgba(91,45,142,0.28)" }}>
+            <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 12, right: 48, width: 5, height: 5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out infinite" }}/>
+            <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 30, right: 20, width: 3.5, height: 3.5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out .6s infinite" }}/>
+            <span className="absolute rounded-full pointer-events-none magic-anim" style={{ bottom: 16, right: 76, width: 4, height: 4, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out 1.2s infinite" }}/>
+            <div className="px-4 py-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Star size={20} strokeWidth={1.5} color="#fff"/>
+                <span className="text-white text-sm font-bold">Wedding & Events</span>
+                <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">New</span>
+              </div>
+              <p className="text-white/80 text-xs leading-relaxed mb-3">
+                Custom fabric orders for weddings, functions & events. Match your theme colours, get coordinated outfits for the whole family — from sarees to sherwanis — with free design consultation.
+              </p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-white/60" style={{ fontSize: 11 }}>Explore the workflow</span>
+                <ChevronRight size={13} color="rgba(255,255,255,0.6)" strokeWidth={2}/>
+              </div>
             </div>
-            <p className="text-white/80 text-xs leading-relaxed mb-3">
-              Custom fabric orders for weddings, functions & events. Match your theme colours, get coordinated outfits for the whole family — from sarees to sherwanis — with free design consultation.
-            </p>
-            <div className="flex items-center gap-1.5">
-              <span className="text-white/60" style={{ fontSize: 11 }}>Explore the workflow</span>
-              <ChevronRight size={13} color="rgba(255,255,255,0.6)" strokeWidth={2}/>
+          </button>
+
+          {/* School reopening — uniforms */}
+          <button onClick={() => onQuickStart?.("kids")} className="text-left overflow-hidden rounded-2xl relative flex-shrink-0"
+            style={{ width: "calc(100% - 2.5rem)", scrollSnapAlign: "center", background: "linear-gradient(135deg,#0F2A4A 0%,#1D4ED8 70%,#3B82F6 110%)", border: "none", cursor: "pointer", boxShadow: "0 8px 22px rgba(29,78,216,0.25)" }}>
+            <div className="px-4 py-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Users size={18} strokeWidth={1.5} color="#fff"/>
+                <span className="text-white text-sm font-bold">School reopening?</span>
+              </div>
+              <p className="text-white/80 text-xs leading-relaxed mb-3">
+                Kids' uniforms, sports tees and house colours — age-based sizing, name tags on request, delivered before the first bell.
+              </p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-white/60" style={{ fontSize: 11 }}>Start a kids order</span>
+                <ChevronRight size={13} color="rgba(255,255,255,0.6)" strokeWidth={2}/>
+              </div>
             </div>
-          </div>
-        </button>
+          </button>
+
+          {/* Surplus saver */}
+          <button onClick={() => onNavigate("order")} className="text-left overflow-hidden rounded-2xl relative flex-shrink-0"
+            style={{ width: "calc(100% - 2.5rem)", scrollSnapAlign: "center", background: "linear-gradient(135deg,#052E22 0%,#047857 70%,#10B981 115%)", border: "none", cursor: "pointer", boxShadow: "0 8px 22px rgba(4,120,87,0.25)" }}>
+            <div className="px-4 py-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Gift size={18} strokeWidth={1.5} color="#fff"/>
+                <span className="text-white text-sm font-bold">Surplus fabric week</span>
+                <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">Save 15%</span>
+              </div>
+              <p className="text-white/80 text-xs leading-relaxed mb-3">
+                Premium roll-ends, rescued — the exact same garment, 15% kinder to your wallet and the planet. Pick "Surplus fabric" at the Material step.
+              </p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-white/60" style={{ fontSize: 11 }}>Order with surplus fabric</span>
+                <ChevronRight size={13} color="rgba(255,255,255,0.6)" strokeWidth={2}/>
+              </div>
+            </div>
+          </button>
+        </div>
       )}
 
       {/* ── My requests header ── */}
@@ -1082,6 +1225,28 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, draftCoun
           </button>
         ))}
       </div>
+
+      {/* ── Social proof — real ratings + latest written feedback ── */}
+      {proof.count > 0 && (
+        <div className="px-5 mt-5">
+          <div className="rounded-2xl p-3.5" style={card}>
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1 rounded-full px-2.5 py-1" style={{ background: ACCENT_BG }}>
+                <Star size={12} strokeWidth={0} fill={ACCENT} />
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: ACCENT_TEXT }}>{proof.avg}</span>
+              </span>
+              <p className="text-muted-foreground" style={{ fontSize: 11.5 }}>
+                from {proof.count} rated order{proof.count !== 1 ? "s" : ""} — thank you!
+              </p>
+            </div>
+            {proof.quotes.map((q, i) => (
+              <p key={i} className="text-muted-foreground mt-2" style={{ fontSize: 11, lineHeight: 1.5, fontStyle: "italic" }}>
+                "{q.text}" <span style={{ fontStyle: "normal", color: ACCENT_TEXT }}>{"★".repeat(q.stars)}</span>
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Did-you-know / humour cards (edit HOME_FACTS to refresh) ── */}
       {personalHome && (
@@ -2571,6 +2736,45 @@ export default function App() {
     setShowNewOrder(false);
     setActiveTab("order");
   }
+  // "Order again" from Home — reopen the past order's editable snapshot at
+  // Review, exactly like Track's own reorder. Falls back to a fresh order if
+  // the snapshot isn't on this device.
+  function handleReorderPast(orderRef: string) {
+    const ep = readOrderSummaries()[orderRef]?.editPayload;
+    if (ep) handleEditOrder(ep);
+    else { setResumeDraft(null); setActiveTab("order"); }
+  }
+  // A curated Collection — build a ready-made cart and open it at Review.
+  function handleOpenCollection(c: HomeCollection) {
+    const totalQty = c.lines.reduce((a, l) => a + l.qty, 0);
+    const contact = {
+      name: userProfile.name || "", phone: userProfile.phone || "", email: userProfile.email || "",
+      address: defaultAddress?.address || "", city: defaultAddress?.city || "", pin: defaultAddress?.pin || "",
+    };
+    handleEditOrder({
+      persona: "individual",
+      title: c.title,
+      subtitle: "Collection",
+      orgDetails: null,
+      customDetails: { garmentType: "tshirt", groupType: "family", audience: c.audience, ...contact },
+      resume: {
+        material: { fabric: "", gsm: "", weave: "" },
+        fabricSource: "fresh",
+        orgColors: [],
+        indivColors: { selected: [], desc: "", qtys: {} },
+        selectedGarment: null,
+        garmentCart: c.lines.map(l => ({ categoryId: l.categoryId, name: l.name, basePrice: l.basePrice, style: l.style, qty: l.qty, colorHex: l.colorHex, colorLabel: l.colorLabel })),
+        sizeState: { cat: c.audience === "women" ? "womens" : "mens", qtys: {} },
+        packaging: { stitch: "single_needle", packing: "bulk_loose" },
+        refState: { chosen: null, logoNames: [], inspNames: [] },
+        accSpecState: {},
+        delivery: contact,
+        payment: "upi",
+        orgDraft: { name: "", board: "", address: "", city: "", pin: "", contactName: "", contactPhone: "", contactEmail: "" },
+        qty: totalQty,
+      },
+    });
+  }
   function handleNotifNavigate(tab: string, orderId?: string) {
     setShowNotifications(false);
     setActiveTab(tab as Tab);
@@ -2805,7 +3009,7 @@ export default function App() {
           <HelpSupportScreen onBack={() => setShowHelp(false)} onReplayTour={() => { setShowHelp(false); handleReplayTour(); }}/>
         ) : (
           <>
-            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} onQuickStart={(i) => { if (i === "sizeguide") { setShowSizeChart(true); } else { setOrderIntent(i); setActiveTab("order"); } }} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
+            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} onQuickStart={(i) => { if (i === "sizeguide") { setShowSizeChart(true); } else { setOrderIntent(i); setActiveTab("order"); } }} onOpenCollection={handleOpenCollection} onReorderPast={handleReorderPast} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
             {/* Order tab: mounted once, then kept alive (display:none) across tab
                 switches — tapping Home/Track/Account and coming back must land the
                 customer exactly where they left off, never on a wiped form. */}

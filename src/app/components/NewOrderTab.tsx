@@ -7444,12 +7444,41 @@ function IndividualAccessoryPicker({ onContinue, onBack }: { onContinue: (qty: R
 // ─── Success Screen ───────────────────────────────────────────────────────────
 
 function SuccessScreen({ onNavigate, onTrackOrder }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: () => void }) {
+  // A moment of celebration — confetti burst + the check popping in + a golden
+  // thread stitching itself under the headline. Two seconds of delight at the
+  // exact moment the customer commits.
+  const confetti = Array.from({ length: 14 }, (_, i) => ({
+    left: 6 + ((i * 61) % 88),
+    delay: (i % 7) * 0.09,
+    dur: 1.6 + (i % 5) * 0.22,
+    size: 5 + (i % 3) * 2,
+    color: ["#C8A97E", "#0D0D0D", "#059669", "#7C5419", "#E5D5BC"][i % 5],
+    rot: (i * 47) % 360,
+  }));
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-8 text-center min-h-0">
-      <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mb-5">
+    <div className="flex-1 flex flex-col items-center justify-center px-8 text-center min-h-0 relative overflow-hidden">
+      <style>{`
+        @keyframes garmConfettiFall{0%{transform:translateY(-30px) rotate(0deg);opacity:0}12%{opacity:1}100%{transform:translateY(320px) rotate(340deg);opacity:0}}
+        @keyframes garmSuccessPop{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
+        @keyframes garmSuccessThread{0%{stroke-dashoffset:160}100%{stroke-dashoffset:0}}
+        @media (prefers-reduced-motion:reduce){.garm-success-anim{animation:none!important}}
+      `}</style>
+      {confetti.map((c, i) => (
+        <span key={i} className="garm-success-anim absolute pointer-events-none" style={{
+          top: 0, left: `${c.left}%`, width: c.size, height: c.size * 1.6,
+          background: c.color, borderRadius: 1.5, transform: `rotate(${c.rot}deg)`,
+          animation: `garmConfettiFall ${c.dur}s ease-in ${c.delay}s both`,
+        }}/>
+      ))}
+      <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mb-5 garm-success-anim"
+        style={{ animation: "garmSuccessPop .5s cubic-bezier(.2,.9,.3,1.4) both" }}>
         <CheckCircle2 size={30} className="text-emerald-500" strokeWidth={1.5}/>
       </div>
-      <p className="text-foreground mb-2" style={{ fontSize: 20, fontWeight: 600 }}>Order submitted!</p>
+      <p className="text-foreground mb-1" style={{ fontSize: 20, fontWeight: 600 }}>Order submitted!</p>
+      <svg width="150" height="10" viewBox="0 0 150 10" className="mb-2 garm-success-anim" aria-hidden="true">
+        <path d="M2 6 C 30 2, 60 9, 90 5 S 138 4, 148 5" fill="none" stroke={ACCENT} strokeWidth="1.6"
+          strokeLinecap="round" strokeDasharray="160" style={{ animation: "garmSuccessThread 1.1s ease .3s both" }}/>
+      </svg>
       <p className="text-muted-foreground mb-1.5 text-sm leading-relaxed">Your coordinator will confirm your order details and share the next steps shortly.</p>
       <p className="text-muted-foreground mb-8" style={{ fontSize: 11 }}>Your order reference (FL-xxxx) appears in <span className="text-foreground" style={{ fontWeight: 500 }}>Track</span> in a moment.</p>
       <div className="w-full flex flex-col gap-2.5">
