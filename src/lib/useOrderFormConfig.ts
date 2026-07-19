@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { orderConfig, type OrderFormConfig, type ServiceFeeConfig } from "./api";
+import { orderConfig, type OrderFormConfig, type ServiceFeeConfig, type HomeContentConfig } from "./api";
 
 // Which sections of the custom order flow are shown + the service-fee
 // schedule — both controlled live from the Garm Admin Portal (Settings →
@@ -15,7 +15,7 @@ const DEFAULT_FEE: ServiceFeeConfig = {
   surplusDiscountPercent: 15, orgAdvancePercent: 30,
 };
 
-export type OrderFormSettings = OrderFormConfig & { fee: ServiceFeeConfig; features: Record<string, boolean> };
+export type OrderFormSettings = OrderFormConfig & { fee: ServiceFeeConfig; features: Record<string, boolean>; homeContent?: HomeContentConfig | null };
 
 // ₹ service fee for an order. Individuals: % of value PLUS ₹/piece — every
 // piece carries its own handling/production-setup cost, so a 3 pc order pays
@@ -53,6 +53,7 @@ function fetchConfig(): Promise<OrderFormSettings> {
       ...ALL_ON, ...d.orderForm,
       fee: { ...DEFAULT_FEE, ...(d.serviceFee ?? {}) },
       features: { ...DEFAULT_FEATURES, ...(d.features ?? {}) },
+      homeContent: d.homeContent ?? null,
     };
     cachedAt = Date.now();
     inflight = null;

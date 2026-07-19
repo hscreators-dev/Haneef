@@ -17,6 +17,7 @@ import { playChime } from "../lib/notify";
 import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
 import { auth as authApi, account as accountApi, orders as ordersApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
 import { readPendingOrders, writePendingOrders, rememberOrderSummary, flushPendingOrders, createOrderWithRetry, readOrderSummaries } from "../lib/orderSync";
+import { useOrderFormConfig } from "../lib/useOrderFormConfig";
 
 // ── Onboarding-flag persistence (bulletproof) ────────────────────────────────
 // The onboarding "done" flag is saved via a profile PUT. If that save silently
@@ -683,6 +684,56 @@ function etaCountdown(eta?: string): string | undefined {
   return `Arriving in ${days} days`;
 }
 
+// ─── Illustrated garment art — hand-drawn SVG tiles so Home has real imagery,
+// not just line icons. Each is self-contained and colour-tintable. ────────────
+function GarmentArt({ kind, size = 40 }: { kind: "kids" | "men" | "women" | "accessories"; size?: number }) {
+  const s = size;
+  if (kind === "men") return (
+    <svg width={s} height={s} viewBox="0 0 40 40" aria-hidden="true">
+      <path d="M9 10 L15 5.5 Q20 9 25 5.5 L31 10 L28.5 15.5 L26.5 13.5 L26.5 32 Q20 34.5 13.5 32 L13.5 13.5 L11.5 15.5 Z" fill="#1F2A44"/>
+      <path d="M15 5.5 Q20 9 25 5.5 L23.5 8 Q20 10.5 16.5 8 Z" fill="#141E33"/>
+      <path d="M17 18 h6 M17 21.5 h6" stroke="rgba(255,255,255,0.35)" strokeWidth="1.4" strokeLinecap="round"/>
+    </svg>
+  );
+  if (kind === "women") return (
+    <svg width={s} height={s} viewBox="0 0 40 40" aria-hidden="true">
+      <path d="M14.5 5.5 Q20 10 25.5 5.5 L27.5 12 L24.5 16.5 L29 32.5 Q20 36.5 11 32.5 L15.5 16.5 L12.5 12 Z" fill="#B0486F"/>
+      <path d="M14.5 5.5 Q20 10 25.5 5.5 L24.5 8.5 Q20 12 15.5 8.5 Z" fill="#93395B"/>
+      <path d="M13.5 25 Q20 28 26.5 25" stroke="rgba(255,255,255,0.4)" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+    </svg>
+  );
+  if (kind === "kids") return (
+    <svg width={s} height={s} viewBox="0 0 40 40" aria-hidden="true">
+      <path d="M10.5 12 L16 8 Q20 11 24 8 L29.5 12 L27.5 16.5 L25.5 15 L25.5 31 Q20 33.5 14.5 31 L14.5 15 L12.5 16.5 Z" fill="#C8A97E"/>
+      <path d="M20 20.5 l1.6 -1.7 q1.7 -1.7 3.2 0 q1.4 1.7 -0.3 3.4 L20 26.5 l-4.5 -4.3 q-1.7 -1.7 -0.3 -3.4 q1.5 -1.7 3.2 0 Z" fill="#fff" opacity="0.85"/>
+    </svg>
+  );
+  return (
+    <svg width={s} height={s} viewBox="0 0 40 40" aria-hidden="true">
+      <rect x="8" y="16" width="24" height="16" rx="2.5" fill="#047857"/>
+      <rect x="8" y="16" width="24" height="5" rx="2.5" fill="#065F46"/>
+      <rect x="18.2" y="10" width="3.6" height="22" fill="#C8A97E"/>
+      <path d="M20 10 Q14 10 13.5 6.5 Q17.5 5 20 10 Q22.5 5 26.5 6.5 Q26 10 20 10 Z" fill="#C8A97E"/>
+    </svg>
+  );
+}
+
+// ─── Campaign banners (fallbacks — the admin portal's "Garm App Home" tab
+// overrides these live, no deploy needed) ─────────────────────────────────────
+interface HomeCampaignDef { title: string; sub: string; badge?: string; ctaLabel: string; target: "kids" | "order" | "none"; theme: "purple" | "blue" | "green" | "gold" | "dark"; enabled: boolean }
+const DEFAULT_CAMPAIGNS: HomeCampaignDef[] = [
+  { title: "Wedding & Events", sub: "Custom fabric orders for weddings, functions & events. Match your theme colours — sarees to sherwanis — with free design consultation.", badge: "New", ctaLabel: "Explore the workflow", target: "none", theme: "purple", enabled: true },
+  { title: "School reopening?", sub: "Kids' uniforms, sports tees and house colours — age-based sizing, name tags on request, delivered before the first bell.", ctaLabel: "Start a kids order", target: "kids", theme: "blue", enabled: true },
+  { title: "Surplus fabric week", sub: "Premium roll-ends, rescued — the exact same garment, 15% kinder to your wallet and the planet. Pick \"Surplus fabric\" at the Material step.", badge: "Save 15%", ctaLabel: "Order with surplus fabric", target: "order", theme: "green", enabled: true },
+];
+const CAMPAIGN_THEMES: Record<HomeCampaignDef["theme"], { bg: string; shadow: string }> = {
+  purple: { bg: "linear-gradient(135deg,#2d1b4e 0%,#5b2d8e 50%,#c8a84b 100%)", shadow: "0 8px 22px rgba(91,45,142,0.28)" },
+  blue:   { bg: "linear-gradient(135deg,#0F2A4A 0%,#1D4ED8 70%,#3B82F6 115%)", shadow: "0 8px 22px rgba(29,78,216,0.25)" },
+  green:  { bg: "linear-gradient(135deg,#052E22 0%,#047857 70%,#10B981 115%)", shadow: "0 8px 22px rgba(4,120,87,0.25)" },
+  gold:   { bg: "linear-gradient(135deg,#3A2A12 0%,#8A5A18 60%,#C8A97E 115%)", shadow: "0 8px 22px rgba(138,90,24,0.28)" },
+  dark:   { bg: "linear-gradient(140deg,#1A1815 0%,#0D0D0D 60%,#14110C 100%)", shadow: "0 8px 22px rgba(13,13,13,0.3)" },
+};
+
 // ─── Home content — edit these lists weekly, layout takes care of itself ──────
 // "Good to know" cards (horizontal rail). tone: "gold" | "green" | "muted".
 const HOME_TIPS: { tone: "gold" | "green" | "muted"; chip: string; icon: React.ReactNode; title: string; body: string }[] = [
@@ -781,6 +832,21 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   // Persona-aware hero copy — individuals get warm, personal lines;
   // organisations get the procurement pitch.
   const personalHome = !profile?.accountType || profile.accountType === "personal";
+
+  // Live admin-managed Home content (admin portal → Settings → Garm App Home).
+  // Falls back to the built-in defaults until the admin saves their own.
+  const liveCfg = useOrderFormConfig();
+  const tipsToRender = liveCfg.homeContent?.tips?.length
+    ? liveCfg.homeContent.tips.map(t => ({
+        tone: t.tone, chip: t.chip, title: t.title, body: t.body,
+        icon: t.tone === "green" ? <ShieldCheck size={10} strokeWidth={1.8}/> : t.tone === "gold" ? <Palette size={10} strokeWidth={1.8}/> : <Droplets size={10} strokeWidth={1.8}/>,
+      }))
+    : HOME_TIPS;
+  const campaignsToRender: HomeCampaignDef[] =
+    (liveCfg.homeContent?.campaigns?.length ? liveCfg.homeContent.campaigns : DEFAULT_CAMPAIGNS).filter(c => c.enabled !== false);
+  const collectionsToRender: HomeCollection[] = liveCfg.homeContent?.collections?.length
+    ? liveCfg.homeContent.collections.map(c => ({ emoji: "", ...c }))
+    : HOME_COLLECTIONS;
 
   // Active order drives the horizontal progress tracker. Individuals never get a
   // Quote/Approve stage (that's the organisation quote flow) — their journey is
@@ -1007,12 +1073,12 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           <p className="px-5 mb-2.5 label-section">What are we making today?</p>
           <div className="mx-5 mb-5 grid grid-cols-4 gap-2">
             {[
-              // Same icons as the order flow's own pickers (Users/User/Heart for
-              // audiences, Gift for accessories) — one visual language everywhere.
-              { label: "Kids",        sub: "Age sizes",   icon: <Users size={17} strokeWidth={1.5}/>, hl: false },
-              { label: "Men",         sub: "Chest sizes", icon: <User size={17} strokeWidth={1.5}/>,  hl: false },
-              { label: "Women",       sub: "UK sizes",    icon: <Heart size={17} strokeWidth={1.5}/>, hl: false },
-              { label: "Accessories", sub: "Caps, bags…", icon: <Gift size={17} strokeWidth={1.5}/>,  hl: true  },
+              // Illustrated garment art on softly tinted tiles — real imagery,
+              // still in the app's calm palette.
+              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4" },
+              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7" },
+              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1" },
+              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF" },
             ].map(c => (
               <button key={c.label}
                 onClick={() => onQuickStart
@@ -1021,8 +1087,8 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                 className="text-center py-3 px-1 rounded-2xl"
                 style={{ ...card, cursor: "pointer" }}>
                 <span className="mx-auto mb-1.5 flex items-center justify-center rounded-xl"
-                  style={{ width: 38, height: 38, background: c.hl ? ACCENT_BG : "var(--muted)", color: c.hl ? ACCENT_TEXT : "var(--foreground)" }}>
-                  {c.icon}
+                  style={{ width: 44, height: 44, background: c.bg }}>
+                  <GarmentArt kind={c.kind} size={34}/>
                 </span>
                 <span className="block text-foreground" style={{ fontSize: 11.5, fontWeight: 600 }}>{c.label}</span>
                 <span className="block text-muted-foreground" style={{ fontSize: 9 }}>{c.sub}</span>
@@ -1045,7 +1111,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           {/* ── "Good to know" — scrollable tips rail (edit HOME_TIPS to refresh) ── */}
           <p className="px-5 mb-2.5 label-section">Good to know · fresh weekly</p>
           <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
-            {HOME_TIPS.map(t => (
+            {tipsToRender.map(t => (
               <div key={t.title} className="rounded-2xl p-3.5 flex-shrink-0" style={{ ...card, width: 195 }}>
                 <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 mb-2"
                   style={{
@@ -1084,10 +1150,13 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           {/* ── Collections — curated bundles, opens the order pre-filled at Review ── */}
           <p className="px-5 mb-2.5 label-section">Collections · ready-made bundles</p>
           <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
-            {HOME_COLLECTIONS.map(c => (
+            {collectionsToRender.map(c => (
               <button key={c.id} onClick={() => onOpenCollection?.(c)}
                 className="rounded-2xl overflow-hidden flex-shrink-0 text-left" style={{ ...card, width: 176, cursor: "pointer" }}>
                 <div className="flex items-center gap-1.5 px-3.5 pt-3">
+                  <span className="flex items-center justify-center rounded-lg mr-1" style={{ width: 26, height: 26, background: "var(--muted)" }}>
+                    <GarmentArt kind={c.audience === "women" ? "women" : "men"} size={20}/>
+                  </span>
                   {c.lines.map((l, i) => (
                     <span key={i} className="rounded-full" style={{ width: 14, height: 14, background: l.colorHex, border: "1px solid rgba(0,0,0,0.15)" }}/>
                   ))}
@@ -1104,67 +1173,41 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
         </>
       )}
 
-      {/* ── Campaign banner carousel (personal only) — swipe through offers ── */}
-      {(!profile?.accountType || profile.accountType === "personal") && (
+      {/* ── Campaign banner carousel — content managed LIVE from the admin
+          portal (Settings → Garm App Home); these render whatever is saved there ── */}
+      {(!profile?.accountType || profile.accountType === "personal") && campaignsToRender.length > 0 && (
         <div className="flex gap-3 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none", scrollSnapType: "x mandatory" }}>
-          {/* Wedding & Events — unchanged */}
-          <button className="text-left overflow-hidden rounded-2xl relative flex-shrink-0"
-            style={{ width: "calc(100% - 2.5rem)", scrollSnapAlign: "center", background: "linear-gradient(135deg,#2d1b4e 0%,#5b2d8e 50%,#c8a84b 100%)", border: "none", cursor: "pointer", boxShadow: "0 8px 22px rgba(91,45,142,0.28)" }}>
-            <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 12, right: 48, width: 5, height: 5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out infinite" }}/>
-            <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 30, right: 20, width: 3.5, height: 3.5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out .6s infinite" }}/>
-            <span className="absolute rounded-full pointer-events-none magic-anim" style={{ bottom: 16, right: 76, width: 4, height: 4, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out 1.2s infinite" }}/>
-            <div className="px-4 py-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Star size={20} strokeWidth={1.5} color="#fff"/>
-                <span className="text-white text-sm font-bold">Wedding & Events</span>
-                <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">New</span>
-              </div>
-              <p className="text-white/80 text-xs leading-relaxed mb-3">
-                Custom fabric orders for weddings, functions & events. Match your theme colours, get coordinated outfits for the whole family — from sarees to sherwanis — with free design consultation.
-              </p>
-              <div className="flex items-center gap-1.5">
-                <span className="text-white/60" style={{ fontSize: 11 }}>Explore the workflow</span>
-                <ChevronRight size={13} color="rgba(255,255,255,0.6)" strokeWidth={2}/>
-              </div>
-            </div>
-          </button>
-
-          {/* School reopening — uniforms */}
-          <button onClick={() => onQuickStart?.("kids")} className="text-left overflow-hidden rounded-2xl relative flex-shrink-0"
-            style={{ width: "calc(100% - 2.5rem)", scrollSnapAlign: "center", background: "linear-gradient(135deg,#0F2A4A 0%,#1D4ED8 70%,#3B82F6 110%)", border: "none", cursor: "pointer", boxShadow: "0 8px 22px rgba(29,78,216,0.25)" }}>
-            <div className="px-4 py-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Users size={18} strokeWidth={1.5} color="#fff"/>
-                <span className="text-white text-sm font-bold">School reopening?</span>
-              </div>
-              <p className="text-white/80 text-xs leading-relaxed mb-3">
-                Kids' uniforms, sports tees and house colours — age-based sizing, name tags on request, delivered before the first bell.
-              </p>
-              <div className="flex items-center gap-1.5">
-                <span className="text-white/60" style={{ fontSize: 11 }}>Start a kids order</span>
-                <ChevronRight size={13} color="rgba(255,255,255,0.6)" strokeWidth={2}/>
-              </div>
-            </div>
-          </button>
-
-          {/* Surplus saver */}
-          <button onClick={() => onNavigate("order")} className="text-left overflow-hidden rounded-2xl relative flex-shrink-0"
-            style={{ width: "calc(100% - 2.5rem)", scrollSnapAlign: "center", background: "linear-gradient(135deg,#052E22 0%,#047857 70%,#10B981 115%)", border: "none", cursor: "pointer", boxShadow: "0 8px 22px rgba(4,120,87,0.25)" }}>
-            <div className="px-4 py-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Gift size={18} strokeWidth={1.5} color="#fff"/>
-                <span className="text-white text-sm font-bold">Surplus fabric week</span>
-                <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">Save 15%</span>
-              </div>
-              <p className="text-white/80 text-xs leading-relaxed mb-3">
-                Premium roll-ends, rescued — the exact same garment, 15% kinder to your wallet and the planet. Pick "Surplus fabric" at the Material step.
-              </p>
-              <div className="flex items-center gap-1.5">
-                <span className="text-white/60" style={{ fontSize: 11 }}>Order with surplus fabric</span>
-                <ChevronRight size={13} color="rgba(255,255,255,0.6)" strokeWidth={2}/>
-              </div>
-            </div>
-          </button>
+          {campaignsToRender.map((cp, i) => {
+            const theme = CAMPAIGN_THEMES[cp.theme] ?? CAMPAIGN_THEMES.gold;
+            const onTap = cp.target === "kids" ? () => onQuickStart?.("kids")
+              : cp.target === "order" ? () => onNavigate("order")
+              : undefined;
+            return (
+              <button key={`${cp.title}-${i}`} onClick={onTap}
+                className="text-left overflow-hidden rounded-2xl relative flex-shrink-0"
+                style={{ width: "calc(100% - 2.5rem)", scrollSnapAlign: "center", background: theme.bg, border: "none", cursor: onTap ? "pointer" : "default", boxShadow: theme.shadow }}>
+                {cp.theme === "purple" && (
+                  <>
+                    <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 12, right: 48, width: 5, height: 5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out infinite" }}/>
+                    <span className="absolute rounded-full pointer-events-none magic-anim" style={{ top: 30, right: 20, width: 3.5, height: 3.5, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out .6s infinite" }}/>
+                    <span className="absolute rounded-full pointer-events-none magic-anim" style={{ bottom: 16, right: 76, width: 4, height: 4, background: "#fff", animation: "garmTwinkle 1.9s ease-in-out 1.2s infinite" }}/>
+                  </>
+                )}
+                <div className="px-4 py-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    {cp.target === "kids" ? <Users size={18} strokeWidth={1.5} color="#fff"/> : cp.theme === "green" ? <Gift size={18} strokeWidth={1.5} color="#fff"/> : <Star size={18} strokeWidth={1.5} color="#fff"/>}
+                    <span className="text-white text-sm font-bold">{cp.title}</span>
+                    {cp.badge ? <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-white/20 text-white font-medium">{cp.badge}</span> : null}
+                  </div>
+                  <p className="text-white/80 text-xs leading-relaxed mb-3">{cp.sub}</p>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white/60" style={{ fontSize: 11 }}>{cp.ctaLabel}</span>
+                    <ChevronRight size={13} color="rgba(255,255,255,0.6)" strokeWidth={2}/>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
 

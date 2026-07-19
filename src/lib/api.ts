@@ -243,8 +243,15 @@ export interface ServiceFeeConfig {
   orgAdvancePercent?: number; // % advance organisations pay before production
 }
 
+// Admin-managed Home screen content (campaign banners / tips / collections).
+export interface HomeContentConfig {
+  campaigns?: { title: string; sub: string; badge?: string; ctaLabel: string; target: "kids" | "order" | "none"; theme: "purple" | "blue" | "green" | "gold" | "dark"; enabled: boolean }[];
+  tips?: { chip: string; tone: "gold" | "green" | "muted"; title: string; body: string }[];
+  collections?: { id: string; title: string; sub: string; audience: "men" | "women"; lines: { categoryId: "mens" | "womens"; name: string; basePrice: number; style?: string; qty: number; colorHex: string; colorLabel: string }[] }[];
+}
+
 export const orderConfig = {
-  get: () => adminGet<{ orderForm: OrderFormConfig; serviceFee?: ServiceFeeConfig; features?: Record<string, boolean> }>("/order-config"),
+  get: () => adminGet<{ orderForm: OrderFormConfig; serviceFee?: ServiceFeeConfig; features?: Record<string, boolean>; homeContent?: HomeContentConfig | null }>("/order-config"),
 };
 
 // ─── Virtual try-on ("live picture") ──────────────────────────────────────────
