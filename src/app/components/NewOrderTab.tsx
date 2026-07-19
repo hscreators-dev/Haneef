@@ -5090,7 +5090,7 @@ function CustomOrderForm({ onContinue, onBack }: { onContinue: (d: CustomOrderDe
 // ─── Persona Order Form (Step 2 — shared for org & individual) ────────────────
 
 function PersonaOrderForm({
-  persona, orgDetails, customDetails, onSubmit, onChangePersona, onSaveDraft, resume,
+  persona, orgDetails, customDetails, onSubmit, onChangePersona, onSaveDraft, resume, dirtyRef,
 }: {
   persona: Persona;
   orgDetails?: OrgDetails | null;
@@ -5099,6 +5099,10 @@ function PersonaOrderForm({
   onChangePersona: () => void;
   onSaveDraft?: (d: DraftPayload) => void;
   resume?: ResumeState | null;
+  // Set true the moment the customer actually CHANGES something — the app uses
+  // this to keep dirty work alive across tab switches, while untouched forms
+  // (a browsed collection, an opened draft) reset to a fresh order.
+  dirtyRef?: React.MutableRefObject<boolean>;
 }) {
   // Which admin catalog (Individuals=B2C / Organizations=B2B) to price this order
   // against, so per-option prices come from the RIGHT catalog even if a product
@@ -5787,6 +5791,10 @@ function PersonaOrderForm({
   const wipLastRef  = useRef("");
   const finishedRef = useRef(false);
   useEffect(() => {
+    // Baseline = the state this form OPENED with. Only snapshots that DIFFER
+    // from it are saved — so browsing a collection/draft without touching it
+    // never creates a phantom in-progress order.
+    try { wipLastRef.current = JSON.stringify(wipBuildRef.current()); } catch { wipLastRef.current = ""; }
     const save = () => {
       if (finishedRef.current) return;
       try {
@@ -5799,7 +5807,11 @@ function PersonaOrderForm({
           || Object.values((p.customDetails?.accessoryQty ?? {}) as Record<string, number>).some(q => q > 0);
         if (!meaningful) { localStorage.removeItem("fl_wip"); wipLastRef.current = ""; return; }
         const s = JSON.stringify(p);
-        if (s !== wipLastRef.current) { wipLastRef.current = s; localStorage.setItem("fl_wip", s); }
+        if (s !== wipLastRef.current) {
+          wipLastRef.current = s;
+          localStorage.setItem("fl_wip", s);
+          if (dirtyRef) dirtyRef.current = true;
+        }
       } catch { /* best-effort */ }
     };
     const t = setInterval(save, 4000);
@@ -7095,7 +7107,7 @@ function PersonaOrderForm({
 
         {/* Save as draft — only on the final Review step, sits above the submit row */}
         {onSaveDraft && currentSubStepLabel === "Review" && (
-          <button onClick={() => { finishedRef.current = true; onSaveDraft(buildDraftPayload()); }}
+          <button onClick={() => { finishedRef.current = true; if (dirtyRef) dirtyRef.current = false; onSaveDraft(buildDraftPayload()); }}
             className="w-full flex items-center justify-center gap-2 mb-2.5 py-2.5 rounded-2xl"
             style={{ background: "var(--card)", border: "1px solid var(--border)", color: DARK, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
             <FileText size={14} strokeWidth={2}/> Save as draft
@@ -7164,7 +7176,7 @@ function PersonaOrderForm({
               ? <>Your order is sent to Garm for confirmation — nothing is charged now. Once confirmed, you'll pay {inr(individualPayable)} in Track and production starts right after.</>
               : <>Your coordinator will confirm the order details and share the final price &amp; next steps shortly. You can still request changes after submitting.</>}</p>
             <div className="flex flex-col gap-2">
-              <button onClick={() => { finishedRef.current = true; setShowConfirmSubmit(false); onSubmit(buildFullSummary(), buildDraftPayload()); }} style={{ ...btnPrimary, padding:"12px 20px" }}>
+              <button onClick={() => { finishedRef.current = true; if (dirtyRef) dirtyRef.current = false; setShowConfirmSubmit(false); onSubmit(buildFullSummary(), buildDraftPayload()); }} style={{ ...btnPrimary, padding:"12px 20px" }}>
                 <Check size={15}/> Yes, submit order
               </button>
               <button onClick={() => setShowConfirmSubmit(false)} style={{ ...btnSecondary, padding:"10px 20px" }}>Go back and review</button>
@@ -7505,7 +7517,7 @@ type OrderStep =
 // audience; accessories → the accessories picker; sizeguide → the size chart.
 export type OrderIntent = "kids" | "men" | "women" | "accessories" | "sizeguide";
 
-export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountType, orgType, orgName, name, phone, email, address, city, pin, onSaveDraft, resumeDraft, intent, onIntentConsumed, onResetResume }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; onOrderPlaced?: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; address?: string; city?: string; pin?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null; intent?: OrderIntent | null; onIntentConsumed?: () => void; onResetResume?: () => void }) {
+export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountType, orgType, orgName, name, phone, email, address, city, pin, onSaveDraft, resumeDraft, intent, onIntentConsumed, onResetResume, dirtyRef }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; onOrderPlaced?: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; address?: string; city?: string; pin?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null; intent?: OrderIntent | null; onIntentConsumed?: () => void; onResetResume?: () => void; dirtyRef?: React.MutableRefObject<boolean> }) {
   const isPersonal = accountType === "personal";
   // Carry the real onboarding profile (org name/type, contact name, phone, email, saved
   // default delivery address) into the shared `currentUser` default that the rest of this
@@ -7549,6 +7561,10 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
   const [showSwitchConfirm, setShowSwitchConfirm] = useState(false);
   const [submittedSummary, setSubmittedSummary] = useState<SubmittedOrderSummary | null>(null);
   const [showSizeGuide, setShowSizeGuide] = useState(false);
+
+  // Fresh mount = nothing touched yet.
+  useEffect(() => { if (dirtyRef) dirtyRef.current = false; // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Apply a Home-screen tile intent the moment it arrives (the tab stays
   // mounted, so this must react to prop changes, not just mount).
@@ -7674,6 +7690,7 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
           onSubmit={handleSuccess}
           onChangePersona={() => setStep({ type:"org_details" })}
           onSaveDraft={onSaveDraft}
+          dirtyRef={dirtyRef}
         />
       )}
       {step.type === "individual_step2" && (
@@ -7684,6 +7701,7 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
           onSubmit={handleSuccess}
           onChangePersona={() => setStep({ type:"custom_audience" })}
           onSaveDraft={onSaveDraft}
+          dirtyRef={dirtyRef}
         />
       )}
       {step.type === "success" && (

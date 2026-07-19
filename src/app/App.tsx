@@ -863,16 +863,64 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
       {/* ── Scrollable content area ── */}
       <div className="flex-1 overflow-y-auto pb-4 min-h-0 pt-4" style={{ scrollbarWidth: "none" }}>
 
-      {/* ── Active order FIRST — progress & pay-now visible without any scrolling ── */}
+      {/* ── Hero banner — woven texture + floating brand mark + stitched thread ── */}
+      <div className="mx-5 mb-5 rounded-2xl p-5 relative overflow-hidden"
+        style={{ background: "linear-gradient(140deg, #1A1815 0%, #0D0D0D 55%, #14110C 100%)", boxShadow: "0 10px 28px rgba(13,13,13,0.22)" }}>
+        {/* Basket-weave texture — the Garm mark, woven into the background */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ opacity: 0.055 }} aria-hidden="true">
+          <defs>
+            <pattern id="garmWeavePat" width="36" height="36" patternUnits="userSpaceOnUse">
+              <rect x="4" y="4" width="28" height="11" rx="5.5" fill="none" stroke="#fff" strokeWidth="1.5"/>
+              <rect x="20" y="20" width="28" height="11" rx="5.5" fill="none" stroke="#fff" strokeWidth="1.5"/>
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#garmWeavePat)"/>
+        </svg>
+        {/* Warm glow behind the floating mark */}
+        <div className="absolute top-0 right-0 w-44 h-44 rounded-full pointer-events-none"
+          style={{ transform: "translate(28%,-28%)", background: "radial-gradient(circle, rgba(200,169,126,0.28) 0%, transparent 70%)" }}/>
+        <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full border border-white/5 pointer-events-none"
+          style={{ transform: "translate(-30%,30%)" }}/>
+        {/* Floating woven logo tile */}
+        <div className="absolute pointer-events-none magic-anim"
+          style={{ top: 16, right: 16, animation: "garmHeroFloat 5s ease-in-out infinite", filter: "drop-shadow(0 6px 12px rgba(0,0,0,0.4))" }}>
+          <GarmLogo size={46}/>
+        </div>
+
+        <p className="mb-2 label-section" style={{ color: "rgba(200,169,126,0.8)" }}>{hero.eyebrow}</p>
+        <h1 className="text-white mb-1" style={{ fontSize: 24, fontWeight: 600, lineHeight: 1.25 }}>
+          {hero.line1}<br/><span style={{ color: ACCENT }}>{hero.line2}</span>
+        </h1>
+        {/* Running stitch — a thread sewing itself under the headline */}
+        <svg width="156" height="10" viewBox="0 0 156 10" className="mb-1.5" aria-hidden="true">
+          <path className="magic-anim" d="M2 6 C 32 2, 62 9, 92 5 S 144 4, 154 5" fill="none"
+            stroke={ACCENT} strokeWidth="1.6" strokeLinecap="round" strokeDasharray="6 5"
+            style={{ animation: "garmThread 2.6s linear infinite" }}/>
+        </svg>
+        <p className="text-white/55 mb-5" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+          {hero.body}
+        </p>
+        <button onClick={() => onNavigate("order")}
+          className="w-full bg-white text-foreground rounded-xl py-3 flex items-center justify-center gap-2 text-sm font-medium"
+          style={{ boxShadow: "0 6px 20px rgba(200,169,126,0.28)" }}>
+          <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: ACCENT }}>
+            <PlusCircle size={13} strokeWidth={2} color="#fff"/>
+          </span>
+          {hero.cta}
+        </button>
+      </div>
+
+      {/* ── Order Track progress — right after the hero card, before the stats ── */}
       {activeOrder && (
-        <div className="mx-5 mb-5 overflow-hidden" style={card}>
+        <div className="mx-5 mb-5 overflow-hidden" style={{ ...card, cursor: "pointer" }}
+          onClick={() => onNavigate("track", activeOrder.orderId ?? activeOrder.id.replace(/^#/, ""))}>
           <div style={{ height: 3, background: "linear-gradient(90deg, #C8A97E 0%, rgba(200,169,126,0.25) 100%)" }}/>
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
             <div>
               <p className="label-section">Order in progress</p>
               <p className="text-foreground text-sm font-semibold mt-0.5">{activeOrder.id}</p>
             </div>
-            <button onClick={() => onNavigate("track", activeOrder.id)}
+            <button onClick={(e) => { e.stopPropagation(); onNavigate("track", activeOrder.orderId ?? activeOrder.id.replace(/^#/, "")); }}
               className="text-xs text-foreground flex items-center gap-1 font-medium">
               Track <ArrowRight size={11} strokeWidth={2}/>
             </button>
@@ -921,7 +969,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
 
             {/* Payment prompt — order confirmed, awaiting the customer's payment. */}
             {activeOrder.needsPayment && (
-              <button onClick={() => onNavigate("track", activeOrder.id)}
+              <button onClick={(e) => { e.stopPropagation(); onNavigate("track", activeOrder.orderId ?? activeOrder.id.replace(/^#/, "")); }}
                 className="mt-3 w-full flex items-center justify-between rounded-xl px-3.5 py-3"
                 style={{ background: "#0D0D0D", border: "none", cursor: "pointer" }}>
                 <span className="flex items-center gap-2 min-w-0">
@@ -937,54 +985,6 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           </div>
         </div>
       )}
-
-
-      {/* ── Hero banner — woven texture + floating brand mark + stitched thread ── */}
-      <div className="mx-5 mb-5 rounded-2xl p-5 relative overflow-hidden"
-        style={{ background: "linear-gradient(140deg, #1A1815 0%, #0D0D0D 55%, #14110C 100%)", boxShadow: "0 10px 28px rgba(13,13,13,0.22)" }}>
-        {/* Basket-weave texture — the Garm mark, woven into the background */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ opacity: 0.055 }} aria-hidden="true">
-          <defs>
-            <pattern id="garmWeavePat" width="36" height="36" patternUnits="userSpaceOnUse">
-              <rect x="4" y="4" width="28" height="11" rx="5.5" fill="none" stroke="#fff" strokeWidth="1.5"/>
-              <rect x="20" y="20" width="28" height="11" rx="5.5" fill="none" stroke="#fff" strokeWidth="1.5"/>
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#garmWeavePat)"/>
-        </svg>
-        {/* Warm glow behind the floating mark */}
-        <div className="absolute top-0 right-0 w-44 h-44 rounded-full pointer-events-none"
-          style={{ transform: "translate(28%,-28%)", background: "radial-gradient(circle, rgba(200,169,126,0.28) 0%, transparent 70%)" }}/>
-        <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full border border-white/5 pointer-events-none"
-          style={{ transform: "translate(-30%,30%)" }}/>
-        {/* Floating woven logo tile */}
-        <div className="absolute pointer-events-none magic-anim"
-          style={{ top: 16, right: 16, animation: "garmHeroFloat 5s ease-in-out infinite", filter: "drop-shadow(0 6px 12px rgba(0,0,0,0.4))" }}>
-          <GarmLogo size={46}/>
-        </div>
-
-        <p className="mb-2 label-section" style={{ color: "rgba(200,169,126,0.8)" }}>{hero.eyebrow}</p>
-        <h1 className="text-white mb-1" style={{ fontSize: 24, fontWeight: 600, lineHeight: 1.25 }}>
-          {hero.line1}<br/><span style={{ color: ACCENT }}>{hero.line2}</span>
-        </h1>
-        {/* Running stitch — a thread sewing itself under the headline */}
-        <svg width="156" height="10" viewBox="0 0 156 10" className="mb-1.5" aria-hidden="true">
-          <path className="magic-anim" d="M2 6 C 32 2, 62 9, 92 5 S 144 4, 154 5" fill="none"
-            stroke={ACCENT} strokeWidth="1.6" strokeLinecap="round" strokeDasharray="6 5"
-            style={{ animation: "garmThread 2.6s linear infinite" }}/>
-        </svg>
-        <p className="text-white/55 mb-5" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-          {hero.body}
-        </p>
-        <button onClick={() => onNavigate("order")}
-          className="w-full bg-white text-foreground rounded-xl py-3 flex items-center justify-center gap-2 text-sm font-medium"
-          style={{ boxShadow: "0 6px 20px rgba(200,169,126,0.28)" }}>
-          <span className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: ACCENT }}>
-            <PlusCircle size={13} strokeWidth={2} color="#fff"/>
-          </span>
-          {hero.cta}
-        </button>
-      </div>
 
       {/* ── Stats row ── */}
       <div className="mx-5 mb-5 grid grid-cols-3 gap-2.5">
@@ -1186,7 +1186,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           </button>
         )}
         {homeOrders.map(o => (
-          <button key={o.id} onClick={() => onNavigate("track", o.id)}
+          <button key={o.id} onClick={() => onNavigate("track", o.orderId ?? o.id.replace(/^#/, ""))}
             className="text-left w-full overflow-hidden"
             style={{
               ...card,
@@ -2554,6 +2554,20 @@ export default function App() {
     if (activeTab === "order") setOrderTabMounted(true);
   }, [activeTab]);
 
+  // Leaving the Order tab with NOTHING actually changed (a browsed collection,
+  // an opened draft, a stale success screen) → reset it to a fresh new-order
+  // page. Only genuinely dirty in-progress work survives tab switches.
+  const orderDirtyRef = useRef(false);
+  const prevTabRef = useRef<Tab>("home");
+  useEffect(() => {
+    if (prevTabRef.current === "order" && activeTab !== "order" && !orderDirtyRef.current) {
+      setResumeDraft(null);
+      setOrderEpoch(e => e + 1);
+    }
+    prevTabRef.current = activeTab;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
   // Fire the first-time tutorial (and, after it's closed, the coach-mark tour) the moment
   // someone lands on the main app — whether they just finished onboarding OR skipped
   // straight there because their phone/email was already recognised (identity lock).
@@ -3015,7 +3029,7 @@ export default function App() {
                 customer exactly where they left off, never on a wiped form. */}
             {(activeTab === "order" || orderTabMounted) && (
               <div style={{ display: activeTab === "order" ? "contents" : "none" }}>
-                <NewOrderTab key={`${resumeDraft?.id ?? "new"}-${orderEpoch}`} onNavigate={handleNavigate} onOrderPlaced={handleOrderPlaced} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft} intent={orderIntent} onIntentConsumed={() => setOrderIntent(null)} onResetResume={() => setResumeDraft(null)}/>
+                <NewOrderTab key={`${resumeDraft?.id ?? "new"}-${orderEpoch}`} onNavigate={handleNavigate} onOrderPlaced={handleOrderPlaced} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft} intent={orderIntent} onIntentConsumed={() => setOrderIntent(null)} onResetResume={() => setResumeDraft(null)} dirtyRef={orderDirtyRef}/>
               </div>
             )}
             {activeTab === "track"   && (
