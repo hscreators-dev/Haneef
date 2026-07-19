@@ -1395,7 +1395,7 @@ const sizeCharts = {
   ],
 };
 
-function SizeGuideModal({ onClose }: { onClose: () => void }) {
+export function SizeGuideModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<"kids"|"mens"|"womens">("mens");
   return (
     <Overlay onClose={onClose}>

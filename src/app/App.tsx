@@ -8,7 +8,7 @@ import {
   Users, Heart, Gift, Ruler, Palette, Droplets, Smile, Scissors, Lightbulb,
 } from "lucide-react";
 import certArt from "@/assets/undraw_certification_garm.svg";
-import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPayload, type OrderIntent } from "./components/NewOrderTab";
+import { NewOrderTab, SizeGuideModal, type SubmittedOrderSummary, type OrderDraft, type DraftPayload, type OrderIntent } from "./components/NewOrderTab";
 import { TrackTab } from "./components/TrackTab";
 import { AccountTab, type UserProfile, orgTypeDefs, OrgTypeSelect } from "./components/AccountTab";
 import { NotificationsScreen } from "./components/NotificationsScreen";
@@ -2244,6 +2244,10 @@ export default function App() {
   const [orderEpoch, setOrderEpoch]           = useState(0);
   // Home-tile deep link: which exact screen the Order tab should open on next.
   const [orderIntent, setOrderIntent]         = useState<OrderIntent | null>(null);
+  // Size chart opened FROM HOME — shown right there as an overlay, never by
+  // switching to the Order tab (that left whatever screen the tab was on
+  // visible behind/after the chart).
+  const [showSizeChart, setShowSizeChart]     = useState(false);
   // Branded splash on every app open (Zomato-style): logo scene first, then the
   // app fades in underneath. Pure presentation — data loading runs behind it.
   const [splashPhase, setSplashPhase] = useState<"show" | "fade" | "done">("show");
@@ -2801,7 +2805,7 @@ export default function App() {
           <HelpSupportScreen onBack={() => setShowHelp(false)} onReplayTour={() => { setShowHelp(false); handleReplayTour(); }}/>
         ) : (
           <>
-            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} onQuickStart={(i) => { setOrderIntent(i); setActiveTab("order"); }} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
+            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} onQuickStart={(i) => { if (i === "sizeguide") { setShowSizeChart(true); } else { setOrderIntent(i); setActiveTab("order"); } }} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
             {/* Order tab: mounted once, then kept alive (display:none) across tab
                 switches — tapping Home/Track/Account and coming back must land the
                 customer exactly where they left off, never on a wiped form. */}
@@ -2909,6 +2913,9 @@ export default function App() {
       {/* Rating popup — shown once when a delivered order is opened (and not yet
           rated). Persists the rating to THAT order on the backend, so it shows in
           Track and in the admin portal. */}
+      {/* Size chart opened from the Home tile — overlays Home directly */}
+      {showSizeChart && <SizeGuideModal onClose={() => setShowSizeChart(false)}/>}
+
       {showRatingPopup && ratingOrder && (
         <div className="absolute inset-0 z-50 flex flex-col justify-end"
           style={{ background: "rgba(0,0,0,0.5)" }}
