@@ -5790,7 +5790,15 @@ function PersonaOrderForm({
     const save = () => {
       if (finishedRef.current) return;
       try {
-        const s = JSON.stringify(wipBuildRef.current());
+        const p = wipBuildRef.current();
+        // Only snapshot MEANINGFUL work — an untouched form must never be
+        // restored later as an empty Review screen.
+        const r: any = p.resume ?? {};
+        const meaningful = (r.garmentCart?.length ?? 0) > 0 || (r.orgCart?.length ?? 0) > 0
+          || Object.keys(r.accSpecState ?? {}).length > 0
+          || Object.values((p.customDetails?.accessoryQty ?? {}) as Record<string, number>).some(q => q > 0);
+        if (!meaningful) { localStorage.removeItem("fl_wip"); wipLastRef.current = ""; return; }
+        const s = JSON.stringify(p);
         if (s !== wipLastRef.current) { wipLastRef.current = s; localStorage.setItem("fl_wip", s); }
       } catch { /* best-effort */ }
     };
@@ -6906,7 +6914,7 @@ function PersonaOrderForm({
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>
-              {currentSubStepLabel === "Packaging" ? "Stitching & Packaging" : currentSubStepLabel === "Garment" ? (persona === "individual" ? "Garments & colours" : "Garments, stitching & references") : currentSubStepLabel === "Material" ? "Fabric & material" : currentSubStepLabel}
+              {currentSubStepLabel === "Packaging" ? "Stitching & Packaging" : currentSubStepLabel === "Garment" ? (persona === "individual" ? "Garments" : "Garments, stitching & references") : currentSubStepLabel === "Material" ? "Fabric & material" : currentSubStepLabel}
             </p>
           </div>
           {/* Progress dots */}
@@ -7463,7 +7471,12 @@ type OrderStep =
   | { type: "individual_step2"; custom: CustomOrderDetails; resume?: ResumeState | null }
   | { type: "success" };
 
-export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountType, orgType, orgName, name, phone, email, address, city, pin, onSaveDraft, resumeDraft }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; onOrderPlaced?: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; address?: string; city?: string; pin?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null }) {
+// Deep-link intents from the Home screen tiles — each lands EXACTLY where it
+// promises: kids/men/women → straight into the Garments step for that
+// audience; accessories → the accessories picker; sizeguide → the size chart.
+export type OrderIntent = "kids" | "men" | "women" | "accessories" | "sizeguide";
+
+export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountType, orgType, orgName, name, phone, email, address, city, pin, onSaveDraft, resumeDraft, intent, onIntentConsumed, onResetResume }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; onOrderPlaced?: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; address?: string; city?: string; pin?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null; intent?: OrderIntent | null; onIntentConsumed?: () => void; onResetResume?: () => void }) {
   const isPersonal = accountType === "personal";
   // Carry the real onboarding profile (org name/type, contact name, phone, email, saved
   // default delivery address) into the shared `currentUser` default that the rest of this
@@ -7492,15 +7505,47 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
     // it — the customer lands exactly where they left off.
     try {
       const wip = JSON.parse(localStorage.getItem("fl_wip") || "null") as DraftPayload | null;
-      if (wip) {
+      const wr: any = wip?.resume ?? {};
+      const wipMeaningful = (wr.garmentCart?.length ?? 0) > 0 || (wr.orgCart?.length ?? 0) > 0
+        || Object.keys(wr.accSpecState ?? {}).length > 0
+        || Object.values((wip?.customDetails?.accessoryQty ?? {}) as Record<string, number>).some(q => q > 0);
+      if (wip && wipMeaningful) {
         if (wip.persona === "organisation" && wip.orgDetails && !isPersonal) return { type: "org_step2", org: wip.orgDetails, resume: wip.resume };
         if (wip.persona === "individual" && wip.customDetails) return { type: "individual_step2", custom: wip.customDetails, resume: wip.resume };
       }
+      if (wip && !wipMeaningful) localStorage.removeItem("fl_wip");
     } catch { /* corrupted snapshot — start fresh */ }
     return isPersonal ? { type: "custom_audience" } : { type: "org_details" };
   });
   const [showSwitchConfirm, setShowSwitchConfirm] = useState(false);
   const [submittedSummary, setSubmittedSummary] = useState<SubmittedOrderSummary | null>(null);
+  const [showSizeGuide, setShowSizeGuide] = useState(false);
+
+  // Apply a Home-screen tile intent the moment it arrives (the tab stays
+  // mounted, so this must react to prop changes, not just mount).
+  useEffect(() => {
+    if (!intent) return;
+    if (intent === "sizeguide") {
+      setShowSizeGuide(true);
+    } else if (intent === "accessories") {
+      setStep({ type: "individual_accessories" });
+    } else {
+      // kids / men / women → skip the "Who needs this?" screen entirely and
+      // land on the Garments step with the audience pre-selected.
+      setStep({
+        type: "individual_step2",
+        custom: {
+          garmentType: "tshirt",
+          groupType: intent === "kids" ? "kids" : "family",
+          audience: intent,
+          name: currentUser.name, phone: currentUser.phone, email: currentUser.email,
+          address: currentUser.address, city: currentUser.city, pin: currentUser.pin,
+        },
+      });
+    }
+    onIntentConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intent]);
 
   // Feature gate: the admin portal can turn Individual (B2C) or Organisation
   // (B2B) ordering on/off (Settings → Feature Toggles). Reads live config;
@@ -7544,10 +7589,14 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
   // Order would show the stale "Order submitted!" screen forever.
   function resetWizard() {
     setStep(isPersonal ? { type: "custom_audience" } : { type: "org_details" });
+    // The submitted order consumed any resumed draft — tell the app to drop the
+    // reference so the tab remounts CLEAN next time (never a stale empty Review).
+    onResetResume?.();
   }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+      {showSizeGuide && <SizeGuideModal onClose={() => setShowSizeGuide(false)}/>}
       {step.type === "org_details" && (
         <>
           {showSwitchConfirm && (

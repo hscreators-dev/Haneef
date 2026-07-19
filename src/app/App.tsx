@@ -8,7 +8,7 @@ import {
   Users, Heart, ShoppingBag, Ruler, Palette, Droplets, Smile, Scissors, Lightbulb,
 } from "lucide-react";
 import certArt from "@/assets/undraw_certification_garm.svg";
-import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPayload } from "./components/NewOrderTab";
+import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPayload, type OrderIntent } from "./components/NewOrderTab";
 import { TrackTab } from "./components/TrackTab";
 import { AccountTab, type UserProfile, orgTypeDefs, OrgTypeSelect } from "./components/AccountTab";
 import { NotificationsScreen } from "./components/NotificationsScreen";
@@ -660,11 +660,12 @@ const HOME_FACTS: { icon: React.ReactNode; lead: string; body: string }[] = [
   { icon: <Smile size={14} strokeWidth={1.6}/>,     lead: "Real talk:",    body: "“One size fits all” is the biggest lie in fashion. That's why we don't sell it." },
 ];
 
-function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCount = 0, profile }: {
+function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, draftCount = 0, notifCount = 0, profile }: {
   onNavigate: (t: Tab, orderId?: string) => void;
   onBell: () => void;
   onDrafts: () => void;
   onHelp?: () => void;
+  onQuickStart?: (intent: OrderIntent) => void;
   draftCount?: number;
   notifCount?: number;
   profile?: UserProfile;
@@ -781,6 +782,82 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
       {/* ── Scrollable content area ── */}
       <div className="flex-1 overflow-y-auto pb-4 min-h-0 pt-4" style={{ scrollbarWidth: "none" }}>
 
+      {/* ── Active order FIRST — progress & pay-now visible without any scrolling ── */}
+      {activeOrder && (
+        <div className="mx-5 mb-5 overflow-hidden" style={card}>
+          <div style={{ height: 3, background: "linear-gradient(90deg, #C8A97E 0%, rgba(200,169,126,0.25) 100%)" }}/>
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <div>
+              <p className="label-section">Order in progress</p>
+              <p className="text-foreground text-sm font-semibold mt-0.5">{activeOrder.id}</p>
+            </div>
+            <button onClick={() => onNavigate("track", activeOrder.id)}
+              className="text-xs text-foreground flex items-center gap-1 font-medium">
+              Track <ArrowRight size={11} strokeWidth={2}/>
+            </button>
+          </div>
+
+          <div className="px-4 pt-4 pb-4">
+            {/* Stage animation — scene follows the active order's current stage */}
+            <div className="mb-4">
+              <StageAnimation stage={stageFromLabel(activeOrder.status)} compact/>
+            </div>
+
+            {/* Horizontal progress stepper */}
+            <div className="relative flex justify-between items-start">
+              <div className="absolute" style={{ left: 11, right: 11, top: 10, height: 2, background: "var(--border)" }}/>
+              <div className="absolute" style={{ left: 11, top: 10, height: 2, width: `calc((100% - 22px) * ${curStage / (trackStages.length - 1)})`, background: ACCENT, transition: "width .3s" }}/>
+              {trackStages.map((s, i) => {
+                const done = i < curStage, current = i === curStage;
+                return (
+                  <div key={s} className="relative flex flex-col items-center" style={{ flex: 1, minWidth: 0 }}>
+                    <div className="flex items-center justify-center rounded-full"
+                      style={{
+                        width: 22, height: 22,
+                        background: done ? ACCENT : current ? "#fff" : "var(--muted)",
+                        border: `2px solid ${done || current ? ACCENT : "var(--border)"}`,
+                        boxShadow: current ? `0 0 0 3px ${ACCENT_BG}` : "none",
+                        zIndex: 1,
+                      }}>
+                      {done
+                        ? <Check size={11} color="#fff" strokeWidth={3}/>
+                        : <div className="rounded-full" style={{ width: 7, height: 7, background: current ? ACCENT : "var(--border)" }}/>}
+                    </div>
+                    <span className="text-center" style={{ fontSize: 8.5, lineHeight: 1.2, marginTop: 5, fontWeight: current ? 700 : 500, color: current ? DARK : "var(--muted-foreground)" }}>{s}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Order data, shown clearly below */}
+            <div className="mt-4 pt-3.5 border-t border-border">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>{activeOrder.name}{activeOrder.shade ? ` — ${activeOrder.shade}` : ""}</p>
+                <span className="text-foreground" style={{ fontSize: 11, fontWeight: 600, background: "transparent" }}>{activeOrder.status}</span>
+              </div>
+              <p className="text-muted-foreground" style={{ fontSize: 12 }}>{[activeOrder.qty, activeOrder.gsm, activeOrder.eta].filter(Boolean).join(" · ")}</p>
+            </div>
+
+            {/* Payment prompt — order confirmed, awaiting the customer's payment. */}
+            {activeOrder.needsPayment && (
+              <button onClick={() => onNavigate("track", activeOrder.id)}
+                className="mt-3 w-full flex items-center justify-between rounded-xl px-3.5 py-3"
+                style={{ background: "#0D0D0D", border: "none", cursor: "pointer" }}>
+                <span className="flex items-center gap-2 min-w-0">
+                  <Wallet size={15} strokeWidth={1.8} style={{ color: "#C8A97E", flexShrink: 0 }}/>
+                  <span className="text-left min-w-0">
+                    <span className="block" style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>Payment due · ₹{Math.round(activeOrder.payAmount || 0).toLocaleString("en-IN")}</span>
+                    <span className="block" style={{ fontSize: 10.5, color: "rgba(255,255,255,0.6)" }}>Confirmed by Garm — pay to start production</span>
+                  </span>
+                </span>
+                <span className="rounded-lg px-3 py-1.5 flex-shrink-0" style={{ background: "#C8A97E", color: "#0D0D0D", fontSize: 12, fontWeight: 700 }}>Pay now</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+
       {/* ── Hero banner — woven texture + floating brand mark + stitched thread ── */}
       <div className="mx-5 mb-5 rounded-2xl p-5 relative overflow-hidden"
         style={{ background: "linear-gradient(140deg, #1A1815 0%, #0D0D0D 55%, #14110C 100%)", boxShadow: "0 10px 28px rgba(13,13,13,0.22)" }}>
@@ -854,7 +931,10 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
               { label: "Women",       sub: "UK sizes",    icon: <Heart size={17} strokeWidth={1.5}/>,       hl: false },
               { label: "Accessories", sub: "Caps, bags…", icon: <ShoppingBag size={17} strokeWidth={1.5}/>, hl: true  },
             ].map(c => (
-              <button key={c.label} onClick={() => onNavigate("order")}
+              <button key={c.label}
+                onClick={() => onQuickStart
+                  ? onQuickStart(c.label === "Kids" ? "kids" : c.label === "Men" ? "men" : c.label === "Women" ? "women" : "accessories")
+                  : onNavigate("order")}
                 className="text-center py-3 px-1 rounded-2xl"
                 style={{ ...card, cursor: "pointer" }}>
                 <span className="mx-auto mb-1.5 flex items-center justify-center rounded-xl"
@@ -867,8 +947,8 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
             ))}
           </div>
 
-          {/* ── Size guide strip — always one tap away, BEFORE production ── */}
-          <button onClick={() => onNavigate("order")}
+          {/* ── Size guide strip — opens the actual size chart, one tap ── */}
+          <button onClick={() => onQuickStart ? onQuickStart("sizeguide") : onNavigate("order")}
             className="mx-5 mb-5 w-[calc(100%-2.5rem)] flex items-center gap-2.5 rounded-2xl px-3.5 py-3 text-left"
             style={{ background: ACCENT_BG, border: `1px solid ${ACCENT}`, cursor: "pointer" }}>
             <Ruler size={18} strokeWidth={1.5} style={{ color: ACCENT_TEXT, flexShrink: 0 }}/>
@@ -898,81 +978,6 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, draftCount = 0, notifCo
             ))}
           </div>
         </>
-      )}
-
-      {/* ── Active order progress (org & individual, shown once an order exists) ── */}
-      {activeOrder && (
-        <div className="mx-5 mb-5 overflow-hidden" style={card}>
-          <div style={{ height: 3, background: "linear-gradient(90deg, #C8A97E 0%, rgba(200,169,126,0.25) 100%)" }}/>
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-            <div>
-              <p className="label-section">Order in progress</p>
-              <p className="text-foreground text-sm font-semibold mt-0.5">{activeOrder.id}</p>
-            </div>
-            <button onClick={() => onNavigate("track", activeOrder.id)}
-              className="text-xs text-foreground flex items-center gap-1 font-medium">
-              Track <ArrowRight size={11} strokeWidth={2}/>
-            </button>
-          </div>
-
-          <div className="px-4 pt-4 pb-4">
-            {/* Stage animation — scene follows the active order's current stage */}
-            <div className="mb-4">
-              <StageAnimation stage={stageFromLabel(activeOrder.status)} compact/>
-            </div>
-
-            {/* Horizontal progress stepper */}
-            <div className="relative flex justify-between items-start">
-              <div className="absolute" style={{ left: 11, right: 11, top: 10, height: 2, background: "var(--border)" }}/>
-              <div className="absolute" style={{ left: 11, top: 10, height: 2, width: `calc((100% - 22px) * ${curStage / (trackStages.length - 1)})`, background: ACCENT, transition: "width .3s" }}/>
-              {trackStages.map((s, i) => {
-                const done = i < curStage, current = i === curStage;
-                return (
-                  <div key={s} className="relative flex flex-col items-center" style={{ flex: 1, minWidth: 0 }}>
-                    <div className="flex items-center justify-center rounded-full"
-                      style={{
-                        width: 22, height: 22,
-                        background: done ? ACCENT : current ? "#fff" : "var(--muted)",
-                        border: `2px solid ${done || current ? ACCENT : "var(--border)"}`,
-                        boxShadow: current ? `0 0 0 3px ${ACCENT_BG}` : "none",
-                        zIndex: 1,
-                      }}>
-                      {done
-                        ? <Check size={11} color="#fff" strokeWidth={3}/>
-                        : <div className="rounded-full" style={{ width: 7, height: 7, background: current ? ACCENT : "var(--border)" }}/>}
-                    </div>
-                    <span className="text-center" style={{ fontSize: 8.5, lineHeight: 1.2, marginTop: 5, fontWeight: current ? 700 : 500, color: current ? DARK : "var(--muted-foreground)" }}>{s}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Order data, shown clearly below */}
-            <div className="mt-4 pt-3.5 border-t border-border">
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>{activeOrder.name}{activeOrder.shade ? ` — ${activeOrder.shade}` : ""}</p>
-                <span className="text-foreground" style={{ fontSize: 11, fontWeight: 600, background: "transparent" }}>{activeOrder.status}</span>
-              </div>
-              <p className="text-muted-foreground" style={{ fontSize: 12 }}>{[activeOrder.qty, activeOrder.gsm, activeOrder.eta].filter(Boolean).join(" · ")}</p>
-            </div>
-
-            {/* Payment prompt — order confirmed, awaiting the customer's payment. */}
-            {activeOrder.needsPayment && (
-              <button onClick={() => onNavigate("track", activeOrder.id)}
-                className="mt-3 w-full flex items-center justify-between rounded-xl px-3.5 py-3"
-                style={{ background: "#0D0D0D", border: "none", cursor: "pointer" }}>
-                <span className="flex items-center gap-2 min-w-0">
-                  <Wallet size={15} strokeWidth={1.8} style={{ color: "#C8A97E", flexShrink: 0 }}/>
-                  <span className="text-left min-w-0">
-                    <span className="block" style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>Payment due · ₹{Math.round(activeOrder.payAmount || 0).toLocaleString("en-IN")}</span>
-                    <span className="block" style={{ fontSize: 10.5, color: "rgba(255,255,255,0.6)" }}>Confirmed by Garm — pay to start production</span>
-                  </span>
-                </span>
-                <span className="rounded-lg px-3 py-1.5 flex-shrink-0" style={{ background: "#C8A97E", color: "#0D0D0D", fontSize: 12, fontWeight: 700 }}>Pay now</span>
-              </button>
-            )}
-          </div>
-        </div>
       )}
 
       {/* ── Wedding & Events banner (personal only) ── */}
@@ -2214,6 +2219,8 @@ export default function App() {
   // epoch forces a deliberate fresh remount (after "Save as draft").
   const [orderTabMounted, setOrderTabMounted] = useState(false);
   const [orderEpoch, setOrderEpoch]           = useState(0);
+  // Home-tile deep link: which exact screen the Order tab should open on next.
+  const [orderIntent, setOrderIntent]         = useState<OrderIntent | null>(null);
   // Branded splash on every app open (Zomato-style): logo scene first, then the
   // app fades in underneath. Pure presentation — data loading runs behind it.
   const [splashPhase, setSplashPhase] = useState<"show" | "fade" | "done">("show");
@@ -2564,8 +2571,12 @@ export default function App() {
     // the token stays and the session is restored on next open.)
     authToken.clear();
     // A different account may sign in next on this device — never leak the
-    // previous user's half-built order into their session.
-    try { localStorage.removeItem("fl_wip"); } catch { /* ignore */ }
+    // previous user's half-built order, orders or addresses into their session.
+    try {
+      localStorage.removeItem("fl_wip");
+      localStorage.removeItem("fl_orders_cache");
+      localStorage.removeItem("fl_addr_cache");
+    } catch { /* ignore */ }
     setOrderTabMounted(false);
     setOrderEpoch(e => e + 1);
     setAuthStep("login");
@@ -2767,13 +2778,13 @@ export default function App() {
           <HelpSupportScreen onBack={() => setShowHelp(false)} onReplayTour={() => { setShowHelp(false); handleReplayTour(); }}/>
         ) : (
           <>
-            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
+            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} onQuickStart={(i) => { setOrderIntent(i); setActiveTab("order"); }} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
             {/* Order tab: mounted once, then kept alive (display:none) across tab
                 switches — tapping Home/Track/Account and coming back must land the
                 customer exactly where they left off, never on a wiped form. */}
             {(activeTab === "order" || orderTabMounted) && (
               <div style={{ display: activeTab === "order" ? "contents" : "none" }}>
-                <NewOrderTab key={`${resumeDraft?.id ?? "new"}-${orderEpoch}`} onNavigate={handleNavigate} onOrderPlaced={handleOrderPlaced} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft}/>
+                <NewOrderTab key={`${resumeDraft?.id ?? "new"}-${orderEpoch}`} onNavigate={handleNavigate} onOrderPlaced={handleOrderPlaced} onTrackOrder={handleOrderSubmitted} accountType={userProfile.accountType} orgType={userProfile.orgType} orgName={userProfile.orgName} name={userProfile.name} phone={userProfile.phone} email={userProfile.email} address={defaultAddress?.address} city={defaultAddress?.city} pin={defaultAddress?.pin} onSaveDraft={handleSaveDraft} resumeDraft={resumeDraft} intent={orderIntent} onIntentConsumed={() => setOrderIntent(null)} onResetResume={() => setResumeDraft(null)}/>
               </div>
             )}
             {activeTab === "track"   && (

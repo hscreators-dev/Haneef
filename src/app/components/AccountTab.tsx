@@ -865,10 +865,19 @@ interface Address { id:string; label:string; line1:string; city:string; pin:stri
 const mapApiAddress = (a: ApiAddress): Address => ({ id: a._id!, label: a.label, line1: a.line1, city: a.city, pin: a.pin, default: !!a.isDefault });
 
 function DeliveryAddresses({ onBack, onAddressesChange }: { onBack: () => void; onAddressesChange?: (addresses: Address[]) => void }) {
-  const [addresses, setAddressesState] = useState<Address[]>([]);
+  // Instant open: render the last-known address list immediately (cached at
+  // every load/change) while the fresh copy loads in the background — no more
+  // blank screen while the backend responds.
+  const [addresses, setAddressesState] = useState<Address[]>(() => {
+    try { return JSON.parse(localStorage.getItem("fl_addr_cache") || "[]"); } catch { return []; }
+  });
   // Every address-book change is reported upward so the ORDER FLOW's saved
   // delivery address updates immediately — no app restart needed.
-  const setAddresses = (next: Address[]) => { setAddressesState(next); onAddressesChange?.(next); };
+  const setAddresses = (next: Address[]) => {
+    setAddressesState(next);
+    try { localStorage.setItem("fl_addr_cache", JSON.stringify(next)); } catch { /* ignore */ }
+    onAddressesChange?.(next);
+  };
   const [loadErr, setLoadErr]   = useState("");
   const [adding, setAdding]     = useState(false);
   const [saving, setSaving]     = useState(false);
