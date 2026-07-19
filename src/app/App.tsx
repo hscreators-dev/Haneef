@@ -675,26 +675,45 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, draftCoun
   // Real orders — same source Track uses. The "Order in progress" card only
   // appears once the customer actually has an active order (nothing mocked),
   // so tapping Track always lands on real data. Refreshes on mount + 30s.
-  const [homeOrders, setHomeOrders] = useState<HomeOrderCard[]>([]);
+  // Instant render: the tiles and the "Order in progress" card come up from the
+  // LAST KNOWN orders (same cache Track uses) the moment Home opens — the fresh
+  // fetch then updates them silently. No more "0 / 0 / —" flash while loading.
+  const readHomeFromOrders = (orders: { status: string; updatedAt?: string; createdAt?: string }[]) => {
+    const active = orders
+      .filter((o) => !["Draft", "Delivered", "Completed", "Cancelled"].includes(o.status))
+      .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
+    const delivered = orders.filter((o) => ["Delivered", "Completed"].includes(o.status)).length;
+    return {
+      cards: active.map((o) => apiOrderToHomeCard(o as Parameters<typeof apiOrderToHomeCard>[0])),
+      stats: { active: active.length, delivered, onTime: delivered > 0 ? "100%" : "—" },
+    };
+  };
+  const cachedHome = (() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem("fl_orders_cache") || "null");
+      return Array.isArray(raw) ? readHomeFromOrders(raw) : null;
+    } catch { return null; }
+  })();
+  const [homeOrders, setHomeOrders] = useState<HomeOrderCard[]>(cachedHome?.cards ?? []);
   // Real order stats for the tiles — NEVER hardcoded. A brand-new account shows
   // 0 / 0 / — instead of fake "3 / 4 / 97%" (which looked like someone else's data).
-  const [homeStats, setHomeStats] = useState<{ active: number; delivered: number; onTime: string }>({ active: 0, delivered: 0, onTime: "—" });
+  const [homeStats, setHomeStats] = useState<{ active: number; delivered: number; onTime: string }>(cachedHome?.stats ?? { active: 0, delivered: 0, onTime: "—" });
   useEffect(() => {
     let alive = true;
     const load = () => ordersApi.list()
       .then(({ orders }) => {
         if (!alive) return;
-        const active = orders
-          .filter((o) => !["Draft", "Delivered", "Completed", "Cancelled"].includes(o.status))
-          .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
-        setHomeOrders(active.map(apiOrderToHomeCard));
-        const delivered = orders.filter((o) => ["Delivered", "Completed"].includes(o.status)).length;
-        setHomeStats({ active: active.length, delivered, onTime: delivered > 0 ? "100%" : "—" });
+        const { cards, stats } = readHomeFromOrders(orders);
+        setHomeOrders(cards);
+        setHomeStats(stats);
+        // Keep the shared cache fresh from Home too (documents stripped — huge).
+        try { localStorage.setItem("fl_orders_cache", JSON.stringify(orders.map((o) => ({ ...o, documents: undefined })))); } catch { /* ignore */ }
       })
-      .catch(() => { if (alive) { setHomeOrders([]); setHomeStats({ active: 0, delivered: 0, onTime: "—" }); } }); // offline / not signed in → no card
+      .catch(() => { /* offline / cold — keep showing the cached data */ });
     load();
     const t = setInterval(load, 30_000);
     return () => { alive = false; clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persona-aware hero copy — individuals get warm, personal lines;
@@ -1420,12 +1439,14 @@ function LoginScreen({ onLogin }: { onLogin: (identity: { phone?: string; email?
             maxLength={mode === "phone" ? 16 : undefined}
             style={{ ...inputStyle, marginBottom: 4 }}
           />
-          {identityHasInput && !identityOk && (
+          {/* Only flag a problem once the input LOOKS complete — a red error on
+              the very first digit reads as "you're doing it wrong" while the
+              customer is still typing. */}
+          {identityHasInput && !identityOk && (mode === "phone" ? mobileDigits.length >= 10 : /@.+\./.test(identity)) ? (
             <p style={{ fontSize: 11, color: "var(--error)", marginBottom: 12, marginTop: 4 }}>
               {mode === "phone" ? "Enter 10-digit number after +91 (must start with 6, 7, 8 or 9)" : "Enter a valid email address"}
             </p>
-          )}
-          {(!identityHasInput || identityOk) && <div style={{ marginBottom: 12 }}/>}
+          ) : <div style={{ marginBottom: 12 }}/>}
           {sendError && (
             <p style={{ fontSize: 11, color: "var(--error)", marginBottom: 12, marginTop: -8 }}>{sendError}</p>
           )}
