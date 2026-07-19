@@ -5,7 +5,7 @@ import {
   Mail, Smartphone, ShieldCheck, Building2, UserCircle, ChevronLeft, Phone,
   MapPinned, Headphones, Star, Check, Navigation, FileText, Trash2,
   HelpCircle, X, Shirt, Wallet, Truck, RotateCcw,
-  Users, Heart, ShoppingBag, Ruler, Palette, Droplets, Smile, Scissors, Lightbulb,
+  Users, Heart, Gift, Ruler, Palette, Droplets, Smile, Scissors, Lightbulb,
 } from "lucide-react";
 import certArt from "@/assets/undraw_certification_garm.svg";
 import { NewOrderTab, type SubmittedOrderSummary, type OrderDraft, type DraftPayload, type OrderIntent } from "./components/NewOrderTab";
@@ -926,10 +926,12 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, draftCoun
           <p className="px-5 mb-2.5 label-section">What are we making today?</p>
           <div className="mx-5 mb-5 grid grid-cols-4 gap-2">
             {[
-              { label: "Kids",        sub: "Age sizes",   icon: <Users size={17} strokeWidth={1.5}/>,       hl: false },
-              { label: "Men",         sub: "Chest sizes", icon: <Shirt size={17} strokeWidth={1.5}/>,       hl: false },
-              { label: "Women",       sub: "UK sizes",    icon: <Heart size={17} strokeWidth={1.5}/>,       hl: false },
-              { label: "Accessories", sub: "Caps, bags…", icon: <ShoppingBag size={17} strokeWidth={1.5}/>, hl: true  },
+              // Same icons as the order flow's own pickers (Users/User/Heart for
+              // audiences, Gift for accessories) — one visual language everywhere.
+              { label: "Kids",        sub: "Age sizes",   icon: <Users size={17} strokeWidth={1.5}/>, hl: false },
+              { label: "Men",         sub: "Chest sizes", icon: <User size={17} strokeWidth={1.5}/>,  hl: false },
+              { label: "Women",       sub: "UK sizes",    icon: <Heart size={17} strokeWidth={1.5}/>, hl: false },
+              { label: "Accessories", sub: "Caps, bags…", icon: <Gift size={17} strokeWidth={1.5}/>,  hl: true  },
             ].map(c => (
               <button key={c.label}
                 onClick={() => onQuickStart
