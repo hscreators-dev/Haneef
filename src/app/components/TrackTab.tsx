@@ -1056,28 +1056,23 @@ function SampleApprovalCard({ order }: { order: OrderTrack }) {
   const [decision, setDecision] = useState<"approved" | "changes" | null>(null);
 
   const firstLine = order.garmentLines?.[0];
-  const fabricText = firstLine?.fabric || order.fabric || "Not specified";
 
-  const colorEntry = order.colorList?.[0] ?? (firstLine ? { hex: firstLine.colorHex, label: firstLine.colorLabel } : undefined);
-  const colorLabel = colorEntry?.label || order.colors || "Not selected";
-  const colorHex = colorEntry?.hex || "#D1D5DB"; // neutral grey when nothing was actually chosen
-
-  const refMethod = firstLine?.referenceMethod ?? order.referenceMethod;
-  const refFiles = firstLine?.referenceFiles ?? order.referenceFiles ?? 0;
-  const hasLogo = !!refMethod || refFiles > 0;
-  const logoLabel = hasLogo ? (refMethod || `${refFiles} file${refFiles !== 1 ? "s" : ""} uploaded`) : "Not added";
-
-  const swatches: { label: string; value: string; color: string }[] = [
-    { label: "Fabric", value: fabricText,  color: "#1f2f46" },
-    { label: "Color",  value: colorLabel,  color: colorHex },
-    { label: "Logo",   value: logoLabel,   color: hasLogo ? ACCENT : "#D1D5DB" },
-  ];
+  // Only the COLOUR is approved on a Garm sample. Fabric and logo/upload aren't
+  // things the customer signs off here (fabric is fixed at order time; the logo
+  // proof lives in Documents), so they're not shown as approval swatches.
+  const colorList = (order.colorList && order.colorList.length
+    ? order.colorList
+    : (firstLine ? [{ hex: firstLine.colorHex, label: firstLine.colorLabel }] : []))
+    .filter((c) => c && (c.label || c.hex));
+  const swatches: { label: string; value: string; color: string }[] = colorList.length
+    ? colorList.map((c) => ({ label: "Colour", value: c.label || "Selected colour", color: c.hex || "#D1D5DB" }))
+    : [{ label: "Colour", value: order.colors || "Not selected", color: "#D1D5DB" }];
 
   return (
     <Panel title="Sample approval" icon={<Palette size={14} strokeWidth={1.5}/>}>
-      <div className="grid grid-cols-3 gap-2 mb-3">
-        {swatches.map(sw => (
-          <div key={sw.label} className="rounded-xl border border-border overflow-hidden bg-muted">
+      <div className={`grid gap-2 mb-3 ${swatches.length >= 3 ? "grid-cols-3" : swatches.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+        {swatches.map((sw, i) => (
+          <div key={i} className="rounded-xl border border-border overflow-hidden bg-muted">
             <div className="h-10" style={{ background: sw.color }}/>
             <div className="text-center py-1.5 px-1">
               <p className="text-muted-foreground" style={{ fontSize: 9, lineHeight: 1.3 }}>{sw.label}</p>
