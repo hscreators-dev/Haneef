@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { requireAuth } from "../middleware/auth";
 
 /**
  * Virtual try-on ("live picture") — SCAFFOLD.
@@ -21,6 +22,14 @@ import { Router, Request, Response } from "express";
  * callImageModel() below to your provider's request/response shape.
  */
 const router = Router();
+
+// Every other resource router requires a signed-in user; this one didn't,
+// even though it calls out to a (paid, once configured) image-generation
+// API. The frontend already sends the Authorization header on this call
+// (GarmentPreview's generate() goes through the shared `request()` helper,
+// which attaches the bearer token whenever one exists) — it's only reachable
+// in the app after login, behind the New Order tab — so this is safe to add.
+router.use(requireAuth);
 
 router.post("/", async (req: Request, res: Response) => {
   const { selfie, garment, colour, material, designUrl, notes, audience, placement } = req.body ?? {};
