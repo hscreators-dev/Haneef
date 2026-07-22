@@ -73,6 +73,16 @@ function parseINRAmount(v?: string): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+// Best-effort audience guess from a past order's garment name — used only when
+// repeating an order that has no rich local edit-snapshot (see handleReorderPast),
+// so "Repeat order" still opens a sensibly pre-filled cart instead of a blank one.
+function guessGarmentAudience(name: string): { categoryId: "kids" | "mens" | "womens"; sizeCat: "school" | "mens" | "womens"; garmentType: "tshirt" | "shirt" } {
+  const n = name.toLowerCase();
+  if (/kurti|saree|dress|legging|\btop\b|blouse|women/.test(n)) return { categoryId: "womens", sizeCat: "womens", garmentType: "shirt" };
+  if (/kid|child|school/.test(n)) return { categoryId: "kids", sizeCat: "school", garmentType: "tshirt" };
+  return { categoryId: "mens", sizeCat: "mens", garmentType: /shirt/.test(n) && !/t-shirt|tshirt|tee\b/.test(n) ? "shirt" : "tshirt" };
+}
+
 function summaryToOrderPayload(summary: SubmittedOrderSummary, profile: UserProfile): Partial<ApiOrder> {
   const persona = profile.accountType === "organisation" ? "organisation" : "individual";
   const firstLine = summary.garmentLines?.[0];
@@ -756,7 +766,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   onHelp?: () => void;
   onQuickStart?: (intent: OrderIntent) => void;
   onOpenCollection?: (c: HomeCollection) => void;
-  onReorderPast?: (orderRef: string) => void;
+  onReorderPast?: (order: { ref: string; orderId?: string; name: string; shade?: string; colorHex?: string; qty: number; isAccessoryOrder?: boolean }) => void;
   draftCount?: number;
   notifCount?: number;
   profile?: UserProfile;
@@ -769,7 +779,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   // Instant render: the tiles and the "Order in progress" card come up from the
   // LAST KNOWN orders (same cache Track uses) the moment Home opens — the fresh
   // fetch then updates them silently. No more "0 / 0 / —" flash while loading.
-  const readHomeFromOrders = (orders: { status: string; updatedAt?: string; createdAt?: string; orderRef?: string; _id?: string; garmentType?: string; serviceLabel?: string; colors?: { label: string }[]; rating?: number; ratingFeedback?: string }[]) => {
+  const readHomeFromOrders = (orders: { status: string; updatedAt?: string; createdAt?: string; orderRef?: string; _id?: string; garmentType?: string; serviceLabel?: string; colors?: { label: string; hex?: string }[]; rating?: number; ratingFeedback?: string; qty?: number; isAccessoryOrder?: boolean }[]) => {
     const active = orders
       .filter((o) => !["Draft", "Delivered", "Completed", "Cancelled"].includes(o.status))
       .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
@@ -777,10 +787,16 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
       .filter((o) => ["Delivered", "Completed"].includes(o.status))
       .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
     // "Order again" rail — the customer's own past garments, one tap to repeat.
+    // Carries enough of the original order (colour, qty) that repeating it
+    // still works even when the rich local edit-snapshot isn't on this device.
     const past = deliveredList.slice(0, 6).map((o) => ({
       ref: o.orderRef || `#${(o._id || "").slice(-6).toUpperCase()}`,
+      orderId: o.orderRef || o._id,
       name: o.garmentType || o.serviceLabel || "Custom order",
       shade: o.colors?.[0]?.label,
+      colorHex: o.colors?.[0]?.hex,
+      qty: o.qty || 1,
+      isAccessoryOrder: !!o.isAccessoryOrder,
     }));
     // Social proof — real ratings + the latest written feedback.
     const rated = orders.filter((o) => (o.rating ?? 0) > 0);
@@ -807,7 +823,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   // Real order stats for the tiles — NEVER hardcoded. A brand-new account shows
   // 0 / 0 / — instead of fake "3 / 4 / 97%" (which looked like someone else's data).
   const [homeStats, setHomeStats] = useState<{ active: number; delivered: number; onTime: string }>(cachedHome?.stats ?? { active: 0, delivered: 0, onTime: "—" });
-  const [pastOrders, setPastOrders] = useState<{ ref: string; name: string; shade?: string }[]>(cachedHome?.past ?? []);
+  const [pastOrders, setPastOrders] = useState<{ ref: string; orderId?: string; name: string; shade?: string; colorHex?: string; qty: number; isAccessoryOrder?: boolean }[]>(cachedHome?.past ?? []);
   const [proof, setProof] = useState<{ count: number; avg: number; quotes: { text: string; stars: number }[] }>(cachedHome?.proof ?? { count: 0, avg: 0, quotes: [] });
   useEffect(() => {
     let alive = true;
@@ -1073,13 +1089,12 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           <p className="px-5 mb-2.5 label-section">What are we making today?</p>
           <div className="mx-5 mb-5 grid grid-cols-4 gap-2">
             {[
-              // Same simple line icons used on the Order tab's "Who needs this
-              // custom order?" screen (Users/User/Heart/Gift) — one consistent
-              // icon language across Home and the order flow.
-              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4", Icon: Users },
-              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7", Icon: User },
-              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1", Icon: Heart },
-              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF", Icon: Gift },
+              // Illustrated garment art on softly tinted tiles — real imagery,
+              // still in the app's calm palette.
+              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4" },
+              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7" },
+              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1" },
+              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF" },
             ].map(c => (
               <button key={c.label}
                 onClick={() => onQuickStart
@@ -1089,7 +1104,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                 style={{ ...card, cursor: "pointer" }}>
                 <span className="mx-auto mb-1.5 flex items-center justify-center rounded-xl"
                   style={{ width: 44, height: 44, background: c.bg }}>
-                  <c.Icon size={20} strokeWidth={1.5} style={{ color: DARK }}/>
+                  <GarmentArt kind={c.kind} size={34}/>
                 </span>
                 <span className="block text-foreground" style={{ fontSize: 11.5, fontWeight: 600 }}>{c.label}</span>
                 <span className="block text-muted-foreground" style={{ fontSize: 9 }}>{c.sub}</span>
@@ -1134,7 +1149,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
               <p className="px-5 mb-2.5 label-section">Order again</p>
               <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
                 {pastOrders.map(p => (
-                  <button key={p.ref} onClick={() => onReorderPast?.(p.ref)}
+                  <button key={p.ref} onClick={() => onReorderPast?.(p)}
                     className="rounded-2xl p-3 flex-shrink-0 text-left" style={{ ...card, width: 150, cursor: "pointer" }}>
                     <span className="flex items-center justify-center rounded-xl mb-2" style={{ width: 30, height: 30, background: "var(--muted)" }}>
                       <RotateCcw size={14} strokeWidth={1.6} className="text-muted-foreground"/>
@@ -2795,12 +2810,48 @@ export default function App() {
     setActiveTab("order");
   }
   // "Order again" from Home — reopen the past order's editable snapshot at
-  // Review, exactly like Track's own reorder. Falls back to a fresh order if
-  // the snapshot isn't on this device.
-  function handleReorderPast(orderRef: string) {
-    const ep = readOrderSummaries()[orderRef]?.editPayload;
-    if (ep) handleEditOrder(ep);
-    else { setResumeDraft(null); setActiveTab("order"); }
+  // Review, exactly like Track's own reorder. The rich snapshot only lives in
+  // THIS device's localStorage (saved at submit time), so it's missing after a
+  // reinstall, a different device/browser, or for orders seeded/placed
+  // elsewhere — that used to silently drop the customer into a BLANK new
+  // order with no indication anything went wrong. Now it falls back to
+  // rebuilding a one-line pre-filled cart from the order's own saved details
+  // (name, colour, qty), so "Repeat order" always opens something meaningful.
+  function handleReorderPast(p: { ref: string; orderId?: string; name: string; shade?: string; colorHex?: string; qty: number; isAccessoryOrder?: boolean }) {
+    const ep = readOrderSummaries()[p.orderId ?? p.ref]?.editPayload;
+    if (ep) { handleEditOrder(ep); return; }
+    // Accessories have a different picker flow (categories/items, not a
+    // garment cart) — open a fresh order rather than guess a wrong prefill.
+    if (p.isAccessoryOrder) { setResumeDraft(null); setActiveTab("order"); return; }
+    const { categoryId, sizeCat, garmentType } = guessGarmentAudience(p.name);
+    const contact = {
+      name: userProfile.name || "", phone: userProfile.phone || "", email: userProfile.email || "",
+      address: defaultAddress?.address || "", city: defaultAddress?.city || "", pin: defaultAddress?.pin || "",
+    };
+    const colorHex = p.colorHex || "#0D0D0D";
+    handleEditOrder({
+      persona: "individual",
+      title: p.name,
+      subtitle: "Repeat order",
+      orgDetails: null,
+      customDetails: { garmentType, groupType: "personal", audience: categoryId === "kids" ? "kids" : categoryId === "womens" ? "women" : "men", ...contact },
+      resume: {
+        material: { fabric: "", gsm: "", weave: "" },
+        fabricSource: "fresh",
+        orgColors: [],
+        indivColors: { selected: [colorHex], desc: "", qtys: { [colorHex]: p.qty } },
+        selectedGarment: null,
+        garmentCart: [{ categoryId, name: p.name, basePrice: 0, style: undefined, qty: p.qty, colorHex, colorLabel: p.shade || "" }],
+        sizeState: { cat: sizeCat, qtys: {} },
+        packaging: { stitch: "single_needle", packing: "bulk_loose" },
+        refState: { chosen: null, logoNames: [], inspNames: [] },
+        accSpecState: {},
+        delivery: contact,
+        payment: "upi",
+        orgDraft: { name: "", board: "", address: "", city: "", pin: "", contactName: "", contactPhone: "", contactEmail: "" },
+        qty: p.qty,
+      },
+    });
   }
   // A curated Collection — build a ready-made cart and open it at Review.
   function handleOpenCollection(c: HomeCollection) {
