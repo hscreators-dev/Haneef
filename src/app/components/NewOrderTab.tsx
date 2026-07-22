@@ -5191,6 +5191,14 @@ function PersonaOrderForm({
   const orgLineFinishingPerPc = (l: OrgGarmentLine) => perPcCost(stitchingOpts.find(s => s.id === l.packaging?.stitch)?.cost)
     + perPcCost(packagingOpts.find(p => p.id === l.packaging?.packing)?.cost);
   const orgFinishingTotal = orgCart.reduce((s, l) => s + orgLineFinishingPerPc(l) * l.qty, 0);
+  // Organisation service fee — the B2B handling charge (bulk-discounted past the
+  // threshold). Computed on the goods midpoint (garments + finishing) so it can
+  // be SHOWN as its own line in the estimate and CARRIED into the order, instead
+  // of only being mentioned as "added in the final quote". Was previously never
+  // computed for org, so the fee was missing from the app and the admin portal.
+  const orgGoodsBase = (orgCartSubtotal > 0 ? orgCartSubtotal : qty * garmentRate) + orgFinishingTotal;
+  const orgServiceFee = calcServiceFee(orgGoodsBase, qty, "B2B", orderFormCfg.fee);
+  const orgFeePct = qty >= orderFormCfg.fee.bulkQtyThreshold ? orderFormCfg.fee.bulkPercent : orderFormCfg.fee.b2bPercent;
   // Which garment's photo gallery is open (front/back/left/right), if any.
   const [galleryName, setGalleryName] = useState<string | null>(null);
 
@@ -5666,9 +5674,10 @@ function PersonaOrderForm({
         // Each garment can have its own stitching & packaging now, so this is a
         // lump total across all garments rather than a single per-piece rate.
         addOnLine: orgFinishingTotal > 0 ? `+${inr(orgFinishingTotal)} total finishing (stitching & packaging)` : undefined,
-        serviceFeeLine: `${orderFormCfg.fee.b2bPercent}% (${orderFormCfg.fee.bulkPercent}% for ${orderFormCfg.fee.bulkQtyThreshold}+ pcs) — added in the final quote`,
+        // Service fee is now a real amount shown here AND included in the range.
+        serviceFeeLine: orgServiceFee > 0 ? `${inr(orgServiceFee)} (${orgFeePct}%${qty >= orderFormCfg.fee.bulkQtyThreshold ? " bulk" : ""})` : undefined,
         totalLabel: "Estimated total",
-        totalValue: `${inr(orgBase * 0.9 + orgFinishingTotal)} – ${inr(orgBase * 1.1 + orgFinishingTotal)}`,
+        totalValue: `${inr(orgBase * 0.9 + orgFinishingTotal + orgServiceFee)} – ${inr(orgBase * 1.1 + orgFinishingTotal + orgServiceFee)}`,
         note: "Indicative — your coordinator confirms the final price before production.",
       };
     }
@@ -5756,7 +5765,7 @@ function PersonaOrderForm({
       // No payment method at submit — individuals choose UPI/card in Track
       // AFTER Garm confirms the order (the pay step records the real method).
       paymentMethod: undefined,
-      serviceFee: persona === "individual" ? individualServiceFee : undefined,
+      serviceFee: persona === "individual" ? individualServiceFee : orgServiceFee,
       price,
       delivery: deliveryInfo,
       accessorySpecs,
@@ -6825,7 +6834,7 @@ function PersonaOrderForm({
               );
             }
             const orgBase = orgCartSubtotal > 0 ? orgCartSubtotal : qty * garmentRate;
-            const low = orgBase * 0.9 + orgFinishingTotal, high = orgBase * 1.1 + orgFinishingTotal;
+            const low = orgBase * 0.9 + orgFinishingTotal + orgServiceFee, high = orgBase * 1.1 + orgFinishingTotal + orgServiceFee;
             return (
               <div className="rounded-xl px-3.5 py-3 mb-1" style={{ background:"#EFF6FF", border:"1px solid #BFDBFE" }}>
                 <div className="flex items-center justify-between">
@@ -7031,11 +7040,12 @@ function PersonaOrderForm({
                   const fin = orgLineFinishingPerPc(l) * l.qty;
                   return { label: `${l.name} finishing · ${sOpt?.label ?? "Standard"} + ${pOpt?.label ?? "Standard"}`, value: fin > 0 ? inr(fin) : "included" };
                 }),
+                ...(orgServiceFee > 0 ? [{ label: `Service fee (${orgFeePct}%${qty >= orderFormCfg.fee.bulkQtyThreshold ? " bulk" : ""})`, value: inr(orgServiceFee) }] : []),
                 { label: "Total pieces", value: `${qty} pcs`, strong: true },
               ];
 
           const orgBase = orgCartSubtotal > 0 ? orgCartSubtotal : qty * garmentRate;
-          const low = orgBase * 0.9 + orgFinishingTotal, high = orgBase * 1.1 + orgFinishingTotal;
+          const low = orgBase * 0.9 + orgFinishingTotal + orgServiceFee, high = orgBase * 1.1 + orgFinishingTotal + orgServiceFee;
 
           if (persona === "individual") {
             return (
