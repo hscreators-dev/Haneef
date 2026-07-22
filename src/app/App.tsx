@@ -1102,10 +1102,10 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
             {[
               // Illustrated garment art on softly tinted tiles — real imagery,
               // still in the app's calm palette.
-              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4" },
-              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7" },
-              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1" },
-              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF" },
+              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4", Icon: Users },
+              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7",  Icon: User },
+              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1", Icon: Heart },
+              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF", Icon: Gift },
             ].map(c => (
               <button key={c.label}
                 onClick={() => onQuickStart
@@ -1115,7 +1115,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                 style={{ ...card, cursor: "pointer" }}>
                 <span className="mx-auto mb-1.5 flex items-center justify-center rounded-xl"
                   style={{ width: 44, height: 44, background: c.bg }}>
-                  <GarmentArt kind={c.kind} size={34}/>
+                  <c.Icon size={20} strokeWidth={1.5} style={{ color: DARK }}/>
                 </span>
                 <span className="block text-foreground" style={{ fontSize: 11.5, fontWeight: 600 }}>{c.label}</span>
                 <span className="block text-muted-foreground" style={{ fontSize: 9 }}>{c.sub}</span>
