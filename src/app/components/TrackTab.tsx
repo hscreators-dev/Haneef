@@ -252,6 +252,8 @@ function buildNewSubmittedOrder(summary?: SubmittedOrderSummary | null, accountT
 
 const ACTIVE_STATUSES: OrderStatus[]     = ["Order placed", "Order confirmed", "Quote pending", "In production", "Quality check", "Shipped"];
 const PAST_STATUSES: OrderStatus[]       = ["Delivered", "Completed", "Cancelled"];
+const DELIVERED_STATUSES: OrderStatus[]  = ["Delivered", "Completed"];
+const CANCELLED_STATUSES: OrderStatus[]  = ["Cancelled"];
 const CHANGEABLE_STATUSES: OrderStatus[] = ["Order placed", "Quote pending"];
 
 // ─── Live order → OrderTrack mapping ─────────────────────────────────────────
@@ -400,7 +402,7 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
   };
 }
 
-type TrackFilter = "active" | "past" | "all";
+type TrackFilter = "active" | "delivered" | "cancelled";
 
 const procurementStages = [
   "Under Review", "Quote Shared", "Waiting Approval",
@@ -1916,7 +1918,8 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   useEffect(() => {
     if (targetOrderId) {
       const order = (liveOrders ?? []).find(o => o.id === targetOrderId);
-      if (order && PAST_STATUSES.includes(order.statusLabel)) setFilter("past");
+      if (order && CANCELLED_STATUSES.includes(order.statusLabel)) setFilter("cancelled");
+      else if (order && DELIVERED_STATUSES.includes(order.statusLabel)) setFilter("delivered");
       else if (order) setFilter("active");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1955,14 +1958,14 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
   }
   const filtered = base.filter(o => {
     if (filter === "active") return [...ACTIVE_STATUSES, ...(showNew ? ["Order placed" as OrderStatus] : [])].includes(o.statusLabel);
-    if (filter === "past")   return PAST_STATUSES.includes(o.statusLabel);
-    return true;
+    if (filter === "delivered") return DELIVERED_STATUSES.includes(o.statusLabel);
+    return CANCELLED_STATUSES.includes(o.statusLabel);
   });
 
   const counts = {
     active: base.filter(o => ACTIVE_STATUSES.includes(o.statusLabel) || o.statusLabel === "Order placed").length,
-    past:   base.filter(o => PAST_STATUSES.includes(o.statusLabel)).length,
-    all:    base.length,
+    delivered: base.filter(o => DELIVERED_STATUSES.includes(o.statusLabel)).length,
+    cancelled: base.filter(o => CANCELLED_STATUSES.includes(o.statusLabel)).length,
   };
 
   return (
@@ -2013,7 +2016,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
       {/* ── Filter tabs — segmented control ── */}
       <div className="px-5 pt-4 pb-3 flex-shrink-0">
         <div className="flex gap-1 p-1 rounded-2xl" style={{ background: "var(--muted)", border: "1px solid var(--border)" }}>
-          {(["active", "past", "all"] as TrackFilter[]).map(f => (
+          {(["active", "delivered", "cancelled"] as TrackFilter[]).map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className="flex-1 py-2 rounded-xl text-sm"
               style={{
@@ -2024,7 +2027,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
                 boxShadow: filter === f ? "0 1px 3px rgba(13,13,13,0.10), 0 1px 2px rgba(13,13,13,0.06)" : "none",
                 transition: "background .2s, box-shadow .2s, color .2s",
               }}>
-              {f === "active" ? `Active (${counts.active})` : f === "past" ? `Past (${counts.past})` : `All (${counts.all})`}
+              {f === "active" ? `Active (${counts.active})` : f === "delivered" ? `Delivered (${counts.delivered})` : `Cancelled (${counts.cancelled})`}
             </button>
           ))}
         </div>
@@ -2065,7 +2068,7 @@ export function TrackTab({ showNew, newOrderSummary, accountType, onMessageCoord
             <Package size={28} className="text-muted-foreground mb-3" strokeWidth={1}/>
             <p className="text-foreground text-sm" style={{ fontWeight: 500 }}>No {filter} orders</p>
             <p className="text-muted-foreground text-xs mt-1">
-              {filter === "past" ? "Completed orders will appear here" : "Your active orders will appear here"}
+              {filter === "cancelled" ? "Cancelled orders will appear here" : filter === "delivered" ? "Delivered orders will appear here" : "Your active orders will appear here"}
             </p>
           </div>
         ) : (

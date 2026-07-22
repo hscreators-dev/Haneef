@@ -1118,7 +1118,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                   <c.Icon size={20} strokeWidth={1.5} style={{ color: DARK }}/>
                 </span>
                 <span className="block text-foreground" style={{ fontSize: 11.5, fontWeight: 600 }}>{c.label}</span>
-                <span className="block text-muted-foreground" style={{ fontSize: 9 }}>{c.sub}</span>
+                <span className="block text-muted-foreground" style={{ fontSize: 10.5 }}>{c.sub}</span>
               </button>
             ))}
           </div>
@@ -1149,7 +1149,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                   {t.icon}{t.chip}
                 </span>
                 <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</p>
-                <p className="text-muted-foreground mt-1" style={{ fontSize: 10.5, lineHeight: 1.55 }}>{t.body}</p>
+                <p className="text-muted-foreground mt-1" style={{ fontSize: 11, lineHeight: 1.55 }}>{t.body}</p>
               </div>
             ))}
           </div>
@@ -1166,7 +1166,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                       <RotateCcw size={14} strokeWidth={1.6} className="text-muted-foreground"/>
                     </span>
                     <p className="text-foreground" style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</p>
-                    <p className="text-muted-foreground" style={{ fontSize: 10 }}>{p.shade ? `${p.shade} · ` : ""}{p.ref}</p>
+                    <p className="text-muted-foreground" style={{ fontSize: 11 }}>{p.shade ? `${p.shade} · ` : ""}{p.ref}</p>
                     <p style={{ fontSize: 10.5, fontWeight: 700, color: ACCENT_TEXT, marginTop: 5 }}>Repeat order →</p>
                   </button>
                 ))}
@@ -1187,11 +1187,11 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                   {c.lines.map((l, i) => (
                     <span key={i} className="rounded-full" style={{ width: 14, height: 14, background: l.colorHex, border: "1px solid rgba(0,0,0,0.15)" }}/>
                   ))}
-                  <span className="ml-auto text-muted-foreground" style={{ fontSize: 9.5 }}>{c.lines.reduce((a, l) => a + l.qty, 0)} pcs</span>
+                  <span className="ml-auto text-muted-foreground" style={{ fontSize: 10.5 }}>{c.lines.reduce((a, l) => a + l.qty, 0)} pcs</span>
                 </div>
                 <div className="px-3.5 py-2.5">
                   <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{c.title}</p>
-                  <p className="text-muted-foreground" style={{ fontSize: 10.5, marginTop: 1 }}>{c.sub}</p>
+                  <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 1 }}>{c.sub}</p>
                   <p style={{ fontSize: 10.5, fontWeight: 700, color: ACCENT_TEXT, marginTop: 6 }}>Start this bundle →</p>
                 </div>
               </button>

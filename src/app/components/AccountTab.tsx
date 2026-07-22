@@ -4,6 +4,7 @@ import {
   Bell, ShieldCheck, LogOut, ArrowLeft, Camera, Check,
   Navigation, Plus, Trash2, Shield, Smartphone, Key, Edit3, Pencil,
   RotateCcw, Package, BookOpen, GraduationCap, Heart, Factory,
+  LifeBuoy, HelpCircle, Receipt,
   Utensils, Trophy, Landmark, Users, AlertTriangle, Lock,
 } from "lucide-react";
 import {
@@ -1824,17 +1825,17 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut, on
     ],
     [
       { icon:<Clock     size={16} strokeWidth={1.5}/>, label:"Order history",        s:"order_history"         as Screen },
-      { icon:<FileText  size={16} strokeWidth={1.5}/>, label:"My tech packs",        s:"tech_packs"            as Screen },
+      { icon:<BookOpen  size={16} strokeWidth={1.5}/>, label:"My tech packs",        s:"tech_packs"            as Screen },
     ],
     [
       { icon:<Bell      size={16} strokeWidth={1.5}/>, label:"Notifications",        s:"notifications_settings" as Screen },
       { icon:<Key       size={16} strokeWidth={1.5}/>, label:"Security & 2FA",       s:"security"              as Screen, badge: twoFAEnabled ? "2FA on" : "2FA off", bc: twoFAEnabled ? "text-emerald-600" : "text-red-500" },
-      { icon:<FileText  size={16} strokeWidth={1.5}/>, label:"Help & support",       s:"help_support"          as Screen, ...(openTicketCount > 0 ? { badge: `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}`, bc: "text-amber-600" } : {}) },
-      { icon:<FileText  size={16} strokeWidth={1.5}/>, label:"FAQ",                  s:"faq"                   as Screen },
+      { icon:<LifeBuoy  size={16} strokeWidth={1.5}/>, label:"Help & support",       s:"help_support"          as Screen, ...(openTicketCount > 0 ? { badge: `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}`, bc: "text-amber-600" } : {}) },
+      { icon:<HelpCircle size={16} strokeWidth={1.5}/>, label:"FAQ",                  s:"faq"                   as Screen },
     ],
     [
       { icon:<FileText  size={16} strokeWidth={1.5}/>, label:"Terms & conditions",   s:"terms"                 as Screen },
-      { icon:<CreditCard size={16} strokeWidth={1.5}/>,label:"Payment gateway",      s:"payment_gateway"       as Screen },
+      { icon:<Receipt   size={16} strokeWidth={1.5}/>,label:"Payments & refunds",      s:"payment_gateway"       as Screen },
       { icon:<ShieldCheck size={16} strokeWidth={1.5}/>,label:"Privacy policy",      s:"privacy"               as Screen },
       { icon:<LogOut    size={16} strokeWidth={1.5}/>, label:"Sign out",             s:null, danger:true },
     ],

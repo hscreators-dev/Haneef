@@ -7268,7 +7268,6 @@ function CustomAudienceForm({ onContinue, onBack, onAccessories }: { onContinue:
                     <p className="text-foreground text-sm" style={{ fontWeight:600 }}>{opt.label}</p>
                     <p className="text-muted-foreground" style={{ fontSize:11 }}>{opt.sub}</p>
                   </div>
-                  <span className="text-muted-foreground" style={{ fontSize:11 }}>{opt.cat}</span>
                 </button>
               );
             })}
