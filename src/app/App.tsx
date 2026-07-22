@@ -1073,12 +1073,13 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           <p className="px-5 mb-2.5 label-section">What are we making today?</p>
           <div className="mx-5 mb-5 grid grid-cols-4 gap-2">
             {[
-              // Illustrated garment art on softly tinted tiles — real imagery,
-              // still in the app's calm palette.
-              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4" },
-              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7" },
-              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1" },
-              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF" },
+              // Same simple line icons used on the Order tab's "Who needs this
+              // custom order?" screen (Users/User/Heart/Gift) — one consistent
+              // icon language across Home and the order flow.
+              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4", Icon: Users },
+              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7", Icon: User },
+              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1", Icon: Heart },
+              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF", Icon: Gift },
             ].map(c => (
               <button key={c.label}
                 onClick={() => onQuickStart
@@ -1088,7 +1089,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                 style={{ ...card, cursor: "pointer" }}>
                 <span className="mx-auto mb-1.5 flex items-center justify-center rounded-xl"
                   style={{ width: 44, height: 44, background: c.bg }}>
-                  <GarmentArt kind={c.kind} size={34}/>
+                  <c.Icon size={20} strokeWidth={1.5} style={{ color: DARK }}/>
                 </span>
                 <span className="block text-foreground" style={{ fontSize: 11.5, fontWeight: 600 }}>{c.label}</span>
                 <span className="block text-muted-foreground" style={{ fontSize: 9 }}>{c.sub}</span>
