@@ -1637,13 +1637,21 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
             </div>
           ) : (
             <div className="pt-3">
-              {/* Stage animation — scene follows the order's current stage */}
+              {/* Stage animation — scene follows the order's current stage.
+                  Pick the furthest-progressed step: the active one if any, else
+                  the LAST done step (a just-placed / quote-pending order has
+                  "Order placed" done and the rest pending — no active step — and
+                  must NOT fall through to the "delivered" scene). Only show the
+                  delivered scene when every step is actually done. */}
               <div className="mb-4">
-                <StageAnimation stage={
-                  (order.steps.find(s => s.status === "active")
-                    ? stageFromLabel(order.steps.find(s => s.status === "active")!.label)
-                    : "delivered") as OrderStage
-                }/>
+                <StageAnimation stage={(() => {
+                  const active = order.steps.find(s => s.status === "active");
+                  if (active) return stageFromLabel(active.label);
+                  if (order.steps.length && order.steps.every(s => s.status === "done")) return "delivered";
+                  let lastDone = -1;
+                  order.steps.forEach((s, i) => { if (s.status === "done") lastDone = i; });
+                  return stageFromLabel(order.steps[Math.max(0, lastDone)]?.label ?? "Order placed");
+                })() as OrderStage}/>
               </div>
 
               {/* Timeline steps */}

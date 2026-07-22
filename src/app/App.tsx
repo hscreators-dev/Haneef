@@ -88,7 +88,20 @@ function summaryToOrderPayload(summary: SubmittedOrderSummary, profile: UserProf
   const firstLine = summary.garmentLines?.[0];
   const src = (summary.fabricSource || "").toLowerCase();
   const fabricSource = src.includes("surplus") || src.includes("deadstock") ? "surplus" : src ? "fresh" : undefined;
-  const total = summary.price?.kind === "fixed" ? parseINRAmount(summary.price.totalValue) : undefined;
+  let total = summary.price?.kind === "fixed" ? parseINRAmount(summary.price.totalValue) : undefined;
+  // Organisation orders are quote-based: the price is an indicative RANGE
+  // ("₹18,880 – ₹20,520"), not a fixed total. Previously we sent NO amount and
+  // NO line rates, so the admin portal showed ₹0 and blank rate columns while
+  // the customer saw the estimate — the exact mismatch being reported. Carry the
+  // estimate MIDPOINT through as the starting amount + per-piece rate so BOTH
+  // sides show the same figure. It's still a starting point: the coordinator
+  // sets the final quote in the portal, which then propagates back to the app.
+  let isEstimate = false;
+  if (total == null && summary.price?.kind === "estimate") {
+    const nums = (summary.price.totalValue.match(/[\d,]+(?:\.\d+)?/g) || [])
+      .map((n) => parseINRAmount(n) ?? 0).filter((n) => n > 0);
+    if (nums.length) { total = Math.round(nums.reduce((a, b) => a + b, 0) / nums.length); isEstimate = true; }
+  }
   const totalQty = summary.qty ?? summary.totalPcs ?? 0;
   // Per-piece unit for line items = the GOODS rate (total minus the service
   // fee). The fee is sent separately (serviceFee below) — if the unit included
@@ -136,6 +149,7 @@ function summaryToOrderPayload(summary: SubmittedOrderSummary, profile: UserProf
     // Accessory spec choices (Colour, Material, Finish…) travel to the admin
     // as readable notes so the order record is complete on both sides.
     notes: [
+      isEstimate ? `⚑ Indicative estimate ${summary.price?.totalValue ?? ""} — confirm the final quote before production.` : null,
       summary.colorDesc,
       ...(summary.accessorySpecs ?? []).map((sp) =>
         `${sp.name}: ${sp.fields.map((f) => `${f.label} — ${f.value}`).join(", ")}${sp.notes ? ` · Note: ${sp.notes}` : ""}`),
