@@ -620,6 +620,13 @@ function SwatchBoxModal({ onClose }: { onClose: () => void }) {
 // once a real order exists, so tapping "Track" always opens something.
 interface HomeOrderCard { id: string; name: string; shade: string; qty: string; gsm: string; eta: string; status: string; pct: number; quoteReady: boolean; quoteText: string; orderId?: string; needsPayment?: boolean; payAmount?: number; }
 
+// "Order again" rail entry — enough of the original delivered order to rebuild
+// a properly priced, fully-sized repeat cart even with no local edit-snapshot.
+interface HomePastOrder {
+  ref: string; orderId?: string; name: string; shade?: string; colorHex?: string;
+  qty: number; isAccessoryOrder?: boolean; sizes?: { label: string; qty: number }[]; unitPrice?: number;
+}
+
 const HOME_STATUS_PCT: Record<string, number> = {
   "Order placed": 8, "Order submitted": 8, "Quote pending": 15, "Quote ready": 20, "Order confirmed": 30,
   "In production": 55, "Quality check": 78, "Shipped": 92, "Delivered": 100, "Completed": 100,
@@ -766,7 +773,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   onHelp?: () => void;
   onQuickStart?: (intent: OrderIntent) => void;
   onOpenCollection?: (c: HomeCollection) => void;
-  onReorderPast?: (order: { ref: string; orderId?: string; name: string; shade?: string; colorHex?: string; qty: number; isAccessoryOrder?: boolean }) => void;
+  onReorderPast?: (order: HomePastOrder) => void;
   draftCount?: number;
   notifCount?: number;
   profile?: UserProfile;
@@ -779,7 +786,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   // Instant render: the tiles and the "Order in progress" card come up from the
   // LAST KNOWN orders (same cache Track uses) the moment Home opens — the fresh
   // fetch then updates them silently. No more "0 / 0 / —" flash while loading.
-  const readHomeFromOrders = (orders: { status: string; updatedAt?: string; createdAt?: string; orderRef?: string; _id?: string; garmentType?: string; serviceLabel?: string; colors?: { label: string; hex?: string }[]; rating?: number; ratingFeedback?: string; qty?: number; isAccessoryOrder?: boolean }[]) => {
+  const readHomeFromOrders = (orders: { status: string; updatedAt?: string; createdAt?: string; orderRef?: string; _id?: string; garmentType?: string; serviceLabel?: string; colors?: { label: string; hex?: string }[]; rating?: number; ratingFeedback?: string; qty?: number; isAccessoryOrder?: boolean; sizes?: { label: string; qty: number }[]; total?: number; lines?: { unit: number }[] }[]) => {
     const active = orders
       .filter((o) => !["Draft", "Delivered", "Completed", "Cancelled"].includes(o.status))
       .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
@@ -797,6 +804,10 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
       colorHex: o.colors?.[0]?.hex,
       qty: o.qty || 1,
       isAccessoryOrder: !!o.isAccessoryOrder,
+      // Real size split + per-piece price from the original order, so a repeat
+      // opens fully assigned (no "0 of N pcs" block) and priced (not ₹0/pc).
+      sizes: (o.sizes && o.sizes.length ? o.sizes : undefined),
+      unitPrice: o.lines?.[0]?.unit || (o.total && o.qty ? Math.round(o.total / o.qty) : 0),
     }));
     // Social proof — real ratings + the latest written feedback.
     const rated = orders.filter((o) => (o.rating ?? 0) > 0);
@@ -823,7 +834,7 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   // Real order stats for the tiles — NEVER hardcoded. A brand-new account shows
   // 0 / 0 / — instead of fake "3 / 4 / 97%" (which looked like someone else's data).
   const [homeStats, setHomeStats] = useState<{ active: number; delivered: number; onTime: string }>(cachedHome?.stats ?? { active: 0, delivered: 0, onTime: "—" });
-  const [pastOrders, setPastOrders] = useState<{ ref: string; orderId?: string; name: string; shade?: string; colorHex?: string; qty: number; isAccessoryOrder?: boolean }[]>(cachedHome?.past ?? []);
+  const [pastOrders, setPastOrders] = useState<HomePastOrder[]>(cachedHome?.past ?? []);
   const [proof, setProof] = useState<{ count: number; avg: number; quotes: { text: string; stars: number }[] }>(cachedHome?.proof ?? { count: 0, avg: 0, quotes: [] });
   useEffect(() => {
     let alive = true;
@@ -2817,7 +2828,7 @@ export default function App() {
   // order with no indication anything went wrong. Now it falls back to
   // rebuilding a one-line pre-filled cart from the order's own saved details
   // (name, colour, qty), so "Repeat order" always opens something meaningful.
-  function handleReorderPast(p: { ref: string; orderId?: string; name: string; shade?: string; colorHex?: string; qty: number; isAccessoryOrder?: boolean }) {
+  function handleReorderPast(p: HomePastOrder) {
     const ep = readOrderSummaries()[p.orderId ?? p.ref]?.editPayload;
     if (ep) { handleEditOrder(ep); return; }
     // Accessories have a different picker flow (categories/items, not a
@@ -2829,6 +2840,14 @@ export default function App() {
       address: defaultAddress?.address || "", city: defaultAddress?.city || "", pin: defaultAddress?.pin || "",
     };
     const colorHex = p.colorHex || "#0D0D0D";
+    // Per-cart-line size split (NOT a separate top-level field) — this is what
+    // Review actually sums to decide "N of qty pcs assigned". Without it the
+    // repeated order always showed "0 of N assigned" and blocked submit.
+    // Falls back to a single bucket under the original qty if the original
+    // order (unusually) has no size breakdown on record.
+    const sizes = p.sizes?.length
+      ? Object.fromEntries(p.sizes.map(s => [s.label, s.qty]))
+      : { [sizeCat === "school" ? "Age 6-7" : "M"]: p.qty };
     handleEditOrder({
       persona: "individual",
       title: p.name,
@@ -2841,8 +2860,10 @@ export default function App() {
         orgColors: [],
         indivColors: { selected: [colorHex], desc: "", qtys: { [colorHex]: p.qty } },
         selectedGarment: null,
-        garmentCart: [{ categoryId, name: p.name, basePrice: 0, style: undefined, qty: p.qty, colorHex, colorLabel: p.shade || "" }],
-        sizeState: { cat: sizeCat, qtys: {} },
+        // basePrice comes from the original order's own per-piece price
+        // (its line-item unit price, or total ÷ qty) — never a hardcoded ₹0.
+        garmentCart: [{ categoryId, name: p.name, basePrice: p.unitPrice || 0, style: undefined, qty: p.qty, colorHex, colorLabel: p.shade || "", sizes }],
+        sizeState: { cat: sizeCat, qtys: sizes },
         packaging: { stitch: "single_needle", packing: "bulk_loose" },
         refState: { chosen: null, logoNames: [], inspNames: [] },
         accSpecState: {},
