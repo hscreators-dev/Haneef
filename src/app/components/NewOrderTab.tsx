@@ -5090,7 +5090,7 @@ function CustomOrderForm({ onContinue, onBack }: { onContinue: (d: CustomOrderDe
 // ─── Persona Order Form (Step 2 — shared for org & individual) ────────────────
 
 function PersonaOrderForm({
-  persona, orgDetails, customDetails, onSubmit, onChangePersona, onSaveDraft, resume, dirtyRef,
+  persona, orgDetails, customDetails, onSubmit, onChangePersona, onSaveDraft, resume, dirtyRef, onExitToStart,
 }: {
   persona: Persona;
   orgDetails?: OrgDetails | null;
@@ -5103,6 +5103,10 @@ function PersonaOrderForm({
   // this to keep dirty work alive across tab switches, while untouched forms
   // (a browsed collection, an opened draft) reset to a fresh order.
   dirtyRef?: React.MutableRefObject<boolean>;
+  // Discard THIS order and go back to a fresh new-order start. Used by the
+  // header's close button so a customer who opened a reorder/collection they
+  // didn't want is never trapped in Review.
+  onExitToStart?: () => void;
 }) {
   // Which admin catalog (Individuals=B2C / Organizations=B2B) to price this order
   // against, so per-option prices come from the RIGHT catalog even if a product
@@ -6928,6 +6932,18 @@ function PersonaOrderForm({
             <p className="text-foreground text-sm" style={{ fontWeight: 600 }}>
               {currentSubStepLabel === "Packaging" ? "Stitching & Packaging" : currentSubStepLabel === "Garment" ? (persona === "individual" ? "Garments" : "Garments, stitching & references") : currentSubStepLabel === "Material" ? "Fabric & material" : currentSubStepLabel}
             </p>
+            {/* Escape hatch — always available. Discards this order (a reorder /
+                collection / draft the customer may have opened by mistake) and
+                returns to a fresh new-order start, so no one is ever trapped. */}
+            {onExitToStart && (
+              <button onClick={() => { if (dirtyRef) dirtyRef.current = false; finishedRef.current = true; try { localStorage.removeItem("fl_wip"); } catch { /* ignore */ } onExitToStart(); }}
+                className="flex items-center gap-1 flex-shrink-0"
+                style={{ background: "var(--muted)", border: "1px solid var(--border)", borderRadius: 999, padding: "5px 11px", cursor: "pointer", color: "var(--muted-foreground)" }}
+                title="Start a new order">
+                <X size={12} strokeWidth={2}/>
+                <span style={{ fontSize: 11, fontWeight: 600 }}>New order</span>
+              </button>
+            )}
           </div>
           {/* Progress dots */}
           <div className="flex gap-1.5">
@@ -7639,6 +7655,17 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
     onResetResume?.();
   }
 
+  // Discard the current (usually resumed) order and land on a clean first step.
+  // Wired to the Review/step header's "New order" button so a customer who
+  // opened a reorder/collection/draft by mistake can always get out.
+  function exitToStart() {
+    try { localStorage.removeItem("fl_wip"); } catch { /* ignore */ }
+    // Drop the app-held resumeDraft AND force a fresh remount, so no stale
+    // resume state survives (the app bumps its order epoch on this).
+    onResetResume?.();
+    setStep(isPersonal ? { type: "custom_audience" } : { type: "org_details" });
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       {showSizeGuide && <SizeGuideModal onClose={() => setShowSizeGuide(false)}/>}
@@ -7691,6 +7718,7 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
           onChangePersona={() => setStep({ type:"org_details" })}
           onSaveDraft={onSaveDraft}
           dirtyRef={dirtyRef}
+          onExitToStart={exitToStart}
         />
       )}
       {step.type === "individual_step2" && (
@@ -7702,6 +7730,7 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
           onChangePersona={() => setStep({ type:"custom_audience" })}
           onSaveDraft={onSaveDraft}
           dirtyRef={dirtyRef}
+          onExitToStart={exitToStart}
         />
       )}
       {step.type === "success" && (

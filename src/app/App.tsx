@@ -684,40 +684,6 @@ function etaCountdown(eta?: string): string | undefined {
   return `Arriving in ${days} days`;
 }
 
-// ─── Illustrated garment art — hand-drawn SVG tiles so Home has real imagery,
-// not just line icons. Each is self-contained and colour-tintable. ────────────
-function GarmentArt({ kind, size = 40 }: { kind: "kids" | "men" | "women" | "accessories"; size?: number }) {
-  const s = size;
-  if (kind === "men") return (
-    <svg width={s} height={s} viewBox="0 0 40 40" aria-hidden="true">
-      <path d="M9 10 L15 5.5 Q20 9 25 5.5 L31 10 L28.5 15.5 L26.5 13.5 L26.5 32 Q20 34.5 13.5 32 L13.5 13.5 L11.5 15.5 Z" fill="#1F2A44"/>
-      <path d="M15 5.5 Q20 9 25 5.5 L23.5 8 Q20 10.5 16.5 8 Z" fill="#141E33"/>
-      <path d="M17 18 h6 M17 21.5 h6" stroke="rgba(255,255,255,0.35)" strokeWidth="1.4" strokeLinecap="round"/>
-    </svg>
-  );
-  if (kind === "women") return (
-    <svg width={s} height={s} viewBox="0 0 40 40" aria-hidden="true">
-      <path d="M14.5 5.5 Q20 10 25.5 5.5 L27.5 12 L24.5 16.5 L29 32.5 Q20 36.5 11 32.5 L15.5 16.5 L12.5 12 Z" fill="#B0486F"/>
-      <path d="M14.5 5.5 Q20 10 25.5 5.5 L24.5 8.5 Q20 12 15.5 8.5 Z" fill="#93395B"/>
-      <path d="M13.5 25 Q20 28 26.5 25" stroke="rgba(255,255,255,0.4)" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
-    </svg>
-  );
-  if (kind === "kids") return (
-    <svg width={s} height={s} viewBox="0 0 40 40" aria-hidden="true">
-      <path d="M10.5 12 L16 8 Q20 11 24 8 L29.5 12 L27.5 16.5 L25.5 15 L25.5 31 Q20 33.5 14.5 31 L14.5 15 L12.5 16.5 Z" fill="#C8A97E"/>
-      <path d="M20 20.5 l1.6 -1.7 q1.7 -1.7 3.2 0 q1.4 1.7 -0.3 3.4 L20 26.5 l-4.5 -4.3 q-1.7 -1.7 -0.3 -3.4 q1.5 -1.7 3.2 0 Z" fill="#fff" opacity="0.85"/>
-    </svg>
-  );
-  return (
-    <svg width={s} height={s} viewBox="0 0 40 40" aria-hidden="true">
-      <rect x="8" y="16" width="24" height="16" rx="2.5" fill="#047857"/>
-      <rect x="8" y="16" width="24" height="5" rx="2.5" fill="#065F46"/>
-      <rect x="18.2" y="10" width="3.6" height="22" fill="#C8A97E"/>
-      <path d="M20 10 Q14 10 13.5 6.5 Q17.5 5 20 10 Q22.5 5 26.5 6.5 Q26 10 20 10 Z" fill="#C8A97E"/>
-    </svg>
-  );
-}
-
 // ─── Campaign banners (fallbacks — the admin portal's "Garm App Home" tab
 // overrides these live, no deploy needed) ─────────────────────────────────────
 interface HomeCampaignDef { title: string; sub: string; badge?: string; ctaLabel: string; target: "kids" | "order" | "none"; theme: "purple" | "blue" | "green" | "gold" | "dark"; enabled: boolean }
@@ -1073,12 +1039,12 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           <p className="px-5 mb-2.5 label-section">What are we making today?</p>
           <div className="mx-5 mb-5 grid grid-cols-4 gap-2">
             {[
-              // Illustrated garment art on softly tinted tiles — real imagery,
-              // still in the app's calm palette.
-              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4" },
-              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7" },
-              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1" },
-              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF" },
+              // Same thin line icons as the order flow's own audience/accessory
+              // pickers — one calm, minimal visual language everywhere.
+              { label: "Kids",        sub: "Age sizes",   icon: <Users size={17} strokeWidth={1.5}/>, hl: false },
+              { label: "Men",         sub: "Chest sizes", icon: <User size={17} strokeWidth={1.5}/>,  hl: false },
+              { label: "Women",       sub: "UK sizes",    icon: <Heart size={17} strokeWidth={1.5}/>, hl: false },
+              { label: "Accessories", sub: "Caps, bags…", icon: <Gift size={17} strokeWidth={1.5}/>,  hl: true  },
             ].map(c => (
               <button key={c.label}
                 onClick={() => onQuickStart
@@ -1087,8 +1053,8 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                 className="text-center py-3 px-1 rounded-2xl"
                 style={{ ...card, cursor: "pointer" }}>
                 <span className="mx-auto mb-1.5 flex items-center justify-center rounded-xl"
-                  style={{ width: 44, height: 44, background: c.bg }}>
-                  <GarmentArt kind={c.kind} size={34}/>
+                  style={{ width: 38, height: 38, background: c.hl ? ACCENT_BG : "var(--muted)", color: c.hl ? ACCENT_TEXT : "var(--foreground)" }}>
+                  {c.icon}
                 </span>
                 <span className="block text-foreground" style={{ fontSize: 11.5, fontWeight: 600 }}>{c.label}</span>
                 <span className="block text-muted-foreground" style={{ fontSize: 9 }}>{c.sub}</span>
@@ -1154,9 +1120,6 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
               <button key={c.id} onClick={() => onOpenCollection?.(c)}
                 className="rounded-2xl overflow-hidden flex-shrink-0 text-left" style={{ ...card, width: 176, cursor: "pointer" }}>
                 <div className="flex items-center gap-1.5 px-3.5 pt-3">
-                  <span className="flex items-center justify-center rounded-lg mr-1" style={{ width: 26, height: 26, background: "var(--muted)" }}>
-                    <GarmentArt kind={c.audience === "women" ? "women" : "men"} size={20}/>
-                  </span>
                   {c.lines.map((l, i) => (
                     <span key={i} className="rounded-full" style={{ width: 14, height: 14, background: l.colorHex, border: "1px solid rgba(0,0,0,0.15)" }}/>
                   ))}
