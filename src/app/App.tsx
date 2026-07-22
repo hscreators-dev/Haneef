@@ -670,38 +670,6 @@ const HOME_COLLECTIONS: HomeCollection[] = [
   ]},
 ];
 
-// ─── Real photography for Home — category tiles & collection cards get actual
-// garment photos (free-license, Unsplash) instead of flat icon art. Keeps the
-// "made to order" framing (no fixed SKUs/prices in the nav), just richer visuals. ──
-const CATEGORY_PHOTOS: Record<"kids" | "men" | "women" | "accessories", string> = {
-  kids:        "https://images.unsplash.com/photo-1670014543471-3b5412baa677?auto=format&fit=crop&w=340&h=440&q=80",
-  men:         "https://images.unsplash.com/photo-1602810316498-ab67cf68c8e1?auto=format&fit=crop&w=340&h=440&q=80",
-  women:       "https://images.unsplash.com/photo-1708534246055-d7b149acb731?auto=format&fit=crop&w=340&h=440&q=80",
-  accessories: "https://images.unsplash.com/photo-1555337159-d399aaa99955?auto=format&fit=crop&w=340&h=440&q=80",
-};
-// Keyed by HomeCollection.id — falls back to a plain tinted card (no photo) for
-// any collection the admin portal adds later without a matching id.
-const COLLECTION_PHOTOS: Record<string, string> = {
-  tees:   "https://images.unsplash.com/photo-1716541425064-b07b68f436de?auto=format&fit=crop&w=400&h=260&q=80",
-  office: "https://images.unsplash.com/photo-1602810316693-3667c854239a?auto=format&fit=crop&w=400&h=260&q=80",
-  her:    "https://images.unsplash.com/photo-1715859019107-90c16285b149?auto=format&fit=crop&w=400&h=260&q=80",
-};
-const GENERIC_GARMENT_PHOTO = "https://images.unsplash.com/photo-1562157873-818bc0726f68?auto=format&fit=crop&w=140&h=140&q=75";
-// Best-effort photo match for a past order's garment name — falls back to a
-// neutral folded-garment shot rather than guessing wrong.
-function photoForPastOrder(name: string): string {
-  const n = name.toLowerCase();
-  if (/kurti|saree|dress|legging|\btop\b|blouse/.test(n)) return CATEGORY_PHOTOS.women;
-  if (/kid|child|school/.test(n)) return CATEGORY_PHOTOS.kids;
-  if (/cap|bag|accessor/.test(n)) return CATEGORY_PHOTOS.accessories;
-  return GENERIC_GARMENT_PHOTO;
-}
-// Sum of basePrice × qty across a collection's lines — an indicative "from"
-// price for the bundle. Individual pieces still get sized/customised at Review.
-function collectionFromPrice(c: HomeCollection): number {
-  return c.lines.reduce((sum, l) => sum + (l.basePrice || 0) * (l.qty || 0), 0);
-}
-
 // "Arriving in N days" reads better than a raw date — countdowns are emotion.
 function etaCountdown(eta?: string): string | undefined {
   if (!eta || eta === "TBD") return undefined;
@@ -964,13 +932,6 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
       {/* ── Hero banner — woven texture + floating brand mark + stitched thread ── */}
       <div className="mx-5 mb-5 rounded-2xl p-5 relative overflow-hidden"
         style={{ background: "linear-gradient(140deg, #1A1815 0%, #0D0D0D 55%, #14110C 100%)", boxShadow: "0 10px 28px rgba(13,13,13,0.22)" }}>
-        {/* Real fabric close-up, blended low — adds tactile depth behind the copy */}
-        <div className="absolute inset-0 pointer-events-none"
-          style={{
-            backgroundImage: "url(https://images.unsplash.com/photo-1675784332655-675d1a1ddcf6?auto=format&fit=crop&w=500&q=60)",
-            backgroundSize: "cover", backgroundPosition: "center",
-            opacity: 0.22, mixBlendMode: "overlay",
-          }} aria-hidden="true"/>
         {/* Basket-weave texture — the Garm mark, woven into the background */}
         <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ opacity: 0.055 }} aria-hidden="true">
           <defs>
@@ -1112,26 +1073,25 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           <p className="px-5 mb-2.5 label-section">What are we making today?</p>
           <div className="mx-5 mb-5 grid grid-cols-4 gap-2">
             {[
-              // Real garment photography — cropped tall, name + sub over a
-              // bottom gradient so it reads at a glance even at tile size.
-              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const },
-              { label: "Men",         sub: "Chest sizes", kind: "men" as const },
-              { label: "Women",       sub: "UK sizes",    kind: "women" as const },
-              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const },
+              // Illustrated garment art on softly tinted tiles — real imagery,
+              // still in the app's calm palette.
+              { label: "Kids",        sub: "Age sizes",   kind: "kids" as const,        bg: "#FBF3E4" },
+              { label: "Men",         sub: "Chest sizes", kind: "men" as const,         bg: "#EAF0F7" },
+              { label: "Women",       sub: "UK sizes",    kind: "women" as const,       bg: "#FBEBF1" },
+              { label: "Accessories", sub: "Caps, bags…", kind: "accessories" as const, bg: "#E9F6EF" },
             ].map(c => (
               <button key={c.label}
                 onClick={() => onQuickStart
                   ? onQuickStart(c.label === "Kids" ? "kids" : c.label === "Men" ? "men" : c.label === "Women" ? "women" : "accessories")
                   : onNavigate("order")}
-                className="relative text-left rounded-2xl overflow-hidden"
-                style={{ aspectRatio: "3 / 4", cursor: "pointer", boxShadow: "var(--shadow-sm)" }}>
-                <img src={CATEGORY_PHOTOS[c.kind]} alt={c.label}
-                  className="absolute inset-0 w-full h-full object-cover" loading="lazy"/>
-                <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.12) 55%, rgba(0,0,0,0) 75%)" }}/>
-                <div className="absolute left-0 right-0 bottom-0 p-1.5">
-                  <span className="block text-white" style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.15 }}>{c.label}</span>
-                  <span className="block" style={{ fontSize: 8, color: "rgba(255,255,255,0.8)" }}>{c.sub}</span>
-                </div>
+                className="text-center py-3 px-1 rounded-2xl"
+                style={{ ...card, cursor: "pointer" }}>
+                <span className="mx-auto mb-1.5 flex items-center justify-center rounded-xl"
+                  style={{ width: 44, height: 44, background: c.bg }}>
+                  <GarmentArt kind={c.kind} size={34}/>
+                </span>
+                <span className="block text-foreground" style={{ fontSize: 11.5, fontWeight: 600 }}>{c.label}</span>
+                <span className="block text-muted-foreground" style={{ fontSize: 9 }}>{c.sub}</span>
               </button>
             ))}
           </div>
@@ -1175,12 +1135,8 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
                 {pastOrders.map(p => (
                   <button key={p.ref} onClick={() => onReorderPast?.(p.ref)}
                     className="rounded-2xl p-3 flex-shrink-0 text-left" style={{ ...card, width: 150, cursor: "pointer" }}>
-                    <span className="relative flex-shrink-0 rounded-xl mb-2 overflow-hidden" style={{ width: 38, height: 38, display: "block" }}>
-                      <img src={photoForPastOrder(p.name)} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy"/>
-                      <span className="absolute flex items-center justify-center rounded-full"
-                        style={{ bottom: -2, right: -2, width: 16, height: 16, background: DARK, border: "1.5px solid #fff" }}>
-                        <RotateCcw size={9} strokeWidth={2} color="#fff"/>
-                      </span>
+                    <span className="flex items-center justify-center rounded-xl mb-2" style={{ width: 30, height: 30, background: "var(--muted)" }}>
+                      <RotateCcw size={14} strokeWidth={1.6} className="text-muted-foreground"/>
                     </span>
                     <p className="text-foreground" style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</p>
                     <p className="text-muted-foreground" style={{ fontSize: 10 }}>{p.shade ? `${p.shade} · ` : ""}{p.ref}</p>
@@ -1194,46 +1150,25 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           {/* ── Collections — curated bundles, opens the order pre-filled at Review ── */}
           <p className="px-5 mb-2.5 label-section">Collections · ready-made bundles</p>
           <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
-            {collectionsToRender.map(c => {
-              const photo = COLLECTION_PHOTOS[c.id];
-              const pcs = c.lines.reduce((a, l) => a + l.qty, 0);
-              const fromPrice = collectionFromPrice(c);
-              return (
-                <button key={c.id} onClick={() => onOpenCollection?.(c)}
-                  className="rounded-2xl overflow-hidden flex-shrink-0 text-left" style={{ ...card, width: 176, cursor: "pointer" }}>
-                  <div className="relative" style={{ height: 108, background: "var(--muted)" }}>
-                    {photo
-                      ? <img src={photo} alt={c.title} className="absolute inset-0 w-full h-full object-cover" loading="lazy"/>
-                      : (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <GarmentArt kind={c.audience === "women" ? "women" : "men"} size={40}/>
-                        </div>
-                      )}
-                    <span className="absolute top-1.5 right-1.5 rounded-full px-2 py-0.5"
-                      style={{ background: "rgba(13,13,13,0.62)", backdropFilter: "blur(3px)", color: "#fff", fontSize: 9, fontWeight: 600 }}>
-                      {pcs} pcs
-                    </span>
-                    <div className="absolute left-2 bottom-2 flex items-center gap-1">
-                      {c.lines.map((l, i) => (
-                        <span key={i} className="rounded-full" style={{ width: 12, height: 12, background: l.colorHex, border: "1.5px solid rgba(255,255,255,0.85)" }}/>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="px-3.5 py-2.5">
-                    <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{c.title}</p>
-                    <p className="text-muted-foreground" style={{ fontSize: 10.5, marginTop: 1 }}>{c.sub}</p>
-                    <div className="flex items-center justify-between mt-1.5">
-                      {fromPrice > 0 && (
-                        <p style={{ fontSize: 12, fontWeight: 700, color: DARK }}>
-                          ₹{fromPrice.toLocaleString("en-IN")} <span style={{ fontSize: 9, fontWeight: 500, color: "var(--muted-foreground)" }}>onwards</span>
-                        </p>
-                      )}
-                    </div>
-                    <p style={{ fontSize: 10.5, fontWeight: 700, color: ACCENT_TEXT, marginTop: 4 }}>Start this bundle →</p>
-                  </div>
-                </button>
-              );
-            })}
+            {collectionsToRender.map(c => (
+              <button key={c.id} onClick={() => onOpenCollection?.(c)}
+                className="rounded-2xl overflow-hidden flex-shrink-0 text-left" style={{ ...card, width: 176, cursor: "pointer" }}>
+                <div className="flex items-center gap-1.5 px-3.5 pt-3">
+                  <span className="flex items-center justify-center rounded-lg mr-1" style={{ width: 26, height: 26, background: "var(--muted)" }}>
+                    <GarmentArt kind={c.audience === "women" ? "women" : "men"} size={20}/>
+                  </span>
+                  {c.lines.map((l, i) => (
+                    <span key={i} className="rounded-full" style={{ width: 14, height: 14, background: l.colorHex, border: "1px solid rgba(0,0,0,0.15)" }}/>
+                  ))}
+                  <span className="ml-auto text-muted-foreground" style={{ fontSize: 9.5 }}>{c.lines.reduce((a, l) => a + l.qty, 0)} pcs</span>
+                </div>
+                <div className="px-3.5 py-2.5">
+                  <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{c.title}</p>
+                  <p className="text-muted-foreground" style={{ fontSize: 10.5, marginTop: 1 }}>{c.sub}</p>
+                  <p style={{ fontSize: 10.5, fontWeight: 700, color: ACCENT_TEXT, marginTop: 6 }}>Start this bundle →</p>
+                </div>
+              </button>
+            ))}
           </div>
         </>
       )}
