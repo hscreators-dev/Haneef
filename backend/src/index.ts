@@ -23,8 +23,19 @@ const PORT = process.env.PORT ?? 4000;
 
 // ─── Security & parsing middleware ────────────────────────────────────────────
 
+// FRONTEND_URL may be a SINGLE url or a COMMA-SEPARATED list — so the app can be
+// served from more than one web address (e.g. the Render site AND a GitHub Pages
+// link, or a custom domain) without any of them being CORS-blocked. A blocked
+// origin was one of the ways a second URL failed to reach this backend and fell
+// back to a phantom local account, so every real front-end origin must be listed
+// here (Render dashboard → garm-app-backend → Environment → FRONTEND_URL).
+const frontendOrigins = (process.env.FRONTEND_URL ?? "http://localhost:5173")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const allowedOrigins = [
-  process.env.FRONTEND_URL ?? "http://localhost:5173",
+  ...frontendOrigins,
   // Capacitor's native WebView origins for the Android/iOS app builds
   "capacitor://localhost",
   "https://localhost",

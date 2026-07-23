@@ -1,5 +1,19 @@
 import mongoose, { Document, Schema } from "mongoose";
 
+// ─── Canonical phone normaliser ───────────────────────────────────────────────
+// ONE style for every phone number, everywhere: strip anything that isn't a
+// digit and store it as "+91XXXXXXXXXX" (no spaces, no brackets). This is wired
+// up as a mongoose SETTER on the `phone` path, so ANY code that writes a phone —
+// the login flow, the profile update, a script — has its value canonicalised
+// before it ever hits the database. That is what stops "+91 99440 05331" and
+// "+919944005331" from ever becoming two different accounts again.
+export function canonPhone(v: unknown): string | undefined {
+  if (v == null) return v as undefined;
+  const digits = String(v).replace(/\D/g, "");
+  if (!digits) return String(v);            // nothing usable — leave as-is
+  return `+91${digits.slice(-10)}`;         // last 10 digits, +91 prefix
+}
+
 // ─── Sub-schemas ──────────────────────────────────────────────────────────────
 
 export interface IAddress {
@@ -78,8 +92,8 @@ const PaymentMethodSchema = new Schema<IPaymentMethod>({
 
 const UserSchema = new Schema<IUser>(
   {
-    phone:    { type: String, sparse: true, unique: true },
-    email:    { type: String, sparse: true, unique: true, lowercase: true },
+    phone:    { type: String, sparse: true, unique: true, trim: true, set: canonPhone },
+    email:    { type: String, sparse: true, unique: true, lowercase: true, trim: true },
     name:     { type: String, default: "" },
     accountType: { type: String, enum: ["organisation", "personal"], default: "personal" },
 

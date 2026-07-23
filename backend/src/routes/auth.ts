@@ -5,6 +5,9 @@ import { sendSMS }   from "../services/smsService";
 import { sendEmail } from "../services/emailService";
 import { User }      from "../models/User";
 import { LoginEvent } from "../models/LoginEvent";
+import { Order }         from "../models/Order";
+import { Quote }         from "../models/Quote";
+import { SupportTicket } from "../models/SupportTicket";
 import { signToken, requireAuth, AuthRequest } from "../middleware/auth";
 import { httpError } from "../middleware/error";
 
@@ -91,17 +94,48 @@ router.post("/verify-otp", async (req: Request, res: Response, next: NextFunctio
     const variants = mode === "phone"
       ? [...new Set([canon, canon.slice(1), canon.slice(3), identity])] // +91X…, 91X…, bare 10-digit, as-typed
       : [...new Set([canon, identity])];
+    const field   = mode === "phone" ? "phone" : "email";
     const filter  = mode === "phone" ? { phone: { $in: variants } } : { email: { $in: variants } };
     // If duplicates exist from the old exact-match era, prefer the record that
     // completed onboarding (has the name) — never resurrect a nameless "Guest".
-    let user = await User.findOne(filter).sort({ onboardingComplete: -1, createdAt: 1 });
+    // ALL matching records are loaded (not just one) so we can fold any leftover
+    // duplicates into the survivor on the fly, instead of repeatedly landing the
+    // user on a different account each login.
+    const matches = await User.find(filter).sort({ onboardingComplete: -1, createdAt: 1 });
+    let user = matches[0];
     const isNewUser = !user;   // brand-new account created on this sign-in
     if (!user) {
       user = await User.create(mode === "phone" ? { phone: canon } : { email: canon });
     }
-    // Heal a legacy-format record so future logins hit the canonical value.
-    if (mode === "phone" && user.phone !== canon) { user.phone = canon; await user.save(); }
-    else if (mode === "email" && user.email !== canon) { user.email = canon; await user.save(); }
+
+    // Fold any leftover duplicates from the old exact-match era into the survivor.
+    // Every OTHER matching record has its child data (orders/quotes/tickets/logins)
+    // moved onto the survivor, then the husk is deleted. Doing this BEFORE healing
+    // the survivor's own value is what makes healing collision-safe: otherwise
+    // saving `user.phone = canon` while another record still held canon would
+    // throw a duplicate-key error (unique index) and 500 the whole login.
+    const survivorId = user._id;
+    const losers = matches.filter((m) => String(m._id) !== String(survivorId));
+    for (const loser of losers) {
+      try {
+        await Promise.all([
+          Order.updateMany({ userId: loser._id },        { $set: { userId: survivorId } }),
+          Quote.updateMany({ userId: loser._id },        { $set: { userId: survivorId } }),
+          SupportTicket.updateMany({ userId: loser._id },{ $set: { userId: survivorId } }),
+          LoginEvent.updateMany({ userId: loser._id },   { $set: { userId: survivorId } }),
+        ]);
+        // Carry over a profile the survivor is missing (don't lose a name/onboarding).
+        if (!user.name?.trim() && loser.name?.trim()) user.name = loser.name;
+        if (!user.onboardingComplete && loser.onboardingComplete) user.onboardingComplete = true;
+        await loser.deleteOne();
+      } catch { /* best-effort fold; never block the login */ }
+    }
+
+    // Heal the survivor's own value so future logins hit the canonical form.
+    if (user[field] !== canon) {
+      user[field] = canon;
+      await user.save();
+    }
 
     // Self-heal poisoned accounts: a user who already has a name IS onboarded.
     // An earlier bug (empty orgType rejected the profile PUT) meant many personal

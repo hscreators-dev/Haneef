@@ -1,7 +1,7 @@
 import { Router, Response, NextFunction } from "express";
 import mongoose from "mongoose";
 import { z } from "zod";
-import { User } from "../models/User";
+import { User, canonPhone } from "../models/User";
 import { requireAuth, AuthRequest } from "../middleware/auth";
 import { httpError } from "../middleware/error";
 
@@ -51,6 +51,11 @@ router.put("/profile", async (req: AuthRequest, res: Response, next: NextFunctio
     const update = Object.fromEntries(
       Object.entries(data).filter(([, v]) => v !== undefined)
     );
+    // Force the phone into canonical "+91XXXXXXXXXX" form BEFORE it is written.
+    // The app sends the pretty display value ("+91 99440 05331"); persisting that
+    // spaced string is exactly what used to overwrite the clean number and split
+    // the account in two on the next login. Never trust the client's format.
+    if (typeof update.phone === "string") update.phone = canonPhone(update.phone);
     const user = await User.findByIdAndUpdate(
       req.userId,
       { $set: update },
