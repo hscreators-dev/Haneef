@@ -309,6 +309,18 @@ router.post("/:id/pay", async (req: AuthRequest, res: Response, next: NextFuncti
       order.paymentMode      = mode;
       order.paymentDate      = now;
       order.paymentReference = ref;
+      // Paying is the customer's acceptance of the quote — same as tapping
+      // "Approve" in quotes.ts's /approve handler. Without this, a customer
+      // who pays straight from Track (now unlocked as soon as Garm confirms,
+      // matching the Individual flow — see the adminStatus gate above)
+      // never actually approves the Quote document itself, so the Home
+      // screen's "Quotes awaiting approval" card would keep showing it as
+      // pending forever even though the order is already paid for.
+      if (!order.quoteApprovedAt) order.quoteApprovedAt = now;
+      await Quote.updateMany(
+        { orderId: order._id, status: "pending" },
+        { $set: { status: "approved", approvedAt: now } },
+      );
     }
 
     await order.save();
