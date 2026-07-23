@@ -5159,6 +5159,17 @@ function PersonaOrderForm({
   // What garment (catalog item) the order is for — drives the base price for both flows.
   const [selectedGarment, setSelectedGarment] = useState<SelectedGarment | null>(resume?.selectedGarment ?? null);
 
+  // Admin-configured order-form settings (fee %, which sections are enabled, etc.) —
+  // moved up here because the org cart pricing block below (orgGoodsBase/orgServiceFee)
+  // reads orderFormCfg.fee. It used to be declared ~300 lines further down, which meant
+  // EVERY render of this form (organisation AND individual — Step 2 of any new order)
+  // threw "Cannot access 'orderFormCfg'/'garmentRate' before initialization" the instant
+  // this screen mounted, caught by the app's error boundary as "Something went wrong".
+  const orderFormCfg = useOrderFormConfig();
+  // Garment per-pc rate comes from the chosen fabric + weave. Same forward-reference
+  // problem as orderFormCfg above — moved up so it's defined before orgGoodsBase uses it.
+  const garmentRate = garmentPriceForFabric(selectedGarment, material.fabric, material.weave, fabricSource, material.gsm, priceAudience);
+
   // Individuals can order several garment types in one go (e.g. 1 hoodie + 1 shirt).
   // Each line carries its own quantity; the order total is the sum of the lines.
   // Organisations keep the single-garment flow (selectedGarment above).
@@ -5418,9 +5429,9 @@ function PersonaOrderForm({
   const isAccessoryOrgOrder = isAccessoryOrder;
 
   // ── Derived pricing (shared by the Sizes estimate, Review, footer & submit) ──
-  // Garment per-pc rate comes from the chosen fabric + weave; finishing adds the
-  // selected stitching + packaging. Accessory orders are priced from the catalog.
-  const garmentRate    = garmentPriceForFabric(selectedGarment, material.fabric, material.weave, fabricSource, material.gsm, priceAudience);
+  // garmentRate is declared earlier in this function now (see comment above) —
+  // finishing adds the selected stitching + packaging. Accessory orders are priced
+  // from the catalog.
   const finishingPerPc = perPcCost(stitchingOpts.find(s => s.id === packaging.stitch)?.cost)
     + perPcCost(packagingOpts.find(p => p.id === packaging.packing)?.cost);
   const accessoryTotalAmt = accessoryOrderTotal(accessoryQtyData, accSpecState);
@@ -5428,7 +5439,7 @@ function PersonaOrderForm({
   const garmentCartSubtotal = garmentCart.reduce((s, g) => { const m = matFor(garmentKey(g)); return s + g.qty * garmentPriceForFabric(g, m.fabric, m.weave, fabricSource, m.gsm, priceAudience); }, 0);
   // The amount an individual pays (fixed) — garments + finishing, or accessory
   // total — PLUS the admin-configured service fee, shown as its own line.
-  const orderFormCfg = useOrderFormConfig();
+  // orderFormCfg is declared earlier in this function now (see comment above).
   const individualPayableBase = isAccessoryOrder ? accessoryTotalAmt : garmentCartSubtotal + garmentCartQty * finishingPerPc;
   const individualServiceFee = calcServiceFee(individualPayableBase, isAccessoryOrder ? Object.values(accessoryQtyData).reduce((a, b) => a + b, 0) : garmentCartQty, "B2C", orderFormCfg.fee);
   const individualPayable = individualPayableBase > 0 ? individualPayableBase + individualServiceFee : 0;
