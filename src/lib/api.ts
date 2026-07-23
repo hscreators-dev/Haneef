@@ -3,6 +3,8 @@
  * All calls go through this module — swap BASE_URL for production.
  */
 
+import { Capacitor } from "@capacitor/core";
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
 
 // The Garm Admin Portal's backend — source of truth for the catalog
@@ -63,27 +65,24 @@ const del  = <T>(path: string) => request<T>("DELETE", path);
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-function isLocalHost(): boolean {
-  if (typeof window === 'undefined') return false;
-  const host = window.location.hostname.toLowerCase();
-  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
-}
-
 function isDevOtpFallbackEnabled(): boolean {
-  // HARD RULE: the client-side fake-account fallback is ONLY ever allowed on a
-  // real local dev machine (localhost / 127.0.0.1). It is NEVER enabled on a
-  // hosted URL — not on Render, not on GitHub Pages, and NOT via VITE_DEV_OTP.
-  //
-  // Why: when this fired on a live site, a brief backend hiccup (e.g. Render's
-  // free tier waking from sleep, or a CORS miss) made the app mint a throwaway
-  // local "Guest" account with a fake `dev-<ts>` token. That account never
-  // reached the database, so the SAME phone number appeared to create a brand
-  // new duplicate account on each device — exactly the bug we're killing here.
-  // A hosted site must show a real error instead, never a fake login.
-  //
-  // The old VITE_DEV_OTP escape hatch is intentionally gone: an env flag set by
-  // mistake on a production build was enough to silently resurrect this bug.
-  return isLocalHost();
+  if (typeof window === 'undefined') return false;
+  // NEVER in the packaged native (iOS/Android) app. Capacitor serves the web
+  // bundle from `localhost`, which tripped the localhost check below — so on a
+  // real phone, ANY hiccup reaching the backend (Render cold-start, flaky
+  // network) silently minted a CLIENT-SIDE-ONLY session (dev-<ts> token) with no
+  // backend user. That "account" lived only in the phone's storage, so the SAME
+  // number signed up again on the web created a real account and looked like a
+  // duplicate. The native app must ALWAYS use the real backend so every account
+  // is real and shared across the phone and the web.
+  try { if (Capacitor.isNativePlatform()) return false; } catch { /* plain web — continue */ }
+  const host = window.location.hostname.toLowerCase();
+  // Web local dev only. `github.io` was previously included, which meant the
+  // public GitHub Pages build minted a fake client-side session with no real
+  // backend — logins looked to work but nothing persisted. Opt in explicitly
+  // with VITE_DEV_OTP=true for a hosted demo; never on by default off localhost.
+  const explicit = import.meta.env.VITE_DEV_OTP === 'true';
+  return explicit || host === 'localhost' || host === '127.0.0.1';
 }
 
 let pendingDevOtp: { identity: string; mode: 'phone' | 'email'; code: string } | null = null;
