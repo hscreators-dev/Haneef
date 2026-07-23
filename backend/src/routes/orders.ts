@@ -151,18 +151,31 @@ router.patch("/:id", async (req: AuthRequest, res: Response, next: NextFunction)
 });
 
 // ─── DELETE /api/orders/:id ───────────────────────────────────────────────────
-// Cancel — only if still in Quote pending / Draft stage
+// Cancel — only BEFORE approval. Once Garm has approved the order, the customer
+// can no longer self-cancel here, regardless of payment — a human (with refund
+// handling if money already moved) takes it from there.
+//
+// "Approved" means something different per persona and can't be expressed as
+// one shared status list: individuals are approved when an admin confirms
+// (adminStatus leaves "NEW"); organisations are approved when their quote is
+// approved (order.status leaves "Draft"/"Quote pending" — see
+// POST /api/quotes/:id/approve, which is what actually moves it to "Order
+// placed" for them). Org and individual orders can both carry the SAME status
+// string "Order placed" while meaning opposite things (pre- vs post-approval),
+// so the gate checks each persona's own real signal, not a shared string list.
 
 router.delete("/:id", async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, userId: req.userId });
     if (!order) return next(httpError("Order not found", 404));
 
-    const cancellable: string[] = ["Draft", "Quote pending", "Order placed", "Order confirmed"];
-    if (!cancellable.includes(order.status)) {
-      return next(httpError(`Cannot cancel an order in '${order.status}' status`, 400));
+    const isApproved = order.persona === "individual"
+      ? order.adminStatus !== "NEW"
+      : (order.status !== "Draft" && order.status !== "Quote pending");
+    if (isApproved) {
+      return next(httpError("This order has already been approved and can no longer be cancelled here — contact your Garm coordinator.", 400));
     }
-    // Money has moved — cancellation needs a human (refund handling), not a button.
+    // Belt-and-suspenders: if money already moved for any reason, still require a human.
     if (order.paymentStatus === "paid" || order.paymentStatus === "partial") {
       return next(httpError("This order already has a payment on it — contact your Garm coordinator to cancel and arrange a refund.", 400));
     }
@@ -177,13 +190,20 @@ router.delete("/:id", async (req: AuthRequest, res: Response, next: NextFunction
 });
 
 // ─── POST /api/orders/:id/pay ─────────────────────────────────────────────────
-// Individuals: single full payment, only AFTER the admin has confirmed the
-// order (adminStatus CONFIRMED). Organisations: two-stage — ADVANCE (unlocks
-// production) then BALANCE after the QC report (unlocks shipping).
+// ONE full payment, for both personas — no advance/balance split. Payment stays
+// locked until each persona's own approval gate clears (individuals: admin
+// confirms; organisations: their quote is approved and priced — organisations
+// never use adminStatus CONFIRMED, they use the quote-approval flow instead,
+// see backend/src/models/Order.ts). Once approved, cancellation is already
+// blocked (see DELETE above) — approval is the hard line, not payment.
 
 const PaySchema = z.object({
   mode:      z.string().min(2),          // "UPI", "Card", ...
   reference: z.string().optional(),
+  // Deprecated — organisations used to pay in an advance+balance split and
+  // passed this to pick the stage. Kept optional (and ignored) purely so an
+  // older cached frontend build sending it doesn't 400; every payment is now
+  // a single full payment regardless of what's sent here.
   stage:     z.enum(["advance", "balance", "full"]).optional(),
 });
 
@@ -211,7 +231,7 @@ async function verifyGatewayPayment(reference: string | undefined, _order: unkno
 
 router.post("/:id/pay", async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const { mode, reference, stage } = PaySchema.parse(req.body);
+    const { mode, reference } = PaySchema.parse(req.body);
     const order = await Order.findOne({ _id: req.params.id, userId: req.userId });
     if (!order) return next(httpError("Order not found", 404));
 
@@ -242,52 +262,41 @@ router.post("/:id/pay", async (req: AuthRequest, res: Response, next: NextFuncti
       return next(httpError("This order was cancelled", 400));
     }
 
-    const now = new Date();
-    const dateLabel = now.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-    const ref = reference || `TXN-${(order.orderRef || "").replace("#", "")}-${now.getFullYear()}`;
-
+    // ── Each persona's own approval gate — see the comment above DELETE /:id
+    // for why these can't share one check. Once past its gate, both personas
+    // fall through to the SAME single-full-payment write below.
     if (order.persona === "individual") {
       if (order.adminStatus === "NEW") {
         return next(httpError("Your order hasn't been confirmed yet — payment unlocks once Garm confirms it", 400));
       }
-      order.paymentStatus    = "paid";
-      order.paymentMode      = mode;
-      order.paymentDate      = now;
-      order.paymentReference = ref;
-      order.adminPayStatus   = "COMPLETED";
-      if (order.adminStatus === "CONFIRMED") order.adminStatus = "PAID";
+    } else if (!order.total && !order.quoteAmount) {
+      return next(httpError("Your quote isn't finalised yet — payment unlocks once Garm shares the final price", 400));
+    }
 
-      // Tracker: mark Payment done, make "In production" the upcoming active step.
-      const payIdx = order.trackSteps.findIndex((s) => s.label.toLowerCase().includes("payment"));
-      if (payIdx >= 0) {
-        order.trackSteps = order.trackSteps.map((s, i) => {
-          if (i < payIdx)  return { ...s, status: "done" as const };
-          if (i === payIdx) return { ...s, label: s.label, sub: `Paid by ${mode} · ${dateLabel}`, status: "done" as const, completedAt: now };
-          if (i === payIdx + 1) return { ...s, sub: "Starting soon", status: "active" as const };
-          return s;
-        }) as typeof order.trackSteps;
-      }
-    } else {
-      // ── Organisation: advance then balance ──
-      if (!order.total && !order.quoteAmount) {
-        return next(httpError("Your quote isn't finalised yet — payment unlocks once Garm shares the final price", 400));
-      }
-      const isAdvance = order.paymentStatus !== "partial" && stage !== "balance" && stage !== "full";
-      if (isAdvance) {
-        // Advance received → production can start (admin-side gate reads 'partial').
-        order.paymentStatus = "partial";
-        order.adminPayStatus = "PARTIAL";
-      } else {
-        // Balance received → fully paid, shipping can start.
-        order.paymentStatus = "paid";
-        order.adminPayStatus = "COMPLETED";
-        // Post-QC balance settles the order; reflect PAID admin-side when
-        // it's sitting in a post-QC state.
-        if (["QC_APPROVED", "INVOICED"].includes(order.adminStatus)) order.adminStatus = "PAID";
-      }
-      order.paymentMode      = mode;
-      order.paymentDate      = now;
-      order.paymentReference = ref;
+    const now = new Date();
+    const dateLabel = now.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+    const ref = reference || `TXN-${(order.orderRef || "").replace("#", "")}-${now.getFullYear()}`;
+
+    // ── One full payment, no advance/balance split — applies to both personas. ──
+    order.paymentStatus    = "paid";
+    order.paymentMode      = mode;
+    order.paymentDate      = now;
+    order.paymentReference = ref;
+    order.adminPayStatus   = "COMPLETED";
+    if (order.adminStatus === "CONFIRMED") order.adminStatus = "PAID";
+    // Organisations settle post-QC on the admin side (they never use CONFIRMED —
+    // see backend/src/models/Order.ts); reflect PAID there too once paid.
+    if (["QC_APPROVED", "INVOICED"].includes(order.adminStatus)) order.adminStatus = "PAID";
+
+    // Tracker: mark Payment done, make the next step the upcoming active one.
+    const payIdx = order.trackSteps.findIndex((s) => s.label.toLowerCase().includes("payment"));
+    if (payIdx >= 0) {
+      order.trackSteps = order.trackSteps.map((s, i) => {
+        if (i < payIdx)  return { ...s, status: "done" as const };
+        if (i === payIdx) return { ...s, label: s.label, sub: `Paid by ${mode} · ${dateLabel}`, status: "done" as const, completedAt: now };
+        if (i === payIdx + 1) return { ...s, sub: "Starting soon", status: "active" as const };
+        return s;
+      }) as typeof order.trackSteps;
     }
 
     await order.save();

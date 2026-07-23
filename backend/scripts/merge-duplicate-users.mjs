@@ -27,6 +27,8 @@
  */
 
 import mongoose from "mongoose";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 const APPLY = process.argv.includes("--apply");
 const URI = process.env.MONGODB_URI;
@@ -165,7 +167,15 @@ async function main() {
 
 // Only run when executed directly (node scripts/merge-duplicate-users.mjs),
 // NOT when imported by a test that just wants the pure helpers above.
-const invokedDirectly = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+// Resolve BOTH sides to a plain absolute filesystem path before comparing —
+// process.argv[1] is whatever the caller typed (often a RELATIVE path, e.g.
+// "scripts/merge-duplicate-users.mjs"), while import.meta.url is always an
+// absolute, percent-encoded file:// URL. Comparing those two directly (as an
+// earlier version of this script did) is false for any relative invocation,
+// so `node scripts/merge-duplicate-users.mjs` silently did nothing at all —
+// no error, no output, just a clean exit. path.resolve + fileURLToPath fixes
+// that by normalising both to the same comparable form.
+const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedDirectly) {
   main().catch(async (err) => {
     console.error("\n✖ Error:", err.message);

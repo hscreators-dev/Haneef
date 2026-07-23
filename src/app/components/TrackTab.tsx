@@ -286,11 +286,10 @@ function fmtINR(n?: number): string | undefined {
   return typeof n === "number" && n > 0 ? `₹${n.toLocaleString("en-IN")}` : undefined;
 }
 
-// Organisations pay in two stages: an advance (production starts), then the
-// balance after the QC report (shipping starts). The advance % is configured
-// in the admin portal (Settings → Order Form → Service Fee) and read live via
-// orgAdvancePct() — no hardcoded value.
-function orgAdvanceAmount(total?: number): number { return Math.round(((total ?? 0) * orgAdvancePct()) / 100); }
+// Organisations used to pay in two stages (advance then balance); that's been
+// unified to a single full payment, same as individuals — see PaymentMethodCard.
+// orgAdvancePct() is kept (still read by the unused PaymentMilestones panel
+// below) in case a staged-payment option comes back later.
 
 // Builds a Track card from a real backend order, enriched with the rich
 // display summary saved locally at submit time (keyed by orderRef).
@@ -333,13 +332,25 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
       }))
     : [];
   const taxIncluded = goodsAmount ? Math.max(0, Math.round(goodsAmount - goodsAmount / 1.18)) : 0;
+  // Legacy safety net: orders placed BEFORE organisation service fees were
+  // actually computed (o.serviceFee missing) fall back to whatever was cached
+  // locally at submit time under this orderRef. Back then that cache could
+  // hold a POLICY DISCLAIMER ("8% (5% for 500+ pcs) — added in the final
+  // quote") rather than an actual amount — never a real fee, just a note that
+  // one would be added later. Showing that text as if it were the fee value is
+  // wrong (and, being long free text where a short ₹amount is expected, is
+  // also what breaks the row's layout). Only trust the cached line when it
+  // genuinely looks like a monetary value; otherwise omit the row rather than
+  // show a stale disclaimer as fact.
+  const cachedFeeLine = summary?.price?.serviceFeeLine;
+  const cachedFeeLineIsAmount = !!cachedFeeLine && /^₹[\d,]/.test(cachedFeeLine);
   const livePrice: OrderPrice | undefined = o._id
     ? {
         kind: "fixed",
         rateLine: o.qty && goodsAmount ? `${fmtINR(Math.round(goodsAmount / o.qty))}/pc × ${o.qty} pcs` : (summary?.price?.rateLine ?? "—"),
         items: lineItems.length > 0 ? lineItems : summary?.price?.items,
         taxLine: taxIncluded > 0 ? `${fmtINR(taxIncluded)} — included in prices` : summary?.price?.taxLine,
-        serviceFeeLine: o.serviceFee ? fmtINR(o.serviceFee) : summary?.price?.serviceFeeLine,
+        serviceFeeLine: o.serviceFee ? fmtINR(o.serviceFee) : (cachedFeeLineIsAmount ? cachedFeeLine : undefined),
         totalLabel: isPaid ? "Total paid" : "Total payable",
         totalValue: fmtINR(amount) ?? summary?.price?.totalValue ?? "—",
         note: summary?.price?.note,
@@ -498,15 +509,24 @@ function DetailRow({ label, value, accent }: { label: string; value: React.React
   );
 }
 
-// A price-breakdown row: the LABEL is the long part (product · style · size ·
-// colour · qty), so it must be allowed to wrap; the value (₹…) stays pinned on
-// the right and never wraps. (DetailRow does the opposite — for short labels.)
+// A price-breakdown row: the LABEL is normally the long part (product · style ·
+// size · colour · qty) and the value (₹…) is normally short, so by default the
+// label wraps and the value stays pinned on the right. BUT the value isn't
+// always guaranteed to be short (e.g. a stale/legacy fee description can slip
+// through as a value) — if it were only the label's width being squeezed to
+// fit whatever's left, an unexpectedly long value forces the label into a
+// sliver so narrow that even single words get broken letter-by-letter. Both
+// sides now keep a floor (label >= 35% of the row) and the value is allowed to
+// wrap onto its own line too, so a too-long value degrades to wrapped text
+// instead of destroying the label next to it. (DetailRow does the opposite —
+// for short labels.)
 function PriceLine({ label, value, accent }: { label: string; value: React.ReactNode; accent?: boolean }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-muted-foreground" style={{ fontSize: 12, minWidth: 0, wordBreak: "break-word", lineHeight: 1.4 }}>{label}</span>
+      <span className="text-muted-foreground"
+        style={{ fontSize: 12, flex: "1 1 auto", minWidth: "35%", overflowWrap: "break-word", wordBreak: "normal", lineHeight: 1.4 }}>{label}</span>
       <span className={accent ? "text-emerald-700" : "text-foreground"}
-        style={{ fontSize: 12, fontWeight: accent ? 700 : 500, flexShrink: 0, whiteSpace: "nowrap" }}>{value}</span>
+        style={{ fontSize: 12, fontWeight: accent ? 700 : 500, flex: "0 1 auto", maxWidth: "65%", textAlign: "right", whiteSpace: "normal", overflowWrap: "break-word", lineHeight: 1.4 }}>{value}</span>
     </div>
   );
 }
@@ -527,20 +547,19 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
   const isOrg = accountType !== "personal";
   const isLive = !!order.apiId;
 
-  // ── Individuals: the confirm-then-pay flow ──
-  // Submitted (adminStatus NEW, or a local just-submitted card that hasn't
-  // synced yet): payment is LOCKED until the admin confirms. Confirmed: pay
-  // the confirmed amount here. Paid: locked, shows the receipt info.
+  // ── Both personas: confirm/approve-then-pay-in-full ──
+  // Unified — no advance/balance staging for organisations anymore. Payment is
+  // LOCKED until each persona's own approval gate clears (individuals: admin
+  // moves them past adminStatus "NEW"; organisations: their quote is approved
+  // and priced, order.totalAmount > 0 — orgs never use adminStatus CONFIRMED,
+  // see backend/src/models/Order.ts). Once cleared, it's ONE full payment —
+  // same as individuals — not a staged advance/balance split.
   const isUnconfirmedStage  = order.statusLabel === "Order placed" || order.statusLabel === "Quote pending";
-  const liveAwaitingConfirm = !isOrg && (isLive ? (order.adminStatus === "NEW" || !order.adminStatus) : isUnconfirmedStage);
-  const livePaid            = isLive && order.livePaymentStatus === "paid";
-  const liveCanPay          = isLive && !isOrg && !livePaid && !liveAwaitingConfirm && order.statusLabel !== "Completed";
-  // ── Organisations, LIVE orders: advance → balance ──
-  const orgQuoted     = isLive && isOrg && (order.totalAmount ?? 0) > 0;
-  const orgAdvanceDue = orgQuoted && !livePaid && order.livePaymentStatus !== "partial";
-  const orgBalanceDue = orgQuoted && !livePaid && order.livePaymentStatus === "partial";
-  const orgPayAmount  = orgAdvanceDue ? orgAdvanceAmount(order.totalAmount) : (order.totalAmount ?? 0) - orgAdvanceAmount(order.totalAmount);
-  const orgStage: "advance" | "balance" = orgAdvanceDue ? "advance" : "balance";
+  const liveAwaitingConfirm = isLive
+    ? (isOrg ? !((order.totalAmount ?? 0) > 0) : (order.adminStatus === "NEW" || !order.adminStatus))
+    : isUnconfirmedStage;
+  const livePaid   = isLive && order.livePaymentStatus === "paid";
+  const liveCanPay = isLive && !livePaid && !liveAwaitingConfirm && order.statusLabel !== "Completed";
   // Paid is NEVER assumed: live orders use the real paymentStatus; non-live
   // demo orders only count as paid once they're past the confirmation stage.
   const paid = isLive ? livePaid : isOrg ? (statusPaid || !!paidOverride) : !isUnconfirmedStage;
@@ -549,7 +568,7 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
     if (!onPayLive) return;
     setPaying(true); setPayError("");
     try {
-      await onPayLive(modeLabel, isOrg ? orgStage : undefined);
+      await onPayLive(modeLabel);
       setShowPay(false);
     } catch (e) {
       setPayError((e as Error).message || "Payment failed — try again");
@@ -582,7 +601,7 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
       <p className="text-foreground" style={{ fontSize: 13 }}>
         Payment status:{" "}
         <span style={{ fontWeight: 600, color: paid ? "#059669" : "#D97706" }}>
-          {paid ? "Paid" : liveAwaitingConfirm ? "Locked" : orgBalanceDue ? "Advance paid · balance due" : orgAdvanceDue ? "Advance due" : "Pending"}
+          {paid ? "Paid" : liveAwaitingConfirm ? "Locked" : "Pending"}
         </span>
         {paid && order.paymentDate ? <span className="text-muted-foreground" style={{ fontWeight: 400 }}> · {order.paymentDate}</span> : null}
       </p>
@@ -590,17 +609,27 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
         <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2 }}>Ref: {order.paymentReference}</p>
       )}
 
-      {/* ── Individuals, live order: waiting for admin confirmation ── */}
+      {/* ── Waiting for approval (both personas) ──
+          Individuals: waiting for admin to confirm. Organisations: waiting for
+          their quote to be approved and priced. Either way, payment is locked
+          until then — no partial charge can happen before this clears. */}
       {liveAwaitingConfirm && (
         <div className="mt-3 rounded-xl px-3 py-2.5" style={{ background: ACCENT_BG, border: `1px solid ${ACCENT}` }}>
-          <p style={{ fontSize: 12, fontWeight: 600, color: ACCENT_TEXT }}>Waiting for Garm to confirm your order</p>
+          <p style={{ fontSize: 12, fontWeight: 600, color: ACCENT_TEXT }}>
+            {isOrg ? "Waiting for Garm to approve your quote" : "Waiting for Garm to confirm your order"}
+          </p>
           <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.5 }}>
-            Once your order is confirmed you'll see the final price here and can pay — production starts right after payment.
+            {isOrg
+              ? "Once your quote is approved you'll see the final price here and can pay the full amount — production starts right after payment."
+              : "Once your order is confirmed you'll see the final price here and can pay — production starts right after payment."}
           </p>
         </div>
       )}
 
-      {/* ── Individuals, live order: confirmed — pay now ── */}
+      {/* ── Approved — pay in full (both personas) ──
+          Single full payment once, no advance/balance split. Once approved,
+          the order can no longer be cancelled from here either (see the
+          backend cancel gate) — approval is the hard line, not payment. */}
       {liveCanPay && !showPay && (
         <button onClick={() => setShowPay(true)}
           className="w-full mt-3 py-2.5 rounded-xl"
@@ -609,18 +638,7 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
         </button>
       )}
 
-      {/* ── Organisations, live order: advance then balance ── */}
-      {(orgAdvanceDue || orgBalanceDue) && !showPay && (
-        <button onClick={() => setShowPay(true)}
-          className="w-full mt-3 py-2.5 rounded-xl"
-          style={{ background: DARK, color: "#fff", fontWeight: 600, fontSize: 13, border: "none", cursor: "pointer" }}>
-          {orgAdvanceDue
-            ? `Pay advance ${fmtINR(orgPayAmount)} (${orgAdvancePct()}%) — production starts after this`
-            : `Pay balance ${fmtINR(orgPayAmount)} — shipping starts after this`}
-        </button>
-      )}
-
-      {((isOrg && !isLive && !paid) || liveCanPay || orgAdvanceDue || orgBalanceDue) && showPay && (
+      {((isOrg && !isLive && !paid) || liveCanPay) && showPay && (
         <div className="mt-3 rounded-xl border border-border p-3">
           <p style={{ fontSize: 12, fontWeight: 600, color: DARK, marginBottom: 8 }}>Choose a payment method</p>
           {([["upi", "UPI", "Google Pay, PhonePe, Paytm & more"], ["card", "Card", "Credit or debit card"]] as const).map(([id, lbl, sub]) => {
@@ -687,12 +705,12 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
             onClick={() => {
               if (!canPay || paying) return;
               const modeLabel = method === "upi" ? "UPI" : "Card";
-              if (liveCanPay || orgAdvanceDue || orgBalanceDue) payNow(modeLabel);
+              if (liveCanPay) payNow(modeLabel);
               else { onMarkPaid?.(); setShowPay(false); }
             }}
             disabled={!canPay || paying}
             className="w-full mt-2.5 py-2.5 rounded-xl" style={{ background: canPay && !paying ? DARK : "#E5E7EB", color: canPay && !paying ? "#fff" : "#9CA3AF", fontWeight: 600, fontSize: 13, border: "none", cursor: canPay && !paying ? "pointer" : "not-allowed" }}>
-            {paying ? "Processing…" : `Pay ${(orgAdvanceDue || orgBalanceDue) ? fmtINR(orgPayAmount) : (fmtINR(order.totalAmount) ?? order.price?.totalValue ?? "now")} by ${method === "upi" ? "UPI" : "card"}`}
+            {paying ? "Processing…" : `Pay ${fmtINR(order.totalAmount) ?? order.price?.totalValue ?? "now"} by ${method === "upi" ? "UPI" : "card"}`}
           </button>
           {payError && <p style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>{payError}</p>}
           <p style={{ fontSize: 10, color: "#9ca3af", marginTop: 6, lineHeight: 1.5 }}>Demo checkout — no real charge is made. CVV is never stored.</p>
