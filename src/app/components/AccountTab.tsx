@@ -52,7 +52,7 @@ const btnAccent: React.CSSProperties = { ...btnPrimary, background: ACCENT };
 
 export type UserProfile = { name: string; avatar: string | null; accountType?: "personal" | "organisation"; orgName?: string; orgType?: string; gstNumber?: string; phone?: string; email?: string; twoFAEnabled?: boolean };
 
-type Screen =
+export type Screen =
   | "main" | "profile" | "business" | "delivery" | "payment"
   | "order_history" | "order_detail" | "tech_packs"
   | "notifications_settings" | "security" | "two_fa_setup"
@@ -1760,7 +1760,7 @@ function PolicyScreen({ kind, onBack, isOrg, orgType }: { kind: "terms" | "payme
 }
 
 // ─── Main Account ─────────────────────────────────────────────────────────────
-export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut, onAddressesChange }: {
+export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut, onAddressesChange, initialScreen, onScreenConsumed }: {
   onNavigate?: (tab: string, orderId?: string) => void;
   profile?: UserProfile;
   onProfileUpdate?: (p: UserProfile) => void;
@@ -1768,8 +1768,22 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut, on
   // Fired whenever the delivery address book changes, so the app can keep the
   // order flow's pre-filled address in sync mid-session.
   onAddressesChange?: (addresses: { label: string; line1: string; city: string; pin: string; default: boolean }[]) => void;
+  // Lets a Home-screen shortcut (e.g. "Delivery locations") open straight into
+  // a sub-screen instead of landing on the main Account menu. Same
+  // consume-once pattern as NewOrderTab's `intent` prop.
+  initialScreen?: Screen;
+  onScreenConsumed?: () => void;
 }) {
-  const [screen, setScreen]           = useState<Screen>("main");
+  const [screen, setScreen]           = useState<Screen>(initialScreen ?? "main");
+  // The Account tab stays mounted across tab switches, so a NEW deep-link
+  // request (tapping the Home shortcut again) must react to the prop
+  // changing, not just apply once at mount.
+  useEffect(() => {
+    if (!initialScreen) return;
+    setScreen(initialScreen);
+    onScreenConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialScreen]);
   // Open support tickets — shown as a badge on the Help & support row so the
   // customer can see at a glance that something is active.
   const [openTicketCount, setOpenTicketCount] = useState(0);
@@ -1820,7 +1834,10 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut, on
       // two identical entry points to one destination. Kept the card (it shows the
       // avatar/name/email at a glance) and dropped this redundant row.
       ...(isOrg ? [{ icon:<Building2 size={16} strokeWidth={1.5}/>, label:"Business details",     s:"business"              as Screen }] : []),
-      ...(!isOrg ? [{ icon:<MapPin size={16} strokeWidth={1.5}/>, label:"Delivery addresses", s:"delivery" as Screen }] : []),
+      // Delivery addresses used to be individual-only, but organisations ship
+      // bulk orders to real sites too — a school's campuses, a hospital's
+      // wards, a corporate's branches — so this is shown for both personas now.
+      { icon:<MapPin size={16} strokeWidth={1.5}/>, label:"Delivery addresses", s:"delivery" as Screen },
       { icon:<CreditCard size={16} strokeWidth={1.5}/>,label:"Payment details",       s:"payment"               as Screen },
     ],
     [

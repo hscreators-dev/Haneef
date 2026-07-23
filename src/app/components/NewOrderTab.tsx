@@ -615,7 +615,7 @@ function countAccessoryQtyForCategory(categoryId: string, accessoryQty: Record<s
 // Organisations now pick between ordering garments (chosen from the catalog in the
 // next step — filtered to what's relevant for the org type) or browsing accessories.
 // The specific garment types are no longer a middle step; the catalog handles that.
-const orgGarmentSub: Partial<Record<OrgType, string>> = {
+export const orgGarmentSub: Partial<Record<OrgType, string>> = {
   school:      "Uniforms, shirts, pants, skirts, sports tees & more",
   college:     "Campus tees, hoodies, department & lab wear",
   corporate:   "Formal shirts, polos, blazers & branded tees",
@@ -4001,7 +4001,7 @@ function OrgTypeSelect({ value, onChange }: { value: OrgType; onChange: (v: OrgT
   );
 }
 
-function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initialOrgType }: { onContinue: (d: OrgDetails) => void; onBack?: () => void; onCustomOrder?: () => void; switchBanner?: React.ReactNode; initialOrgType?: OrgType }) {
+function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initialOrgType, initialService }: { onContinue: (d: OrgDetails) => void; onBack?: () => void; onCustomOrder?: () => void; switchBanner?: React.ReactNode; initialOrgType?: OrgType; initialService?: OrgService }) {
   const { isCategoryActive, isItemActive, isItemInStock, extraAccessoryCategories, extraItemsForCategory } = useCatalogAvailability({
     knownLabels: universalAccessoryCategories.map(c => c.label), audience: "B2B",
   });
@@ -4009,7 +4009,10 @@ function OrgDetailsForm({ onContinue, onBack, onCustomOrder, switchBanner, initi
   // Organisation type is chosen once, during onboarding — it isn't re-asked or
   // switchable here. Falls back to the demo profile's org type if none was set.
   const [orgType]       = useState<OrgType>(initialOrgType ?? currentUser.orgType);
-  const [service, setService]       = useState<OrgService>(orgServiceOptions[initialOrgType ?? currentUser.orgType][0].id);
+  // initialService lets a Home-screen quick-start tile ("Order accessories")
+  // land here with that option already picked, saving the one tap — falls
+  // back to the catalog's first option exactly like before.
+  const [service, setService]       = useState<OrgService>(initialService ?? orgServiceOptions[initialOrgType ?? currentUser.orgType][0].id);
   const [accessoryQty, setAccessoryQty] = useState<Record<string, number>>({});
   const [accessoryView, setAccessoryView] = useState<"categories"|"products">("categories");
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
@@ -7551,7 +7554,7 @@ type OrderStep =
 // Deep-link intents from the Home screen tiles — each lands EXACTLY where it
 // promises: kids/men/women → straight into the Garments step for that
 // audience; accessories → the accessories picker; sizeguide → the size chart.
-export type OrderIntent = "kids" | "men" | "women" | "accessories" | "sizeguide";
+export type OrderIntent = "kids" | "men" | "women" | "accessories" | "sizeguide" | "org_garments" | "org_accessories";
 
 export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountType, orgType, orgName, name, phone, email, address, city, pin, onSaveDraft, resumeDraft, intent, onIntentConsumed, onResetResume, dirtyRef }: { onNavigate: (tab: "home" | "order" | "track" | "account") => void; onTrackOrder: (summary?: SubmittedOrderSummary) => void; onOrderPlaced?: (summary?: SubmittedOrderSummary) => void; accountType?: "personal" | "organisation"; orgType?: string; orgName?: string; name?: string; phone?: string; email?: string; address?: string; city?: string; pin?: string; onSaveDraft?: (d: DraftPayload) => void; resumeDraft?: OrderDraft | null; intent?: OrderIntent | null; onIntentConsumed?: () => void; onResetResume?: () => void; dirtyRef?: React.MutableRefObject<boolean> }) {
   const isPersonal = accountType === "personal";
@@ -7597,6 +7600,11 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
   const [showSwitchConfirm, setShowSwitchConfirm] = useState(false);
   const [submittedSummary, setSubmittedSummary] = useState<SubmittedOrderSummary | null>(null);
   const [showSizeGuide, setShowSizeGuide] = useState(false);
+  // Org Home's "Order accessories" quick-start tile pre-selects this on the
+  // org_details step (see the org_accessories branch below) — a separate,
+  // persisted piece of state because `intent` itself is consumed/cleared the
+  // instant it's applied, before org_details even renders.
+  const [orgServiceIntent, setOrgServiceIntent] = useState<OrgService | undefined>(undefined);
 
   // Fresh mount = nothing touched yet.
   useEffect(() => { if (dirtyRef) dirtyRef.current = false; // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7608,6 +7616,27 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
     if (!intent) return;
     if (intent === "sizeguide") {
       setShowSizeGuide(true);
+    } else if (intent === "org_garments") {
+      // Garment picking happens entirely on Step 2 (the org_details screen
+      // only asks "garments or accessories?" plus contact info that already
+      // defaults from the profile) — so this can skip straight to the garment
+      // cart, exactly like the individual Kids/Men/Women tiles skip ahead.
+      setStep({
+        type: "org_step2",
+        org: {
+          type: currentUser.orgType, service: "uniform", isAccessoryOrder: false, accessoryQty: {},
+          name: currentUser.org, board: "",
+          address: currentUser.address, city: currentUser.city, pin: currentUser.pin,
+          contactName: currentUser.name, contactPhone: currentUser.phone, contactEmail: currentUser.email,
+        },
+      });
+    } else if (intent === "org_accessories") {
+      // Accessory item picking happens ON org_details (the category browser
+      // lives inside OrgDetailsForm) — so unlike garments, this can't skip
+      // that screen. It just pre-selects "Accessories" there instead of
+      // "Garments", saving the one tap.
+      setOrgServiceIntent("accessories");
+      setStep({ type: "org_details" });
     } else if (intent === "accessories") {
       setStep({ type: "individual_accessories" });
     } else {
@@ -7700,6 +7729,7 @@ export function NewOrderTab({ onNavigate, onTrackOrder, onOrderPlaced, accountTy
           <OrgDetailsForm
             switchBanner={switchBanner}
             initialOrgType={orgTypeDefs.some(t => t.id === orgType) ? (orgType as OrgType) : undefined}
+            initialService={orgServiceIntent}
             onContinue={org => setStep({ type:"org_step2", org })}
             onCustomOrder={() => setStep({ type:"custom_audience" })}
           />

@@ -6,16 +6,17 @@ import {
   MapPinned, Headphones, Star, Check, Navigation, FileText, Trash2,
   HelpCircle, X, Shirt, Wallet, Truck, RotateCcw,
   Users, Heart, Gift, Ruler, Palette, Droplets, Smile, Scissors, Lightbulb,
+  Percent, MessageCircle, Receipt, FolderOpen,
 } from "lucide-react";
 import certArt from "@/assets/undraw_certification_garm.svg";
-import { NewOrderTab, SizeGuideModal, type SubmittedOrderSummary, type OrderDraft, type DraftPayload, type OrderIntent } from "./components/NewOrderTab";
+import { NewOrderTab, SizeGuideModal, orgGarmentSub, type SubmittedOrderSummary, type OrderDraft, type DraftPayload, type OrderIntent } from "./components/NewOrderTab";
 import { TrackTab } from "./components/TrackTab";
-import { AccountTab, type UserProfile, orgTypeDefs, OrgTypeSelect } from "./components/AccountTab";
+import { AccountTab, type UserProfile, orgTypeDefs, OrgTypeSelect, type Screen as AccountScreen } from "./components/AccountTab";
 import { NotificationsScreen } from "./components/NotificationsScreen";
 import { fetchUnreadCount } from "../lib/notifCenter";
 import { playChime } from "../lib/notify";
 import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
-import { auth as authApi, account as accountApi, orders as ordersApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder } from "../lib/api";
+import { auth as authApi, account as accountApi, orders as ordersApi, quotes as quotesApi, coordinator as coordinatorApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder, type Quote as ApiQuote, type Coordinator } from "../lib/api";
 import { readPendingOrders, writePendingOrders, rememberOrderSummary, flushPendingOrders, createOrderWithRetry, readOrderSummaries } from "../lib/orderSync";
 import { useOrderFormConfig } from "../lib/useOrderFormConfig";
 
@@ -774,13 +775,22 @@ const HOME_TIPS: { tone: "gold" | "green" | "muted"; chip: string; icon: React.R
   { tone: "gold",  chip: "Real talk", icon: <Smile size={10} strokeWidth={1.8}/>,       title: "Surplus fabric = 15% smug savings",    body: "Ends of premium rolls, rescued. The planet approves. So does your wallet." },
   { tone: "muted", chip: "Craft",     icon: <Scissors size={10} strokeWidth={1.8}/>,    title: "Single-needle stitching, explained",   body: "The tiny detail that separates \"uniform\" from \"tailored\"." },
 ];
+// Same tips-rail pattern as HOME_TIPS, but procurement-flavoured — how
+// approval actually works, what's included in the price, and who to ask.
+// Organisation Home only.
+const ORG_HOME_TIPS: { tone: "gold" | "green" | "muted"; chip: string; icon: React.ReactNode; title: string; body: string }[] = [
+  { tone: "gold",  chip: "Quotes",    icon: <Percent size={10} strokeWidth={1.8}/>,     title: "How quote approval works",             body: "We review your order, price it, then send a quote. Nothing is produced until you approve it." },
+  { tone: "green", chip: "Pricing",   icon: <ShieldCheck size={10} strokeWidth={1.8}/>, title: "GST is included in every quote",       body: "The price you approve is the price you pay — 18% GST is already built in, not added later." },
+  { tone: "muted", chip: "Sizing",    icon: <Ruler size={10} strokeWidth={1.8}/>,       title: "The bulk sizing survey",               body: "For 100+ pcs, we can share a simple size-collection sheet so every size lands right first time." },
+  { tone: "gold",  chip: "Payment",   icon: <Wallet size={10} strokeWidth={1.8}/>,      title: "One payment, after approval",          body: "Once your order is approved, it's a single full payment to start production — no advance/balance split." },
+];
 // Bottom "did you know / real talk" cards.
 const HOME_FACTS: { icon: React.ReactNode; lead: string; body: string }[] = [
   { icon: <Lightbulb size={14} strokeWidth={1.6}/>, lead: "Did you know?", body: "One cotton tee takes ~2,700 litres of water to make. Made-to-order (no overstock) is the greenest choice in fashion." },
   { icon: <Smile size={14} strokeWidth={1.6}/>,     lead: "Real talk:",    body: "“One size fits all” is the biggest lie in fashion. That's why we don't sell it." },
 ];
 
-function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCollection, onReorderPast, draftCount = 0, notifCount = 0, profile }: {
+function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCollection, onReorderPast, onManageAddresses, draftCount = 0, notifCount = 0, profile }: {
   onNavigate: (t: Tab, orderId?: string) => void;
   onBell: () => void;
   onDrafts: () => void;
@@ -788,6 +798,9 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   onQuickStart?: (intent: OrderIntent) => void;
   onOpenCollection?: (c: HomeCollection) => void;
   onReorderPast?: (order: HomePastOrder) => void;
+  // Organisation Home's "Delivery locations" shortcut — opens Account straight
+  // into the Delivery addresses sub-screen.
+  onManageAddresses?: () => void;
   draftCount?: number;
   notifCount?: number;
   profile?: UserProfile;
@@ -873,6 +886,27 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   // Persona-aware hero copy — individuals get warm, personal lines;
   // organisations get the procurement pitch.
   const personalHome = !profile?.accountType || profile.accountType === "personal";
+
+  // ── Organisation-only Home data — quotes awaiting approval, the account's
+  // coordinator, and how many delivery addresses are saved. Individuals never
+  // fetch these (no quote-approval flow, no coordinator card for them today).
+  const [pendingQuotes, setPendingQuotes] = useState<ApiQuote[]>([]);
+  const [coord, setCoord] = useState<Coordinator | null>(null);
+  const [addressCount, setAddressCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (personalHome) return;
+    let alive = true;
+    quotesApi.list()
+      .then(({ quotes }) => { if (alive) setPendingQuotes(quotes.filter(q => q.status === "pending")); })
+      .catch(() => { /* offline / cold — leave empty, not an error state */ });
+    coordinatorApi.get()
+      .then(({ coordinator }) => { if (alive) setCoord(coordinator); })
+      .catch(() => {});
+    accountApi.getAddresses()
+      .then(({ addresses }) => { if (alive) setAddressCount(addresses.length); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [personalHome]);
 
   // Live admin-managed Home content (admin portal → Settings → Garm App Home).
   // Falls back to the built-in defaults until the admin saves their own.
@@ -1093,6 +1127,39 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
         </div>
       )}
 
+      {/* ── Quotes awaiting approval — organisation only. Nothing goes into
+          production until the customer approves a quote, so this needs to be
+          impossible to miss on Home, not something you only see if you happen
+          to open that specific order in Track. ── */}
+      {!personalHome && pendingQuotes.length > 0 && (
+        <div className="mx-5 mb-5 rounded-2xl overflow-hidden" style={{ border: `1px solid ${ACCENT}`, background: ACCENT_BG }}>
+          <div className="px-4 pt-3.5 pb-2 flex items-center gap-2">
+            <Percent size={14} style={{ color: "#7c5419" }} strokeWidth={2}/>
+            <p style={{ fontSize: 12.5, fontWeight: 700, color: ACCENT_TEXT }}>
+              {pendingQuotes.length} quote{pendingQuotes.length !== 1 ? "s" : ""} awaiting your approval
+            </p>
+          </div>
+          <div className="px-4 pb-3.5 flex flex-col gap-2">
+            {pendingQuotes.slice(0, 3).map(q => {
+              const order = typeof q.orderId === "string" ? null : q.orderId;
+              const ref = order?.orderRef || order?._id?.slice(-6).toUpperCase();
+              const target = order?.orderRef ?? order?._id ?? (typeof q.orderId === "string" ? q.orderId : undefined);
+              return (
+                <button key={q._id} onClick={() => onNavigate("track", target)}
+                  className="w-full flex items-center justify-between rounded-xl px-3 py-2.5"
+                  style={{ background: "#fff", border: "none", cursor: "pointer" }}>
+                  <span className="text-left min-w-0">
+                    <span className="block text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{ref ? `#${ref}` : "Your order"}</span>
+                    <span className="block text-muted-foreground" style={{ fontSize: 11 }}>₹{Math.round(q.amount).toLocaleString("en-IN")} · Review & approve</span>
+                  </span>
+                  <ChevronRight size={14} style={{ color: ACCENT, flexShrink: 0 }} strokeWidth={1.5}/>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Stats row ── */}
       <div className="mx-5 mb-5 grid grid-cols-3 gap-2.5">
         {[
@@ -1107,6 +1174,153 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
           </div>
         ))}
       </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          ORGANISATION HOME — everything below this line is org-only. Mirrors
+          the individual sections above (quick-start, reorder, tips) with
+          procurement-appropriate content instead of retail content.
+          ══════════════════════════════════════════════════════════════════════ */}
+      {!personalHome && (
+        <>
+          {/* ── Quick order start — org accounts really only have two entry
+              points (garments vs accessories), so this is 2 tiles, not 4.
+              "Garments" jumps straight to the garment cart; "Accessories"
+              pre-selects that option one step earlier (item picking lives
+              there, so it can't be skipped). ── */}
+          <p className="px-5 mb-2.5 label-section">Start a bulk order</p>
+          <div className="mx-5 mb-5 grid grid-cols-2 gap-2.5">
+            {[
+              { label: "Garments", sub: (profile?.orgType && orgGarmentSub[profile.orgType as keyof typeof orgGarmentSub]) || "Uniforms, formal wear, sportswear & more", intent: "org_garments" as OrderIntent, Icon: Shirt, bg: "#FBF3E4" },
+              { label: "Accessories", sub: "Bottles, bags, ID cards & more", intent: "org_accessories" as OrderIntent, Icon: Gift, bg: "#E9F6EF" },
+            ].map(c => (
+              <button key={c.label} onClick={() => onQuickStart ? onQuickStart(c.intent) : onNavigate("order")}
+                className="text-left p-3.5 rounded-2xl" style={{ ...card, cursor: "pointer" }}>
+                <span className="mb-2 flex items-center justify-center rounded-xl" style={{ width: 36, height: 36, background: c.bg }}>
+                  <c.Icon size={17} strokeWidth={1.5} style={{ color: DARK }}/>
+                </span>
+                <span className="block text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{c.label}</span>
+                <span className="block text-muted-foreground mt-0.5" style={{ fontSize: 10.5, lineHeight: 1.4 }}>{c.sub}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* ── Bulk pricing nudge — real numbers from the live fee schedule,
+              not marketing copy. Only shown when there's an actual bulk slab
+              to earn (admin could set bulkPercent === b2bPercent). ── */}
+          {liveCfg.fee.bulkPercent < liveCfg.fee.b2bPercent && (
+            <div className="mx-5 mb-5 flex items-center gap-2.5 rounded-2xl px-3.5 py-3" style={{ background: "var(--muted)", border: "1px solid var(--border)" }}>
+              <Percent size={16} strokeWidth={1.5} className="text-muted-foreground flex-shrink-0"/>
+              <p className="text-muted-foreground" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+                <span className="text-foreground" style={{ fontWeight: 600 }}>Ordering {liveCfg.fee.bulkQtyThreshold}+ pcs?</span> Your service fee drops from {liveCfg.fee.b2bPercent}% to {liveCfg.fee.bulkPercent}% automatically — no code, no ask.
+              </p>
+            </div>
+          )}
+
+          {/* ── Delivery & documents — multi-site organisations (a school's
+              campuses, a hospital's wards, a corporate's branches) need more
+              than one saved address, and finance teams need to find invoices
+              without digging through chat. ── */}
+          <div className="mx-5 mb-5 flex flex-col gap-2.5">
+            <button onClick={onManageAddresses} className="w-full flex items-center gap-3 rounded-2xl px-3.5 py-3 text-left" style={{ ...card, cursor: "pointer" }}>
+              <span className="flex items-center justify-center rounded-xl flex-shrink-0" style={{ width: 36, height: 36, background: "var(--muted)" }}>
+                <MapPin size={16} strokeWidth={1.5} className="text-muted-foreground"/>
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>Delivery locations</span>
+                <span className="block text-muted-foreground" style={{ fontSize: 11 }}>{addressCount === null ? "Manage saved addresses" : addressCount === 0 ? "No addresses saved yet" : `${addressCount} saved`}</span>
+              </span>
+              <ChevronRight size={14} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5}/>
+            </button>
+            <button onClick={() => onNavigate("track")} className="w-full flex items-center gap-3 rounded-2xl px-3.5 py-3 text-left" style={{ ...card, cursor: "pointer" }}>
+              <span className="flex items-center justify-center rounded-xl flex-shrink-0" style={{ width: 36, height: 36, background: "var(--muted)" }}>
+                <Receipt size={16} strokeWidth={1.5} className="text-muted-foreground"/>
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>Invoices & documents</span>
+                <span className="block text-muted-foreground" style={{ fontSize: 11 }}>Quotes and invoices are attached to each order</span>
+              </span>
+              <ChevronRight size={14} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5}/>
+            </button>
+          </div>
+
+          {/* ── Your Garm coordinator — matches the hero's promise ("One
+              coordinator handles quotes, fabric, QA and delivery") with an
+              actual person to contact, sourced live from the admin portal. ── */}
+          {coord && (
+            <div className="mx-5 mb-5 rounded-2xl p-3.5" style={card}>
+              <div className="flex items-center gap-3 mb-3">
+                <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 38, height: 38, background: DARK, color: "#fff", fontSize: 14, fontWeight: 700 }}>
+                  {coord.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{coord.name}</p>
+                  <p className="text-muted-foreground" style={{ fontSize: 10.5, lineHeight: 1.4 }}>{coord.role || "Your Garm coordinator"}</p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                {coord.phone && (
+                  <a href={`tel:${coord.phone.replace(/[^\d+]/g, "")}`} className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2" style={{ background: "var(--muted)", fontSize: 11.5, fontWeight: 600, color: DARK, textDecoration: "none" }}>
+                    <Phone size={13} strokeWidth={1.8}/> Call
+                  </a>
+                )}
+                {coord.whatsapp && (
+                  <a href={`https://wa.me/${coord.whatsapp.replace(/[^\d+]/g, "").replace(/^\+/, "")}`} target="_blank" rel="noreferrer" className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2" style={{ background: "var(--muted)", fontSize: 11.5, fontWeight: 600, color: DARK, textDecoration: "none" }}>
+                    <MessageCircle size={13} strokeWidth={1.8}/> WhatsApp
+                  </a>
+                )}
+                {coord.email && (
+                  <a href={`mailto:${coord.email}`} className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2" style={{ background: "var(--muted)", fontSize: 11.5, fontWeight: 600, color: DARK, textDecoration: "none" }}>
+                    <Mail size={13} strokeWidth={1.8}/> Email
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── "Good to know" — procurement tips (how quotes work, GST,
+              bulk sizing survey, single-payment flow). Same rail pattern as
+              the individual "Good to know" strip further down. ── */}
+          <p className="px-5 mb-2.5 label-section">Good to know · procurement</p>
+          <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
+            {ORG_HOME_TIPS.map(t => (
+              <div key={t.title} className="rounded-2xl p-3.5 flex-shrink-0" style={{ ...card, width: 195 }}>
+                <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 mb-2"
+                  style={{
+                    fontSize: 8.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase",
+                    background: t.tone === "gold" ? ACCENT_BG : t.tone === "green" ? "#ECFDF5" : "var(--muted)",
+                    color:      t.tone === "gold" ? ACCENT_TEXT : t.tone === "green" ? "#047857" : "var(--muted-foreground)",
+                  }}>
+                  {t.icon}{t.chip}
+                </span>
+                <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35 }}>{t.title}</p>
+                <p className="text-muted-foreground mt-1" style={{ fontSize: 11, lineHeight: 1.55 }}>{t.body}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Reorder a past batch — same data Individual's "Order again"
+              rail uses (nothing org-specific was ever computed for it — it
+              was just hidden behind the personalHome gate below). ── */}
+          {pastOrders.length > 0 && (
+            <>
+              <p className="px-5 mb-2.5 label-section">Reorder a past batch</p>
+              <div className="flex gap-2.5 overflow-x-auto mb-5 px-5" style={{ scrollbarWidth: "none" }}>
+                {pastOrders.map(p => (
+                  <button key={p.ref} onClick={() => onReorderPast?.(p)}
+                    className="rounded-2xl p-3 flex-shrink-0 text-left" style={{ ...card, width: 150, cursor: "pointer" }}>
+                    <span className="flex items-center justify-center rounded-xl mb-2" style={{ width: 30, height: 30, background: "var(--muted)" }}>
+                      <RotateCcw size={14} strokeWidth={1.6} className="text-muted-foreground"/>
+                    </span>
+                    <p className="text-foreground" style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</p>
+                    <p className="text-muted-foreground" style={{ fontSize: 11 }}>{p.shade ? `${p.shade} · ` : ""}{p.ref}{p.qty ? ` · ${p.qty} pcs` : ""}</p>
+                    <p style={{ fontSize: 10.5, fontWeight: 700, color: ACCENT_TEXT, marginTop: 5 }}>Reorder this batch →</p>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {/* ── "What are we making today?" — quick entry tiles into the order flow ── */}
       {personalHome && (
@@ -2493,6 +2707,10 @@ export default function App() {
   const [orderEpoch, setOrderEpoch]           = useState(0);
   // Home-tile deep link: which exact screen the Order tab should open on next.
   const [orderIntent, setOrderIntent]         = useState<OrderIntent | null>(null);
+  // Same deep-link pattern, for the Account tab — e.g. organisation Home's
+  // "Delivery locations" shortcut opens straight into Delivery addresses
+  // instead of landing on the main Account menu.
+  const [accountScreenIntent, setAccountScreenIntent] = useState<AccountScreen | null>(null);
   // Size chart opened FROM HOME — shown right there as an overlay, never by
   // switching to the Order tab (that left whatever screen the tab was on
   // visible behind/after the chart).
@@ -3153,7 +3371,7 @@ export default function App() {
           <HelpSupportScreen onBack={() => setShowHelp(false)} onReplayTour={() => { setShowHelp(false); handleReplayTour(); }}/>
         ) : (
           <>
-            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} onQuickStart={(i) => { if (i === "sizeguide") { setShowSizeChart(true); } else { setOrderIntent(i); setActiveTab("order"); } }} onOpenCollection={handleOpenCollection} onReorderPast={handleReorderPast} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
+            {activeTab === "home"    && <HomeTab onNavigate={handleNavigate} onBell={() => setShowNotifications(true)} onDrafts={() => setShowDrafts(true)} onHelp={handleReplayTour} onQuickStart={(i) => { if (i === "sizeguide") { setShowSizeChart(true); } else { setOrderIntent(i); setActiveTab("order"); } }} onOpenCollection={handleOpenCollection} onReorderPast={handleReorderPast} onManageAddresses={() => { setAccountScreenIntent("delivery"); setActiveTab("account"); }} draftCount={drafts.length} notifCount={notifUnread} profile={userProfile}/>}
             {/* Order tab: mounted once, then kept alive (display:none) across tab
                 switches — tapping Home/Track/Account and coming back must land the
                 customer exactly where they left off, never on a wiped form. */}
@@ -3184,6 +3402,8 @@ export default function App() {
                 profile={userProfile}
                 onProfileUpdate={handleProfileUpdate}
                 onSignOut={handleSignOut}
+                initialScreen={accountScreenIntent ?? undefined}
+                onScreenConsumed={() => setAccountScreenIntent(null)}
                 onAddressesChange={(addrs) => {
                   // Keep the order flow's pre-filled delivery address in sync the
                   // moment the customer edits their address book — no restart needed.

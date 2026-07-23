@@ -3,8 +3,6 @@
  * All calls go through this module — swap BASE_URL for production.
  */
 
-import { Capacitor } from "@capacitor/core";
-
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
 
 // The Garm Admin Portal's backend — source of truth for the catalog
@@ -67,19 +65,10 @@ const del  = <T>(path: string) => request<T>("DELETE", path);
 
 function isDevOtpFallbackEnabled(): boolean {
   if (typeof window === 'undefined') return false;
-  // NEVER in the packaged native (iOS/Android) app. Capacitor serves the web
-  // bundle from `localhost`, which tripped the localhost check below — so on a
-  // real phone, ANY hiccup reaching the backend (Render cold-start, flaky
-  // network) silently minted a CLIENT-SIDE-ONLY session (dev-<ts> token) with no
-  // backend user. That "account" lived only in the phone's storage, so the SAME
-  // number signed up again on the web created a real account and looked like a
-  // duplicate. The native app must ALWAYS use the real backend so every account
-  // is real and shared across the phone and the web.
-  try { if (Capacitor.isNativePlatform()) return false; } catch { /* plain web — continue */ }
   const host = window.location.hostname.toLowerCase();
-  // Web local dev only. `github.io` was previously included, which meant the
-  // public GitHub Pages build minted a fake client-side session with no real
-  // backend — logins looked to work but nothing persisted. Opt in explicitly
+  // Local dev only. `github.io` was previously included, which meant the public
+  // GitHub Pages build minted a fake client-side session (dev-<ts> token) with no
+  // real backend — logins looked to work but nothing persisted. Opt in explicitly
   // with VITE_DEV_OTP=true for a hosted demo; never on by default off localhost.
   const explicit = import.meta.env.VITE_DEV_OTP === 'true';
   return explicit || host === 'localhost' || host === '127.0.0.1';
@@ -145,9 +134,10 @@ export const orders = {
   cancel: (id: string)      => del<{ success: boolean; order: Order }>(`/orders/${id}`),
   reorder:(id: string)      => post<{ order: Order }>(`/orders/${id}/reorder`),
   getQuote: (id: string)    => get<{ quote: Quote }>(`/orders/${id}/quote`),
-  // Payments. Individuals: one full payment after admin confirmation.
-  // Organisations: stage "advance" (unlocks production) then "balance"
-  // (after the QC report — unlocks shipping). Gates enforced server-side.
+  // Payments — one full payment for both personas, gated on each persona's own
+  // approval step (individual: admin confirms; organisation: quote approved).
+  // `stage` is accepted-but-ignored server-side, kept only so an older cached
+  // frontend build sending it doesn't break.
   pay: (id: string, mode: string, reference?: string, stage?: "advance" | "balance" | "full") =>
     post<{ order: Order }>(`/orders/${id}/pay`, { mode, reference, stage }),
   // Rate a delivered order (1–5) with optional feedback — stored on the order so
