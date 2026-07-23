@@ -6,7 +6,7 @@ import {
   MapPinned, Headphones, Star, Check, Navigation, FileText, Trash2,
   HelpCircle, X, Shirt, Wallet, Truck, RotateCcw,
   Users, Heart, Gift, Ruler, Palette, Droplets, Smile, Scissors, Lightbulb,
-  Percent, MessageCircle, Receipt, FolderOpen,
+  Percent, Receipt, FolderOpen,
 } from "lucide-react";
 import certArt from "@/assets/undraw_certification_garm.svg";
 import { NewOrderTab, SizeGuideModal, orgGarmentSub, type SubmittedOrderSummary, type OrderDraft, type DraftPayload, type OrderIntent } from "./components/NewOrderTab";
@@ -16,7 +16,7 @@ import { NotificationsScreen } from "./components/NotificationsScreen";
 import { fetchUnreadCount } from "../lib/notifCenter";
 import { playChime } from "../lib/notify";
 import { StageAnimation, stageFromLabel } from "./components/StageAnimation";
-import { auth as authApi, account as accountApi, orders as ordersApi, quotes as quotesApi, coordinator as coordinatorApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder, type Quote as ApiQuote, type Coordinator } from "../lib/api";
+import { auth as authApi, account as accountApi, orders as ordersApi, quotes as quotesApi, token as authToken, type UserProfile as ApiUserProfile, type Order as ApiOrder, type Quote as ApiQuote } from "../lib/api";
 import { readPendingOrders, writePendingOrders, rememberOrderSummary, flushPendingOrders, createOrderWithRetry, readOrderSummaries } from "../lib/orderSync";
 import { useOrderFormConfig } from "../lib/useOrderFormConfig";
 
@@ -898,24 +898,15 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   // organisations get the procurement pitch.
   const personalHome = !profile?.accountType || profile.accountType === "personal";
 
-  // ── Organisation-only Home data — quotes awaiting approval, the account's
-  // coordinator, and how many delivery addresses are saved. Individuals never
-  // fetch these (no quote-approval flow, no coordinator card for them today).
+  // ── Organisation-only Home data — quotes awaiting approval. Individuals
+  // never fetch these (no quote-approval flow).
   const [pendingQuotes, setPendingQuotes] = useState<ApiQuote[]>([]);
-  const [coord, setCoord] = useState<Coordinator | null>(null);
-  const [addressCount, setAddressCount] = useState<number | null>(null);
   useEffect(() => {
     if (personalHome) return;
     let alive = true;
     quotesApi.list()
       .then(({ quotes }) => { if (alive) setPendingQuotes(quotes.filter(q => q.status === "pending")); })
       .catch(() => { /* offline / cold — leave empty, not an error state */ });
-    coordinatorApi.get()
-      .then(({ coordinator }) => { if (alive) setCoord(coordinator); })
-      .catch(() => {});
-    accountApi.getAddresses()
-      .then(({ addresses }) => { if (alive) setAddressCount(addresses.length); })
-      .catch(() => {});
     return () => { alive = false; };
   }, [personalHome]);
 
@@ -1244,40 +1235,6 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
               list instead of an actual documents view. Removed from Home;
               both live in Account now as the single source of truth so
               there's nothing to go stale/duplicate here. ── */}
-
-          {/* ── Your Garm coordinator — matches the hero's promise ("One
-              coordinator handles quotes, fabric, QA and delivery") with an
-              actual person to contact, sourced live from the admin portal. ── */}
-          {coord && (
-            <div className="mx-5 mb-5 rounded-2xl p-3.5" style={card}>
-              <div className="flex items-center gap-3 mb-3">
-                <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 38, height: 38, background: DARK, color: "#fff", fontSize: 14, fontWeight: 700 }}>
-                  {coord.name.split(" ").map(n => n[0]).slice(0, 2).join("")}
-                </span>
-                <div className="min-w-0">
-                  <p className="text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>{coord.name}</p>
-                  <p className="text-muted-foreground" style={{ fontSize: 10.5, lineHeight: 1.4 }}>{coord.role || "Your Garm coordinator"}</p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                {coord.phone && (
-                  <a href={`tel:${coord.phone.replace(/[^\d+]/g, "")}`} className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2" style={{ background: "var(--muted)", fontSize: 11.5, fontWeight: 600, color: DARK, textDecoration: "none" }}>
-                    <Phone size={13} strokeWidth={1.8}/> Call
-                  </a>
-                )}
-                {coord.whatsapp && (
-                  <a href={`https://wa.me/${coord.whatsapp.replace(/[^\d+]/g, "").replace(/^\+/, "")}`} target="_blank" rel="noreferrer" className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2" style={{ background: "var(--muted)", fontSize: 11.5, fontWeight: 600, color: DARK, textDecoration: "none" }}>
-                    <MessageCircle size={13} strokeWidth={1.8}/> WhatsApp
-                  </a>
-                )}
-                {coord.email && (
-                  <a href={`mailto:${coord.email}`} className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2" style={{ background: "var(--muted)", fontSize: 11.5, fontWeight: 600, color: DARK, textDecoration: "none" }}>
-                    <Mail size={13} strokeWidth={1.8}/> Email
-                  </a>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* ── "Good to know" — procurement tips (how quotes work, GST,
               bulk sizing survey, single-payment flow). Same rail pattern as
