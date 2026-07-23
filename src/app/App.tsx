@@ -3248,6 +3248,22 @@ export default function App() {
   if (authStep === "welcome")     return phoneShell(<WelcomeScreen onDone={() => setAuthStep("login")}/>);
   if (authStep === "login")       return phoneShell(<LoginScreen onLogin={(identity, remoteProfile) => {
     setLoginIdentity(identity);
+    // A DIFFERENT account can sign in here without the previous one ever
+    // tapping "Sign out" (device just closed and reopened, or a shared/test
+    // device switching numbers) — the token-restore path skips this screen
+    // entirely, so this is the only chokepoint every fresh login passes
+    // through. Without this, Home/Track/Account's "instant render from cache"
+    // optimisation (fl_orders_cache, fl_addr_cache) would show the PREVIOUS
+    // signed-in customer's orders and addresses for real, until this
+    // customer's own fetch overwrote them a moment later — e.g. a bulk
+    // organisation order placed by one phone number briefly appearing under
+    // a completely different phone number's freshly-logged-in session.
+    // Mirrors the same three keys handleSignOut already clears.
+    try {
+      localStorage.removeItem("fl_wip");
+      localStorage.removeItem("fl_orders_cache");
+      localStorage.removeItem("fl_addr_cache");
+    } catch { /* ignore */ }
     if (remoteProfile) {
       // Real, backend-verified account (find-or-create already happened server-side
       // during OTP verification) — this replaces the old localStorage-only lookup.
