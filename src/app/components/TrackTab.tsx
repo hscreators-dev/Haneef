@@ -42,7 +42,7 @@ const btnAccent: React.CSSProperties = { ...btnPrimary, background: ACCENT };
 // ─── Types ────────────────────────────────────────────────────────────────────
 type StepStatus = "done" | "active" | "pending";
 interface TrackStep { label: string; sub: string; status: StepStatus; icon: React.ReactNode }
-type OrderStatus = "In production" | "Quality check" | "Shipped" | "Quote pending" | "Order placed" | "Order confirmed" | "Delivered" | "Completed" | "Cancelled";
+type OrderStatus = "Draft" | "In production" | "Quality check" | "Shipped" | "Quote pending" | "Order placed" | "Order confirmed" | "Delivered" | "Completed" | "Cancelled";
 
 interface OrderTrack {
   id: string; name: string; statusLabel: OrderStatus; statusColor: string;
@@ -258,6 +258,7 @@ const CHANGEABLE_STATUSES: OrderStatus[] = ["Order placed", "Quote pending"];
 
 // ─── Live order → OrderTrack mapping ─────────────────────────────────────────
 const STATUS_COLORS: Record<OrderStatus, string> = {
+  "Draft":           "text-stone-600 bg-stone-100",
   "Order placed":    "text-blue-700 bg-blue-50",
   "Order confirmed": "text-amber-700 bg-amber-50",
   "Quote pending":   "text-stone-600 bg-stone-100",
@@ -286,10 +287,11 @@ function fmtINR(n?: number): string | undefined {
   return typeof n === "number" && n > 0 ? `₹${n.toLocaleString("en-IN")}` : undefined;
 }
 
-// Organisations used to pay in two stages (advance then balance); that's been
-// unified to a single full payment, same as individuals — see PaymentMethodCard.
-// orgAdvancePct() is kept (still read by the unused PaymentMilestones panel
-// below) in case a staged-payment option comes back later.
+// Organisations pay in two stages: an advance (production starts), then the
+// balance after the QC report (shipping starts). The advance % is configured
+// in the admin portal (Settings → Order Form → Service Fee) and read live via
+// orgAdvancePct() — no hardcoded value.
+function orgAdvanceAmount(total?: number): number { return Math.round(((total ?? 0) * orgAdvancePct()) / 100); }
 
 // Builds a Track card from a real backend order, enriched with the rich
 // display summary saved locally at submit time (keyed by orderRef).
@@ -297,7 +299,7 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
   const summary = o.orderRef ? summaries[o.orderRef] : undefined;
   const statusLabel: OrderStatus = (o.adminStatus === "CANCELLED" || o.status === "Cancelled")
     ? "Cancelled"
-    : (((["In production","Quality check","Shipped","Quote pending","Order placed","Order confirmed","Delivered","Completed"] as OrderStatus[])
+    : (((["Draft","In production","Quality check","Shipped","Quote pending","Order placed","Order confirmed","Delivered","Completed"] as OrderStatus[])
         .includes(o.status as OrderStatus) ? o.status : "Order placed") as OrderStatus);
   const steps: TrackStep[] = (o.trackSteps || []).map((s) => ({
     label: s.label, sub: s.sub || "–",
@@ -332,25 +334,13 @@ function apiOrderToTrack(o: ApiOrder, summaries: Record<string, SubmittedOrderSu
       }))
     : [];
   const taxIncluded = goodsAmount ? Math.max(0, Math.round(goodsAmount - goodsAmount / 1.18)) : 0;
-  // Legacy safety net: orders placed BEFORE organisation service fees were
-  // actually computed (o.serviceFee missing) fall back to whatever was cached
-  // locally at submit time under this orderRef. Back then that cache could
-  // hold a POLICY DISCLAIMER ("8% (5% for 500+ pcs) — added in the final
-  // quote") rather than an actual amount — never a real fee, just a note that
-  // one would be added later. Showing that text as if it were the fee value is
-  // wrong (and, being long free text where a short ₹amount is expected, is
-  // also what breaks the row's layout). Only trust the cached line when it
-  // genuinely looks like a monetary value; otherwise omit the row rather than
-  // show a stale disclaimer as fact.
-  const cachedFeeLine = summary?.price?.serviceFeeLine;
-  const cachedFeeLineIsAmount = !!cachedFeeLine && /^₹[\d,]/.test(cachedFeeLine);
   const livePrice: OrderPrice | undefined = o._id
     ? {
         kind: "fixed",
         rateLine: o.qty && goodsAmount ? `${fmtINR(Math.round(goodsAmount / o.qty))}/pc × ${o.qty} pcs` : (summary?.price?.rateLine ?? "—"),
         items: lineItems.length > 0 ? lineItems : summary?.price?.items,
         taxLine: taxIncluded > 0 ? `${fmtINR(taxIncluded)} — included in prices` : summary?.price?.taxLine,
-        serviceFeeLine: o.serviceFee ? fmtINR(o.serviceFee) : (cachedFeeLineIsAmount ? cachedFeeLine : undefined),
+        serviceFeeLine: o.serviceFee ? fmtINR(o.serviceFee) : summary?.price?.serviceFeeLine,
         totalLabel: isPaid ? "Total paid" : "Total payable",
         totalValue: fmtINR(amount) ?? summary?.price?.totalValue ?? "—",
         note: summary?.price?.note,
@@ -509,24 +499,15 @@ function DetailRow({ label, value, accent }: { label: string; value: React.React
   );
 }
 
-// A price-breakdown row: the LABEL is normally the long part (product · style ·
-// size · colour · qty) and the value (₹…) is normally short, so by default the
-// label wraps and the value stays pinned on the right. BUT the value isn't
-// always guaranteed to be short (e.g. a stale/legacy fee description can slip
-// through as a value) — if it were only the label's width being squeezed to
-// fit whatever's left, an unexpectedly long value forces the label into a
-// sliver so narrow that even single words get broken letter-by-letter. Both
-// sides now keep a floor (label >= 35% of the row) and the value is allowed to
-// wrap onto its own line too, so a too-long value degrades to wrapped text
-// instead of destroying the label next to it. (DetailRow does the opposite —
-// for short labels.)
+// A price-breakdown row: the LABEL is the long part (product · style · size ·
+// colour · qty), so it must be allowed to wrap; the value (₹…) stays pinned on
+// the right and never wraps. (DetailRow does the opposite — for short labels.)
 function PriceLine({ label, value, accent }: { label: string; value: React.ReactNode; accent?: boolean }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-muted-foreground"
-        style={{ fontSize: 12, flex: "1 1 auto", minWidth: "35%", overflowWrap: "break-word", wordBreak: "normal", lineHeight: 1.4 }}>{label}</span>
+      <span className="text-muted-foreground" style={{ fontSize: 12, minWidth: 0, wordBreak: "break-word", lineHeight: 1.4 }}>{label}</span>
       <span className={accent ? "text-emerald-700" : "text-foreground"}
-        style={{ fontSize: 12, fontWeight: accent ? 700 : 500, flex: "0 1 auto", maxWidth: "65%", textAlign: "right", whiteSpace: "normal", overflowWrap: "break-word", lineHeight: 1.4 }}>{value}</span>
+        style={{ fontSize: 12, fontWeight: accent ? 700 : 500, flexShrink: 0, whiteSpace: "nowrap" }}>{value}</span>
     </div>
   );
 }
@@ -547,19 +528,20 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
   const isOrg = accountType !== "personal";
   const isLive = !!order.apiId;
 
-  // ── Both personas: confirm/approve-then-pay-in-full ──
-  // Unified — no advance/balance staging for organisations anymore. Payment is
-  // LOCKED until each persona's own approval gate clears (individuals: admin
-  // moves them past adminStatus "NEW"; organisations: their quote is approved
-  // and priced, order.totalAmount > 0 — orgs never use adminStatus CONFIRMED,
-  // see backend/src/models/Order.ts). Once cleared, it's ONE full payment —
-  // same as individuals — not a staged advance/balance split.
+  // ── Individuals: the confirm-then-pay flow ──
+  // Submitted (adminStatus NEW, or a local just-submitted card that hasn't
+  // synced yet): payment is LOCKED until the admin confirms. Confirmed: pay
+  // the confirmed amount here. Paid: locked, shows the receipt info.
   const isUnconfirmedStage  = order.statusLabel === "Order placed" || order.statusLabel === "Quote pending";
-  const liveAwaitingConfirm = isLive
-    ? (isOrg ? !((order.totalAmount ?? 0) > 0) : (order.adminStatus === "NEW" || !order.adminStatus))
-    : isUnconfirmedStage;
-  const livePaid   = isLive && order.livePaymentStatus === "paid";
-  const liveCanPay = isLive && !livePaid && !liveAwaitingConfirm && order.statusLabel !== "Completed";
+  const liveAwaitingConfirm = !isOrg && (isLive ? (order.adminStatus === "NEW" || !order.adminStatus) : isUnconfirmedStage);
+  const livePaid            = isLive && order.livePaymentStatus === "paid";
+  const liveCanPay          = isLive && !isOrg && !livePaid && !liveAwaitingConfirm && order.statusLabel !== "Completed";
+  // ── Organisations, LIVE orders: advance → balance ──
+  const orgQuoted     = isLive && isOrg && (order.totalAmount ?? 0) > 0;
+  const orgAdvanceDue = orgQuoted && !livePaid && order.livePaymentStatus !== "partial";
+  const orgBalanceDue = orgQuoted && !livePaid && order.livePaymentStatus === "partial";
+  const orgPayAmount  = orgAdvanceDue ? orgAdvanceAmount(order.totalAmount) : (order.totalAmount ?? 0) - orgAdvanceAmount(order.totalAmount);
+  const orgStage: "advance" | "balance" = orgAdvanceDue ? "advance" : "balance";
   // Paid is NEVER assumed: live orders use the real paymentStatus; non-live
   // demo orders only count as paid once they're past the confirmation stage.
   const paid = isLive ? livePaid : isOrg ? (statusPaid || !!paidOverride) : !isUnconfirmedStage;
@@ -568,7 +550,7 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
     if (!onPayLive) return;
     setPaying(true); setPayError("");
     try {
-      await onPayLive(modeLabel);
+      await onPayLive(modeLabel, isOrg ? orgStage : undefined);
       setShowPay(false);
     } catch (e) {
       setPayError((e as Error).message || "Payment failed — try again");
@@ -601,7 +583,7 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
       <p className="text-foreground" style={{ fontSize: 13 }}>
         Payment status:{" "}
         <span style={{ fontWeight: 600, color: paid ? "#059669" : "#D97706" }}>
-          {paid ? "Paid" : liveAwaitingConfirm ? "Locked" : "Pending"}
+          {paid ? "Paid" : liveAwaitingConfirm ? "Locked" : orgBalanceDue ? "Advance paid · balance due" : orgAdvanceDue ? "Advance due" : "Pending"}
         </span>
         {paid && order.paymentDate ? <span className="text-muted-foreground" style={{ fontWeight: 400 }}> · {order.paymentDate}</span> : null}
       </p>
@@ -609,27 +591,17 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
         <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2 }}>Ref: {order.paymentReference}</p>
       )}
 
-      {/* ── Waiting for approval (both personas) ──
-          Individuals: waiting for admin to confirm. Organisations: waiting for
-          their quote to be approved and priced. Either way, payment is locked
-          until then — no partial charge can happen before this clears. */}
+      {/* ── Individuals, live order: waiting for admin confirmation ── */}
       {liveAwaitingConfirm && (
         <div className="mt-3 rounded-xl px-3 py-2.5" style={{ background: ACCENT_BG, border: `1px solid ${ACCENT}` }}>
-          <p style={{ fontSize: 12, fontWeight: 600, color: ACCENT_TEXT }}>
-            {isOrg ? "Waiting for Garm to approve your quote" : "Waiting for Garm to confirm your order"}
-          </p>
+          <p style={{ fontSize: 12, fontWeight: 600, color: ACCENT_TEXT }}>Waiting for Garm to confirm your order</p>
           <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.5 }}>
-            {isOrg
-              ? "Once your quote is approved you'll see the final price here and can pay the full amount — production starts right after payment."
-              : "Once your order is confirmed you'll see the final price here and can pay — production starts right after payment."}
+            Once your order is confirmed you'll see the final price here and can pay — production starts right after payment.
           </p>
         </div>
       )}
 
-      {/* ── Approved — pay in full (both personas) ──
-          Single full payment once, no advance/balance split. Once approved,
-          the order can no longer be cancelled from here either (see the
-          backend cancel gate) — approval is the hard line, not payment. */}
+      {/* ── Individuals, live order: confirmed — pay now ── */}
       {liveCanPay && !showPay && (
         <button onClick={() => setShowPay(true)}
           className="w-full mt-3 py-2.5 rounded-xl"
@@ -638,7 +610,18 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
         </button>
       )}
 
-      {((isOrg && !isLive && !paid) || liveCanPay) && showPay && (
+      {/* ── Organisations, live order: advance then balance ── */}
+      {(orgAdvanceDue || orgBalanceDue) && !showPay && (
+        <button onClick={() => setShowPay(true)}
+          className="w-full mt-3 py-2.5 rounded-xl"
+          style={{ background: DARK, color: "#fff", fontWeight: 600, fontSize: 13, border: "none", cursor: "pointer" }}>
+          {orgAdvanceDue
+            ? `Pay advance ${fmtINR(orgPayAmount)} (${orgAdvancePct()}%) — production starts after this`
+            : `Pay balance ${fmtINR(orgPayAmount)} — shipping starts after this`}
+        </button>
+      )}
+
+      {((isOrg && !isLive && !paid) || liveCanPay || orgAdvanceDue || orgBalanceDue) && showPay && (
         <div className="mt-3 rounded-xl border border-border p-3">
           <p style={{ fontSize: 12, fontWeight: 600, color: DARK, marginBottom: 8 }}>Choose a payment method</p>
           {([["upi", "UPI", "Google Pay, PhonePe, Paytm & more"], ["card", "Card", "Credit or debit card"]] as const).map(([id, lbl, sub]) => {
@@ -705,12 +688,12 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
             onClick={() => {
               if (!canPay || paying) return;
               const modeLabel = method === "upi" ? "UPI" : "Card";
-              if (liveCanPay) payNow(modeLabel);
+              if (liveCanPay || orgAdvanceDue || orgBalanceDue) payNow(modeLabel);
               else { onMarkPaid?.(); setShowPay(false); }
             }}
             disabled={!canPay || paying}
             className="w-full mt-2.5 py-2.5 rounded-xl" style={{ background: canPay && !paying ? DARK : "#E5E7EB", color: canPay && !paying ? "#fff" : "#9CA3AF", fontWeight: 600, fontSize: 13, border: "none", cursor: canPay && !paying ? "pointer" : "not-allowed" }}>
-            {paying ? "Processing…" : `Pay ${fmtINR(order.totalAmount) ?? order.price?.totalValue ?? "now"} by ${method === "upi" ? "UPI" : "card"}`}
+            {paying ? "Processing…" : `Pay ${(orgAdvanceDue || orgBalanceDue) ? fmtINR(orgPayAmount) : (fmtINR(order.totalAmount) ?? order.price?.totalValue ?? "now")} by ${method === "upi" ? "UPI" : "card"}`}
           </button>
           {payError && <p style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>{payError}</p>}
           <p style={{ fontSize: 10, color: "#9ca3af", marginTop: 6, lineHeight: 1.5 }}>Demo checkout — no real charge is made. CVV is never stored.</p>
@@ -1074,23 +1057,28 @@ function SampleApprovalCard({ order }: { order: OrderTrack }) {
   const [decision, setDecision] = useState<"approved" | "changes" | null>(null);
 
   const firstLine = order.garmentLines?.[0];
+  const fabricText = firstLine?.fabric || order.fabric || "Not specified";
 
-  // Only the COLOUR is approved on a Garm sample. Fabric and logo/upload aren't
-  // things the customer signs off here (fabric is fixed at order time; the logo
-  // proof lives in Documents), so they're not shown as approval swatches.
-  const colorList = (order.colorList && order.colorList.length
-    ? order.colorList
-    : (firstLine ? [{ hex: firstLine.colorHex, label: firstLine.colorLabel }] : []))
-    .filter((c) => c && (c.label || c.hex));
-  const swatches: { label: string; value: string; color: string }[] = colorList.length
-    ? colorList.map((c) => ({ label: "Colour", value: c.label || "Selected colour", color: c.hex || "#D1D5DB" }))
-    : [{ label: "Colour", value: order.colors || "Not selected", color: "#D1D5DB" }];
+  const colorEntry = order.colorList?.[0] ?? (firstLine ? { hex: firstLine.colorHex, label: firstLine.colorLabel } : undefined);
+  const colorLabel = colorEntry?.label || order.colors || "Not selected";
+  const colorHex = colorEntry?.hex || "#D1D5DB"; // neutral grey when nothing was actually chosen
+
+  const refMethod = firstLine?.referenceMethod ?? order.referenceMethod;
+  const refFiles = firstLine?.referenceFiles ?? order.referenceFiles ?? 0;
+  const hasLogo = !!refMethod || refFiles > 0;
+  const logoLabel = hasLogo ? (refMethod || `${refFiles} file${refFiles !== 1 ? "s" : ""} uploaded`) : "Not added";
+
+  const swatches: { label: string; value: string; color: string }[] = [
+    { label: "Fabric", value: fabricText,  color: "#1f2f46" },
+    { label: "Color",  value: colorLabel,  color: colorHex },
+    { label: "Logo",   value: logoLabel,   color: hasLogo ? ACCENT : "#D1D5DB" },
+  ];
 
   return (
     <Panel title="Sample approval" icon={<Palette size={14} strokeWidth={1.5}/>}>
-      <div className={`grid gap-2 mb-3 ${swatches.length >= 3 ? "grid-cols-3" : swatches.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
-        {swatches.map((sw, i) => (
-          <div key={i} className="rounded-xl border border-border overflow-hidden bg-muted">
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        {swatches.map(sw => (
+          <div key={sw.label} className="rounded-xl border border-border overflow-hidden bg-muted">
             <div className="h-10" style={{ background: sw.color }}/>
             <div className="text-center py-1.5 px-1">
               <p className="text-muted-foreground" style={{ fontSize: 9, lineHeight: 1.3 }}>{sw.label}</p>
@@ -1650,21 +1638,13 @@ function OrderCard({ order, accountType, onMessage, onReorder, onEditOrder, paid
             </div>
           ) : (
             <div className="pt-3">
-              {/* Stage animation — scene follows the order's current stage.
-                  Pick the furthest-progressed step: the active one if any, else
-                  the LAST done step (a just-placed / quote-pending order has
-                  "Order placed" done and the rest pending — no active step — and
-                  must NOT fall through to the "delivered" scene). Only show the
-                  delivered scene when every step is actually done. */}
+              {/* Stage animation — scene follows the order's current stage */}
               <div className="mb-4">
-                <StageAnimation stage={(() => {
-                  const active = order.steps.find(s => s.status === "active");
-                  if (active) return stageFromLabel(active.label);
-                  if (order.steps.length && order.steps.every(s => s.status === "done")) return "delivered";
-                  let lastDone = -1;
-                  order.steps.forEach((s, i) => { if (s.status === "done") lastDone = i; });
-                  return stageFromLabel(order.steps[Math.max(0, lastDone)]?.label ?? "Order placed");
-                })() as OrderStage}/>
+                <StageAnimation stage={
+                  (order.steps.find(s => s.status === "active")
+                    ? stageFromLabel(order.steps.find(s => s.status === "active")!.label)
+                    : "delivered") as OrderStage
+                }/>
               </div>
 
               {/* Timeline steps */}

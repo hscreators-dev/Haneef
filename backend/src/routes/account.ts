@@ -1,7 +1,7 @@
 import { Router, Response, NextFunction } from "express";
 import mongoose from "mongoose";
 import { z } from "zod";
-import { User, canonPhone } from "../models/User";
+import { User } from "../models/User";
 import { requireAuth, AuthRequest } from "../middleware/auth";
 import { httpError } from "../middleware/error";
 
@@ -51,11 +51,28 @@ router.put("/profile", async (req: AuthRequest, res: Response, next: NextFunctio
     const update = Object.fromEntries(
       Object.entries(data).filter(([, v]) => v !== undefined)
     );
-    // Force the phone into canonical "+91XXXXXXXXXX" form BEFORE it is written.
-    // The app sends the pretty display value ("+91 99440 05331"); persisting that
-    // spaced string is exactly what used to overwrite the clean number and split
-    // the account in two on the next login. Never trust the client's format.
-    if (typeof update.phone === "string") update.phone = canonPhone(update.phone);
+
+    // Once onboarding is complete, accountType/orgType are locked. They drive
+    // persona-specific business logic throughout the app (pricing, order status
+    // vocabulary, the whole quote-vs-direct-order flow) — letting a fully
+    // onboarded user silently relabel themselves personal<->organisation via
+    // this endpoint would switch their future orders onto a different flow
+    // without ever going back through onboarding. Only the original
+    // onboarding-time PUT (while onboardingComplete is still false) may set
+    // these freely, same as today — and resubmitting the SAME value (e.g. the
+    // frontend re-PUTting the full profile on an unrelated field edit) is still
+    // allowed since nothing is actually changing.
+    const existing = await User.findById(req.userId).select("onboardingComplete accountType orgType");
+    if (!existing) return next(httpError("User not found", 404));
+    if (existing.onboardingComplete) {
+      const locked = (["accountType", "orgType"] as const).find(
+        (key) => key in update && update[key] !== existing[key]
+      );
+      if (locked) {
+        return next(httpError(`${locked} can't be changed after onboarding — contact support if this needs to change`, 403));
+      }
+    }
+
     const user = await User.findByIdAndUpdate(
       req.userId,
       { $set: update },

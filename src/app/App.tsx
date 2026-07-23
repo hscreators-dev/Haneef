@@ -643,7 +643,7 @@ interface HomePastOrder {
 }
 
 const HOME_STATUS_PCT: Record<string, number> = {
-  "Order placed": 8, "Order submitted": 8, "Quote pending": 15, "Quote ready": 20, "Order confirmed": 30,
+  "Order placed": 8, "Order submitted": 8, "Quote pending": 15, "Order confirmed": 30,
   "In production": 55, "Quality check": 78, "Shipped": 92, "Delivered": 100, "Completed": 100,
 };
 
@@ -660,6 +660,17 @@ function apiOrderToHomeCard(o: ApiOrder): HomeOrderCard {
     && o.paymentStatus !== "paid"
     && (o.adminStatus === "CONFIRMED" || o.status === "Order confirmed")
     && payAmount > 0;
+  // Organisation "Order placed" only happens once a quote is approved (see
+  // quotes.ts's /approve handler) — much further along than the individual
+  // "just submitted" meaning of the same status string, so it needs its own,
+  // higher percentage instead of sharing the generic 8% default. Likewise a
+  // shared-but-unapproved quote (quoteReady) is further than the plain
+  // "Quote pending" 15% even though the backend status hasn't changed yet.
+  const pct = o.persona === "organisation" && o.status === "Order placed"
+    ? 40
+    : quoteReady
+      ? 20
+      : (HOME_STATUS_PCT[o.status] ?? 10);
   return {
     id: o.orderRef ? `#${o.orderRef}` : (o._id ? `#${o._id.slice(-6)}` : "#—"),
     orderId: o.orderRef || o._id,
@@ -670,7 +681,7 @@ function apiOrderToHomeCard(o: ApiOrder): HomeOrderCard {
     // "Arriving in 3 days" beats "ETA 2026-07-20" — countdowns are felt, dates are read.
     eta: o.etaDate ? (etaCountdown(o.etaDate) ?? `ETA ${o.etaDate}`) : "",
     status: o.status,
-    pct: HOME_STATUS_PCT[o.status] ?? 10,
+    pct,
     quoteReady,
     quoteText: (o.quoteAmount ?? 0) > 0 ? `Quote ready — ₹${Math.round(o.quoteAmount!).toLocaleString("en-IN")}` : "Quote ready",
     needsPayment,
@@ -929,11 +940,21 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
   const trackStages = personalHome
     ? ["Submitted", "Confirmed", "Production", "QC", "Shipped", "Delivered"]
     : ["Review", "Quote", "Approve", "Production", "QC", "Shipped", "Delivered"];
+  // Org "Order placed" only ever happens via an approved quote (see quotes.ts's
+  // /approve handler) — it means production is starting, not "just submitted".
+  // Previously mapped to 0, so approving a quote made the tracker regress all
+  // the way back to "Review" instead of advancing to "Production".
   const statusToStage: Record<string, number> = personalHome
     ? { "Order placed": 0, "Order submitted": 0, "Order confirmed": 1, "In production": 2, "Quality check": 3, "Shipped": 4, "Delivered": 5, "Completed": 5 }
-    : { "Order placed": 0, "Order submitted": 0, "Order confirmed": 1, "Quote pending": 1, "Quote ready": 2, "In production": 3, "Quality check": 4, "Shipped": 5, "Delivered": 6, "Completed": 6 };
+    : { "Order placed": 3, "Order submitted": 0, "Order confirmed": 1, "Quote pending": 1, "In production": 3, "Quality check": 4, "Shipped": 5, "Delivered": 6, "Completed": 6 };
   const activeOrder = homeOrders[0] ?? null;
-  const curStage = activeOrder ? (statusToStage[activeOrder.status] ?? 0) : 0;
+  // A shared-but-unapproved quote is still backend status "Quote pending" (only
+  // quoteAmount changed), so the map alone can't tell it apart from "no quote
+  // yet" — without this override it stayed stuck on "Quote" and never showed
+  // "Approve", even though approval is exactly the action waiting on the customer.
+  const curStage = activeOrder
+    ? (!personalHome && activeOrder.quoteReady ? 2 : (statusToStage[activeOrder.status] ?? 0))
+    : 0;
   const hero = personalHome
     ? {
         eyebrow: "Garm · Made to order",
