@@ -280,14 +280,18 @@ router.post("/:id/pay", async (req: AuthRequest, res: Response, next: NextFuncti
       }
     } else {
       // ── Organisation: advance then balance ──
-      // quoteApprovedAt is set ONLY by quotes.ts's /approve handler, atomically
-      // with the admin-issued quote.amount — unlike total/quoteAmount, nothing
-      // client-supplied can set it. The old (!order.total && !order.quoteAmount)
-      // check could be satisfied entirely by client-supplied creation data,
-      // letting a customer self-issue a price and unlock payment with no admin
-      // ever involved.
-      if (!order.quoteApprovedAt) {
-        return next(httpError("Your quote isn't approved yet — payment unlocks once you approve the quote Garm shared", 400));
+      // Gate on adminStatus, exactly like the individual flow above —
+      // adminStatus is admin-only (never client-settable from this app's own
+      // PATCH /orders/:id route), so this can't be satisfied by a customer
+      // self-issuing a price. Previously this required order.quoteApprovedAt
+      // (set only by quotes.ts's /approve handler), which is a SEPARATE
+      // customer "approve this quote" step the Track screen's Pay button
+      // never actually gated on — so Pay looked enabled the moment the admin
+      // set a total, then failed here with "quote isn't approved yet". Now
+      // both the button and this check agree: payment unlocks once Garm
+      // confirms, same as Individuals.
+      if (order.adminStatus === "NEW" || !order.adminStatus) {
+        return next(httpError("Your order hasn't been confirmed yet — payment unlocks once Garm confirms it", 400));
       }
       const isAdvance = order.paymentStatus !== "partial" && stage !== "balance" && stage !== "full";
       if (isAdvance) {

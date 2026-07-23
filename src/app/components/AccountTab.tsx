@@ -17,6 +17,7 @@ import {
   type SupportTicket,
   type Coordinator,
   type Order as ApiOrder,
+  type OrderDocument as ApiOrderDocument,
 } from "../../lib/api";
 
 const ACCENT      = "#C8A97E";
@@ -54,7 +55,7 @@ export type UserProfile = { name: string; avatar: string | null; accountType?: "
 
 export type Screen =
   | "main" | "profile" | "business" | "delivery" | "payment"
-  | "order_history" | "order_detail" | "tech_packs"
+  | "order_history" | "order_detail" | "tech_packs" | "documents"
   | "notifications_settings" | "security" | "two_fa_setup"
   | "help_support" | "faq" | "terms" | "payment_gateway" | "privacy";
 
@@ -1324,6 +1325,73 @@ function OrderHistory({ onBack, onReorder }: { onBack: () => void; onReorder: (i
   );
 }
 
+const DOC_KIND_LABELS: Record<string, string> = {
+  INVOICE: "Invoice", QUOTATION: "Quotation", BILLING: "Billing", DESIGN: "Design reference", OTHER: "Document",
+};
+function downloadOrderDoc(dataUrl: string, name: string) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = name;
+  a.click();
+}
+
+// ─── Invoices & documents — consolidated across every order ───────────────────
+// The Organisation Home screen used to link "Invoices & documents" straight
+// into Track (the generic order list), which isn't a documents view at all —
+// the customer had to open each order individually to find its attachments.
+// This screen pulls every order's documents (admin-sent invoices/quotations/
+// billing, plus the customer's own design uploads) into one place, newest
+// first, so it belongs in Account like the rest of the account-wide screens.
+interface DocRow { doc: ApiOrderDocument; orderRef: string; orderId?: string }
+function DocumentsScreen({ onBack }: { onBack: () => void }) {
+  const [rows, setRows] = useState<DocRow[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    ordersApi.list()
+      .then(({ orders }) => {
+        if (!alive) return;
+        const all: DocRow[] = orders.flatMap((o) =>
+          (o.documents ?? [])
+            .filter((d) => d.visible !== false) // hidden admin drafts stay hidden
+            .map((d) => ({ doc: d, orderRef: o.orderRef || `#${(o._id || "").slice(-6).toUpperCase()}`, orderId: o._id }))
+        ).sort((a, b) => Date.parse(b.doc.createdAt || "") - Date.parse(a.doc.createdAt || ""));
+        setRows(all);
+      })
+      .catch(() => { if (alive) setRows([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const list = rows ?? [];
+  return (
+    <SubScreen title="Invoices & documents" sub={rows === null ? "Loading…" : `${list.length} document${list.length === 1 ? "" : "s"} across your orders`} onBack={onBack}>
+      {rows !== null && list.length === 0 && (
+        <div className="text-center py-12">
+          <FileText size={28} className="text-muted-foreground mx-auto mb-3" strokeWidth={1.5}/>
+          <p className="text-foreground text-sm" style={{ fontWeight: 500 }}>No documents yet</p>
+          <p className="text-muted-foreground" style={{ fontSize: 12, marginTop: 2 }}>Quotes, invoices and billing docs will appear here once Garm shares them</p>
+        </div>
+      )}
+      {list.map((r, i) => (
+        <button key={r.doc._id ?? i} onClick={() => downloadOrderDoc(r.doc.dataUrl, r.doc.name)}
+          className="w-full bg-card border border-border rounded-2xl p-4 mb-2.5 flex items-center gap-3 text-left"
+          style={{ cursor: "pointer" }}>
+          <span className="flex items-center justify-center rounded-xl flex-shrink-0" style={{ width: 36, height: 36, background: "var(--muted)" }}>
+            <FileText size={16} strokeWidth={1.5} className="text-muted-foreground"/>
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-foreground" style={{ fontSize: 12.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.doc.name}</span>
+            <span className="block text-muted-foreground" style={{ fontSize: 11 }}>
+              {DOC_KIND_LABELS[r.doc.kind] ?? r.doc.kind}{r.doc.uploadedBy === "admin" ? " from Garm" : ""} · {r.orderRef}
+            </span>
+          </span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#7c5419", flexShrink: 0 }}>Download</span>
+        </button>
+      ))}
+    </SubScreen>
+  );
+}
+
 const TICKET_STATUS_LABEL: Record<string, { label: string; color: string; bg: string }> = {
   OPEN:        { label: "Open",        color: "#1a4a8a", bg: "#e3f2fd" },
   IN_PROGRESS: { label: "In progress", color: "#7c5419", bg: ACCENT_BG },
@@ -1810,6 +1878,7 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut, on
   if (screen === "two_fa_setup")          return <TwoFASetup onBack={() => setScreen("security")} onComplete={() => { onProfileUpdate?.({ ...profile, name: displayName, avatar: displayAvatar, twoFAEnabled: true }); setScreen("security"); }}/>;
   if (screen === "notifications_settings") return <NotificationsSettings onBack={() => setScreen("main")}/>;
   if (screen === "order_history")         return <OrderHistory onBack={() => setScreen("main")} onReorder={handleReorder}/>;
+  if (screen === "documents")             return <DocumentsScreen onBack={() => setScreen("main")}/>;
   if (screen === "payment")               return <PaymentBillingScreen onBack={() => setScreen("main")}/>;
   if (screen === "help_support")          return <HelpSupportScreen isOrg={isOrg} onBack={() => setScreen("main")}/>;
   if (screen === "faq")                   return <FAQScreen isOrg={isOrg} orgType={profile?.orgType} onBack={() => setScreen("main")}/>;
@@ -1842,6 +1911,7 @@ export function AccountTab({ onNavigate, profile, onProfileUpdate, onSignOut, on
     ],
     [
       { icon:<Clock     size={16} strokeWidth={1.5}/>, label:"Order history",        s:"order_history"         as Screen },
+      { icon:<Receipt   size={16} strokeWidth={1.5}/>, label:"Invoices & documents", s:"documents"             as Screen },
       { icon:<BookOpen  size={16} strokeWidth={1.5}/>, label:"My tech packs",        s:"tech_packs"            as Screen },
     ],
     [

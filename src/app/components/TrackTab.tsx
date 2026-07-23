@@ -528,16 +528,20 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
   const isOrg = accountType !== "personal";
   const isLive = !!order.apiId;
 
-  // ── Individuals: the confirm-then-pay flow ──
+  // ── Both personas: the confirm-then-pay flow ──
   // Submitted (adminStatus NEW, or a local just-submitted card that hasn't
   // synced yet): payment is LOCKED until the admin confirms. Confirmed: pay
   // the confirmed amount here. Paid: locked, shows the receipt info.
+  // Organisations used to be exempt from this check (only gated on
+  // order.totalAmount > 0), so a leftover/estimated total on the order made
+  // Pay look enabled before the admin had actually confirmed anything —
+  // now both personas share the exact same gate.
   const isUnconfirmedStage  = order.statusLabel === "Order placed" || order.statusLabel === "Quote pending";
-  const liveAwaitingConfirm = !isOrg && (isLive ? (order.adminStatus === "NEW" || !order.adminStatus) : isUnconfirmedStage);
+  const liveAwaitingConfirm = isLive ? (order.adminStatus === "NEW" || !order.adminStatus) : isUnconfirmedStage;
   const livePaid            = isLive && order.livePaymentStatus === "paid";
   const liveCanPay          = isLive && !isOrg && !livePaid && !liveAwaitingConfirm && order.statusLabel !== "Completed";
-  // ── Organisations, LIVE orders: advance → balance ──
-  const orgQuoted     = isLive && isOrg && (order.totalAmount ?? 0) > 0;
+  // ── Organisations, LIVE orders: advance → balance (only once confirmed) ──
+  const orgQuoted     = isLive && isOrg && !liveAwaitingConfirm && (order.totalAmount ?? 0) > 0;
   const orgAdvanceDue = orgQuoted && !livePaid && order.livePaymentStatus !== "partial";
   const orgBalanceDue = orgQuoted && !livePaid && order.livePaymentStatus === "partial";
   const orgPayAmount  = orgAdvanceDue ? orgAdvanceAmount(order.totalAmount) : (order.totalAmount ?? 0) - orgAdvanceAmount(order.totalAmount);
@@ -596,7 +600,9 @@ function PaymentMethodCard({ order, accountType, paidOverride, onMarkPaid, onPay
         <div className="mt-3 rounded-xl px-3 py-2.5" style={{ background: ACCENT_BG, border: `1px solid ${ACCENT}` }}>
           <p style={{ fontSize: 12, fontWeight: 600, color: ACCENT_TEXT }}>Waiting for Garm to confirm your order</p>
           <p className="text-muted-foreground" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.5 }}>
-            Once your order is confirmed you'll see the final price here and can pay — production starts right after payment.
+            {isOrg
+              ? "Once your order is confirmed you'll see the final price here and can pay — production starts once payment is received."
+              : "Once your order is confirmed you'll see the final price here and can pay — production starts right after payment."}
           </p>
         </div>
       )}

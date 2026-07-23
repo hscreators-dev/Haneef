@@ -1237,32 +1237,13 @@ function HomeTab({ onNavigate, onBell, onDrafts, onHelp, onQuickStart, onOpenCol
             </div>
           )}
 
-          {/* ── Delivery & documents — multi-site organisations (a school's
-              campuses, a hospital's wards, a corporate's branches) need more
-              than one saved address, and finance teams need to find invoices
-              without digging through chat. ── */}
-          <div className="mx-5 mb-5 flex flex-col gap-2.5">
-            <button onClick={onManageAddresses} className="w-full flex items-center gap-3 rounded-2xl px-3.5 py-3 text-left" style={{ ...card, cursor: "pointer" }}>
-              <span className="flex items-center justify-center rounded-xl flex-shrink-0" style={{ width: 36, height: 36, background: "var(--muted)" }}>
-                <MapPin size={16} strokeWidth={1.5} className="text-muted-foreground"/>
-              </span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>Delivery locations</span>
-                <span className="block text-muted-foreground" style={{ fontSize: 11 }}>{addressCount === null ? "Manage saved addresses" : addressCount === 0 ? "No addresses saved yet" : `${addressCount} saved`}</span>
-              </span>
-              <ChevronRight size={14} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5}/>
-            </button>
-            <button onClick={() => onNavigate("track")} className="w-full flex items-center gap-3 rounded-2xl px-3.5 py-3 text-left" style={{ ...card, cursor: "pointer" }}>
-              <span className="flex items-center justify-center rounded-xl flex-shrink-0" style={{ width: 36, height: 36, background: "var(--muted)" }}>
-                <Receipt size={16} strokeWidth={1.5} className="text-muted-foreground"/>
-              </span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-foreground" style={{ fontSize: 12.5, fontWeight: 600 }}>Invoices & documents</span>
-                <span className="block text-muted-foreground" style={{ fontSize: 11 }}>Quotes and invoices are attached to each order</span>
-              </span>
-              <ChevronRight size={14} className="text-muted-foreground flex-shrink-0" strokeWidth={1.5}/>
-            </button>
-          </div>
+          {/* ── Delivery locations & Invoices/documents used to be shortcut
+              cards here too, but they just duplicated what's already in
+              Account (Delivery addresses, and the new Invoices & documents
+              screen) — worse, the documents shortcut opened the generic Track
+              list instead of an actual documents view. Removed from Home;
+              both live in Account now as the single source of truth so
+              there's nothing to go stale/duplicate here. ── */}
 
           {/* ── Your Garm coordinator — matches the hero's promise ("One
               coordinator handles quotes, fabric, QA and delivery") with an
